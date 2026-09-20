@@ -1,0 +1,8 @@
+{
+  "name": "Gerenciador de Culto & Hinário Adventista",
+  "description": "Assistente e organizador de atividades de culto, liturgia da igreja, banco de dados do Hinário Adventista e busca de playbacks e vídeos para sonoplastia.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

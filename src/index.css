@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Design moderno — Gerenciador de Culto & Hinário Adventista
+   Tokens, gradientes animados, glassmorphism e micro-interações
+   ============================================================ */
+
+:root {
+  --brand-blue: #2563eb;
+  --brand-indigo: #4f46e5;
+  --brand-amber: #f59e0b;
+  --brand-purple: #7c3aed;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(99, 102, 241, 0.4) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #4f46e5, #7c3aed);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html, body {
+  background: #0b1120;
+}
+
+/* Fundo animado com gradiente sutil em movimento (usado no shell principal) */
+.app-aurora-bg {
+  position: relative;
+  isolation: isolate;
+}
+.app-aurora-bg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(37, 99, 235, 0.18), transparent 60%),
+    radial-gradient(1000px 500px at 110% 10%, rgba(124, 58, 237, 0.16), transparent 60%),
+    radial-gradient(800px 500px at 50% 120%, rgba(245, 158, 11, 0.08), transparent 60%),
+    #0b1120;
+  background-size: 200% 200%;
+  animation: auroraShift 22s ease-in-out infinite;
+}
+
+@keyframes auroraShift {
+  0%, 100% { background-position: 0% 0%; }
+  50% { background-position: 100% 60%; }
+}
+
+/* Glassmorphism reutilizável */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+/* Cartões com leve elevação dinâmica ao passar o mouse */
+.card-lift {
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s ease;
+}
+.card-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 18px 40px -12px rgba(37, 99, 235, 0.35);
+}
+
+/* Texto com gradiente animado (títulos de destaque) */
+.text-gradient-brand {
+  background: linear-gradient(90deg, #60a5fa, #a78bfa, #f59e0b, #60a5fa);
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gradientFlow 6s linear infinite;
+}
+@keyframes gradientFlow {
+  to { background-position: 300% center; }
+}
+
+/* Entrada suave para telas/páginas */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-slide-up {
+  animation: fadeSlideUp 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Entrada em cascata para listas de cards */
+.stagger-item {
+  animation: fadeSlideUp 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Pulso suave para indicadores "ao vivo" */
+@keyframes softPulseRing {
+  0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
+  100% { box-shadow: 0 0 0 12px rgba(52, 211, 153, 0); }
+}
+.live-pulse-ring {
+  animation: softPulseRing 1.8s ease-out infinite;
+}
+
+/* Botão com brilho deslizante (call-to-action) */
+.btn-sheen {
+  position: relative;
+  overflow: hidden;
+}
+.btn-sheen::after {
+  content: "";
+  position: absolute;
+  top: 0; left: -150%;
+  width: 50%; height: 100%;
+  background: linear-gradient(120deg, transparent, rgba(255,255,255,0.35), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.6s ease;
+}
+.btn-sheen:hover::after {
+  left: 150%;
+}
+
+/* Logo com respiração sutil */
+@keyframes logoBreathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+.logo-breathe {
+  animation: logoBreathe 4s ease-in-out infinite;
+}
