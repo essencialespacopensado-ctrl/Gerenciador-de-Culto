@@ -145,22 +145,49 @@ function loadSuggestions() {
 function saveSuggestions(list) { try { localStorage.setItem(SUGGESTIONS_KEY, JSON.stringify(list)); } catch(e) {} }
 
 // ---- Sincronização com o banco compartilhado (Firebase) ----
-// Guarda só o essencial pra visualização no Painel do Desenvolvedor: NUNCA sincroniza senha
-// nem pergunta/resposta de recuperação de senha, por segurança. Falha em silêncio se o
-// Firebase não estiver configurado (ver window.__FIREBASE_CONFIG__ no <head>) ou sem rede —
-// nesse caso o app segue funcionando só com os dados locais, como sempre funcionou.
+// Guarda o essencial pra visualização no Painel do Desenvolvedor E pra permitir que cada
+// igreja entre no sistema de qualquer aparelho (não só do aparelho onde se cadastrou).
+// A senha e a resposta de segurança NUNCA são enviadas em texto puro — só um hash (versão
+// embaralhada, irreversível) delas, suficiente para conferir login sem expor a senha real.
+// Falha em silêncio se o Firebase não estiver configurado (ver window.__FIREBASE_CONFIG__
+// no <head>) ou sem rede — nesse caso o app segue funcionando só com os dados locais.
 function fbIsReady() { return !!(window.__fb && window.__fb.ready && window.__fb.db); }
 
+// Hash simples (não é criptografia forte, mas evita guardar senha em texto puro no banco).
+function simpleHash(str) {
+  const s = 'gc-salt-2026::' + String(str || '');
+  let h1 = 0x811c9dc5, h2 = 0xdeadbeef;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 16777619);
+    h2 = Math.imul(h2 ^ c, 2654435761);
+  }
+  h1 >>>= 0; h2 >>>= 0;
+  return h1.toString(16).padStart(8,'0') + h2.toString(16).padStart(8,'0');
+}
+
 async function fbAddChurch(church) {
-  if (!fbIsReady()) return false;
+  if (!fbIsReady()) return null;
   try {
     const { collection, addDoc, serverTimestamp } = window.__fb.helpers;
-    await addDoc(collection(window.__fb.db, 'igrejas'), {
+    const ref = await addDoc(collection(window.__fb.db, 'igrejas'), {
       churchId: church.id, name: church.name, city: church.city || '', state: church.state || '',
       association: church.association || '', district: church.district || '',
       pastorName: church.pastorName || '', login: church.login,
+      passwordHash: church.passwordHash || null,
+      recoveryQuestion: church.recoveryQuestion || '',
+      recoveryAnswerHash: church.recoveryAnswerHash || null,
       createdAt: church.createdAt, syncedAt: serverTimestamp()
     });
+    return ref.id;
+  } catch(e) { return null; }
+}
+
+async function fbUpdateChurchPassword(docId, passwordHash) {
+  if (!fbIsReady() || !docId) return false;
+  try {
+    const { doc, updateDoc } = window.__fb.helpers;
+    await updateDoc(doc(window.__fb.db, 'igrejas', docId), { passwordHash });
     return true;
   } catch(e) { return false; }
 }
@@ -207,6 +234,46 @@ function fbListenSuggestions(callback, churchId) {
   } catch(e) { return () => {}; }
 }
 
+// Lista de igrejas pra tela de login/recuperação: mistura as cadastradas neste aparelho com
+// as que vieram do banco compartilhado (cadastradas em qualquer outro aparelho), e cacheia
+// as remotas localmente (com hash de senha) pra permitir login mesmo depois de perder a rede.
+function useSyncedChurches() {
+  const [local, setLocal] = useState(loadDB);
+  useEffect(() => {
+    const unsub = fbListenChurches(remote => {
+      if (!remote) return;
+      const current = loadDB();
+      const currentLogins = new Set(current.map(c => (c.login||'').toLowerCase()));
+      let changed = false;
+      const merged = [...current];
+      remote.forEach(rc => {
+        if (!rc.login) return;
+        const loginLower = rc.login.toLowerCase();
+        if (!currentLogins.has(loginLower)) {
+          merged.push({
+            id: rc.churchId || ('igreja-remote-' + rc.docId),
+            name: rc.name, city: rc.city || '', state: rc.state || '',
+            association: rc.association || '', district: rc.district || '',
+            pastorName: rc.pastorName || '', login: rc.login,
+            passwordHash: rc.passwordHash || null,
+            recoveryQuestion: rc.recoveryQuestion || '',
+            recoveryAnswerHash: rc.recoveryAnswerHash || null,
+            createdAt: rc.createdAt, fbDocId: rc.docId, remoteOnly: true
+          });
+          currentLogins.add(loginLower);
+          changed = true;
+        } else {
+          const idx = merged.findIndex(c => (c.login||'').toLowerCase() === loginLower);
+          if (idx >= 0 && !merged[idx].fbDocId) { merged[idx] = { ...merged[idx], fbDocId: rc.docId }; changed = true; }
+        }
+      });
+      if (changed) { saveDB(merged); setLocal(merged); }
+    });
+    return unsub;
+  }, []);
+  return local;
+}
+
 const inputStyle = { padding:'11px 13px', borderRadius:'10px', border:'1px solid var(--border-soft)', background:'rgba(15,23,42,0.35)', color:'var(--text-hi)', fontSize:'13.5px', outline:'none', width:'100%' };
 const btnPrimary = { padding:'12px 18px', borderRadius:'14px', border:'none', background:'linear-gradient(150deg,var(--accent-1),var(--accent-2))', color:'#fff', fontWeight:800, fontSize:'13px', width:'100%', boxShadow:'0 6px 16px -6px rgba(0,0,0,0.5)', cursor:'pointer' };
 const btnGhost = { padding:'10px 14px', borderRadius:'14px', border:'none', background:'rgba(148,163,184,0.14)', color:'var(--text-mid)', fontWeight:700, fontSize:'12.5px', cursor:'pointer' };
@@ -231,7 +298,7 @@ function LoginScreen({ onLogin }) {
   const [error, setError] = useState('');
   const [forgotOpen, setForgotOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const churches = useMemo(() => loadDB(), [mode, forgotOpen]);
+  const churches = useSyncedChurches();
 
   const [name, setName] = useState('');
   const [city, setCity] = useState('');
@@ -266,7 +333,12 @@ function LoginScreen({ onLogin }) {
     }
 
     const db = loadDB();
-    const church = db.find(c => c.login.toLowerCase() === login.trim().toLowerCase() && c.password === password);
+    const loginLower = login.trim().toLowerCase();
+    const passHash = simpleHash(password);
+    const church = db.find(c => c.login.toLowerCase() === loginLower && (
+      (c.passwordHash && c.passwordHash === passHash) ||
+      (c.password !== undefined && c.password === password)
+    ));
     if (!church) { setError('Usuário ou senha incorretos.'); return; }
     onLogin({ type:'church', church });
   };
@@ -286,19 +358,27 @@ function LoginScreen({ onLogin }) {
     }
 
     const now = new Date().toISOString();
+    const recoveryAnswerLower = recoveryAnswer.trim().toLowerCase();
     const church = {
       id:'igreja-'+Date.now(), name:name.trim(), city:city.trim(), state:state.trim(),
       address: address.trim(), association: association.trim(), district: district.trim(),
       isDistrictSeat, pastorName: pastorName.trim(), elderName: elderName.trim(),
       ministryLeaders: ministryLeaders.filter(r => r.ministry.trim() || r.leader.trim()),
-      login:newLogin.trim(), password:newPassword,
-      recoveryQuestion: recoveryQuestion.trim(), recoveryAnswer: recoveryAnswer.trim().toLowerCase(),
+      login:newLogin.trim(), password:newPassword, passwordHash: simpleHash(newPassword),
+      recoveryQuestion: recoveryQuestion.trim(), recoveryAnswer: recoveryAnswerLower,
+      recoveryAnswerHash: simpleHash(recoveryAnswerLower),
       createdAt: now, updatedAt: now
     };
     const nextDB = [...db, church];
     saveDB(nextDB);
     pushLog(loadLog(), { type:'cadastro', churchName: church.name, churchId: church.id });
-    fbAddChurch(church);
+    // Sincroniza com o banco compartilhado (hash da senha, nunca a senha em texto puro) pra
+    // que essa igreja consiga entrar de qualquer aparelho — celular, tablet, computador, etc.
+    fbAddChurch(church).then(docId => {
+      if (!docId) return;
+      const next = loadDB().map(c => c.id === church.id ? { ...c, fbDocId: docId } : c);
+      saveDB(next);
+    });
 
     onLogin({ type:'church', church });
   };
@@ -397,7 +477,7 @@ function ForgotPasswordModal({ onClose }) {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
-  const churches = useMemo(() => loadDB(), []);
+  const churches = useSyncedChurches();
   const church = churches.find(c => c.login === churchLogin);
 
   const goAnswer = (e) => {
@@ -414,7 +494,11 @@ function ForgotPasswordModal({ onClose }) {
   const checkAnswer = (e) => {
     e.preventDefault();
     setError('');
-    if (answer.trim().toLowerCase() !== (church.recoveryAnswer || '')) { setError('Resposta incorreta. Tente novamente.'); return; }
+    const givenLower = answer.trim().toLowerCase();
+    const ok = church.recoveryAnswerHash
+      ? simpleHash(givenLower) === church.recoveryAnswerHash
+      : givenLower === (church.recoveryAnswer || '');
+    if (!ok) { setError('Resposta incorreta. Tente novamente.'); return; }
     setStep('reset');
   };
 
@@ -424,9 +508,11 @@ function ForgotPasswordModal({ onClose }) {
     if (!newPassword.trim() || newPassword.length < 4) { setError('A nova senha deve ter no mínimo 4 caracteres.'); return; }
     if (newPassword !== confirmPassword) { setError('As senhas não conferem.'); return; }
     const db = loadDB();
-    const next = db.map(c => c.id === church.id ? { ...c, password: newPassword, updatedAt: new Date().toISOString() } : c);
+    const passwordHash = simpleHash(newPassword);
+    const next = db.map(c => c.id === church.id ? { ...c, password: newPassword, passwordHash, updatedAt: new Date().toISOString() } : c);
     saveDB(next);
     pushLog(loadLog(), { type:'atualizacao', churchName: church.name, churchId: church.id, detail: 'Senha redefinida via recuperação de senha' });
+    if (church.fbDocId) fbUpdateChurchPassword(church.fbDocId, passwordHash);
     setStep('done');
   };
 
@@ -611,9 +697,11 @@ function DeveloperPanel({ onLogout }) {
   const resetChurchPassword = (id, newPass) => {
     const church = db.find(c=>c.id===id);
     if (!church) { alert('Essa igreja foi cadastrada em outro aparelho — só é possível removê-la ou redefinir a senha dela no dispositivo onde ela se cadastrou.'); return; }
-    const next = db.map(c => c.id===id ? { ...c, password: newPass, updatedAt: new Date().toISOString() } : c);
+    const passwordHash = simpleHash(newPass);
+    const next = db.map(c => c.id===id ? { ...c, password: newPass, passwordHash, updatedAt: new Date().toISOString() } : c);
     saveDB(next);
     const nl = pushLog(loadLog(), { type:'atualizacao', churchName: church ? church.name : id, churchId: id, detail: 'Senha redefinida pelo desenvolvedor' });
+    if (church.fbDocId) fbUpdateChurchPassword(church.fbDocId, passwordHash);
     setDb(next); setLog(nl); setResetId(null);
   };
 
