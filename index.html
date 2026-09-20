@@ -115,6 +115,10 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef } = React;
 
+// Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
+// disponível" pra quem já tem o app aberto em outro aparelho.
+const APP_VERSION = '2026-09-20.1';
+
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
 const SESSION_KEY = 'gc_session_v1';
@@ -4370,7 +4374,88 @@ function applyTheme(t) {
   set('--glass-bg', isLight ? '#ffffffee' : '#0f172acc');
 }
 
+/* ============ Aviso de atualização disponível ============ */
+// Fica de olho na versão publicada no servidor (buscando o próprio index.html de tempos em
+// tempos) e avisa com uma "abinha de mensagens" quando existe uma versão mais nova — sem
+// recarregar sozinho, pra pessoa atualizar no momento que for melhor pra ela.
+function useAppUpdateChecker() {
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  useEffect(() => {
+    let stopped = false;
+    const check = async () => {
+      try {
+        const res = await fetch(window.location.pathname + '?_v=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) return;
+        const text = await res.text();
+        const m = text.match(/const APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
+        if (m && m[1] && m[1] !== APP_VERSION && !stopped) setUpdateAvailable(true);
+      } catch(e) {}
+    };
+    check();
+    const id = setInterval(check, 5 * 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { stopped = true; clearInterval(id); document.removeEventListener('visibilitychange', onVisible); };
+  }, []);
+  return updateAvailable;
+}
+
+function UpdateNotice() {
+  const updateAvailable = useAppUpdateChecker();
+  const [open, setOpen] = useState(false);
+  if (!updateAvailable) return null;
+  return html`
+    <div style=${{position:'fixed', top:'14px', right:'14px', zIndex:500}}>
+      <button onClick=${()=>setOpen(o=>!o)} title="Mensagens" style=${{width:'46px', height:'46px', borderRadius:'50%', border:'none', background:'linear-gradient(135deg,var(--accent-1),var(--accent-2))', color:'#fff', fontSize:'20px', cursor:'pointer', boxShadow:'0 8px 22px -8px rgba(0,0,0,0.55)', position:'relative'}}>
+        📬
+        <span class="breathe" style=${{position:'absolute', top:'-1px', right:'-1px', width:'13px', height:'13px', borderRadius:'50%', background:'var(--danger)', border:'2px solid var(--bg-page)'}}></span>
+      </button>
+      ${open && html`
+        <div class="glass fade-up" style=${{position:'absolute', top:'56px', right:0, width:'270px', padding:'16px', borderRadius:'16px', display:'grid', gap:'10px'}}>
+          <div style=${{fontWeight:800, fontSize:'13px'}}>📬 Mensagens</div>
+          <div style=${{fontSize:'12px', color:'var(--text-hi)', lineHeight:1.45}}>Existe uma nova atualização do sistema disponível. Você pode continuar usando normalmente e atualizar quando for melhor pra você.</div>
+          <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end'}}>
+            <button onClick=${()=>setOpen(false)} style=${btnGhost}>Depois</button>
+            <button onClick=${()=>window.location.reload()} style=${{...btnPrimary, width:'auto', padding:'8px 14px'}}>Atualizar agora</button>
+          </div>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+/* ============ Sincroniza igrejas antigas que ainda não foram enviadas ao banco compartilhado ============ */
+// Igrejas cadastradas antes de existir a sincronização (ou num momento em que a rede/Firebase
+// falhou) ficam só neste aparelho. Assim que o Firebase estiver pronto, manda essas igrejas pro
+// banco compartilhado (com hash de senha, nunca a senha em texto puro), pra elas passarem a
+// aparecer e a conseguir logar em qualquer aparelho também.
+function useChurchBackfillSync() {
+  useEffect(() => {
+    let stopped = false;
+    let tries = 0;
+    const attempt = () => {
+      if (stopped) return;
+      tries++;
+      if (!fbIsReady()) { if (tries < 30) setTimeout(attempt, 1000); return; }
+      const db = loadDB();
+      const pending = db.filter(c => c.login && !c.fbDocId);
+      pending.forEach(c => {
+        const passwordHash = c.passwordHash || (c.password ? simpleHash(c.password) : null);
+        const recoveryAnswerHash = c.recoveryAnswerHash || (c.recoveryAnswer ? simpleHash(c.recoveryAnswer) : null);
+        fbAddChurch({ ...c, passwordHash, recoveryAnswerHash }).then(docId => {
+          if (!docId) return;
+          const next = loadDB().map(x => x.id === c.id ? { ...x, fbDocId: docId, passwordHash, recoveryAnswerHash } : x);
+          saveDB(next);
+        });
+      });
+    };
+    attempt();
+    return () => { stopped = true; };
+  }, []);
+}
+
 function App() {
+  useChurchBackfillSync();
   const [session, setSession] = useState(() => {
     try { const raw = localStorage.getItem(SESSION_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
     return null;
@@ -4396,6 +4481,7 @@ function App() {
 
   return html`
     <div>
+      <${UpdateNotice} />
       ${!session ? html`<${LoginScreen} onLogin=${login} />` :
         session.type === 'developer' ? html`<${DeveloperPanel} onLogout=${logout} />` :
         html`<${ChurchDashboard} church=${session.church} onLogout=${logout} onUpdateChurch=${updateChurchSession} />`}
