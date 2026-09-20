@@ -672,7 +672,19 @@ function ConfirmVideoLink({ media, onChange }) {
 
 function MediaSearchField({ media, onChange }) {
   const [q, setQ] = useState('');
+  const [videos, setVideos] = useState(null); // null = não buscou ainda; [] = buscou e veio vazio
+  const [searching, setSearching] = useState(false);
   const matches = q.trim() ? MEDIA_LIBRARY.filter(m => m.title.toLowerCase().includes(q.toLowerCase())).slice(0,5) : [];
+
+  const doSearch = async () => {
+    const query = q.trim();
+    if (!query) return;
+    setSearching(true);
+    const result = await searchYoutubeServer(query);
+    setSearching(false);
+    if (result) { setVideos(result); return; }
+    window.open(youtubeSearchUrl(query), '_blank', 'noopener'); // sem servidor de busca disponível
+  };
 
   if (media && media.title) {
     return html`
@@ -688,8 +700,8 @@ function MediaSearchField({ media, onChange }) {
   return html`
     <div style=${{display:'grid', gap:'6px'}}>
       <div style=${{display:'flex', gap:'6px'}}>
-        <input placeholder="Buscar mensagem musical ou vídeo..." value=${q} onChange=${e=>setQ(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-        <a href=${q.trim() ? youtubeSearchUrl(q) : undefined} target="_blank" rel="noopener" style=${{...btnGhost, padding:'8px 12px', fontSize:'11px', textDecoration:'none', whiteSpace:'nowrap', opacity: q.trim() ? 1 : 0.4, pointerEvents: q.trim() ? 'auto' : 'none'}}>🔍 YouTube</a>
+        <input placeholder="Buscar mensagem musical ou vídeo..." value=${q} onChange=${e=>{setQ(e.target.value); setVideos(null);}} onKeyDown=${e=>{ if(e.key==='Enter'){ e.preventDefault(); doSearch(); } }} style=${{...inputStyle, fontSize:'12px'}} />
+        <button type="button" onClick=${doSearch} disabled=${!q.trim() || searching} style=${{...btnGhost, padding:'8px 12px', fontSize:'11px', whiteSpace:'nowrap', opacity: (q.trim() && !searching) ? 1 : 0.4}}>${searching ? '⏳' : '🔍'} Buscar</button>
       </div>
       ${matches.length > 0 && html`
         <div style=${{display:'grid', gap:'4px'}}>
@@ -698,6 +710,17 @@ function MediaSearchField({ media, onChange }) {
           `)}
         </div>
       `}
+      ${videos && videos.length > 0 && html`
+        <div style=${{display:'grid', gap:'4px', maxHeight:'260px', overflowY:'auto'}}>
+          ${videos.map((v,vi) => html`
+            <button key=${v.videoId+vi} type="button" onClick=${()=>onChange({ title: v.title, url: v.watchUrl || ('https://www.youtube.com/watch?v='+v.videoId), videoId: v.videoId })} style=${{display:'flex', gap:'8px', alignItems:'center', padding:'5px', borderRadius:'8px', border:'1px solid var(--border-soft)', background:'transparent', textAlign:'left'}}>
+              <img src=${v.thumbnail} alt="" style=${{width:'56px', height:'32px', objectFit:'cover', borderRadius:'5px', flexShrink:0}} />
+              <span style=${{fontSize:'11px', color:'var(--text-hi)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${v.title}</span>
+            </button>
+          `)}
+        </div>
+      `}
+      ${videos && videos.length === 0 && html`<div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Nenhum resultado encontrado.</div>`}
     </div>
   `;
 }
@@ -2223,9 +2246,9 @@ async function searchYoutubeServer(query) {
 // colar o link do vídeo escolhido de volta aqui.
 function BackgroundAudioMixer() {
   const [tracks, setTracks] = useState([
-    { name:'Fundo 1', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], suggestOpen:false, searching:false },
-    { name:'Fundo 2', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], suggestOpen:false, searching:false },
-    { name:'Fundo 3', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], suggestOpen:false, searching:false },
+    { name:'Fundo 1', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
+    { name:'Fundo 2', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
+    { name:'Fundo 3', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
   ]);
   const audioRefs = [useRef(null), useRef(null), useRef(null)];
   const iframeRefs = [useRef(null), useRef(null), useRef(null)];
@@ -2234,35 +2257,49 @@ function BackgroundAudioMixer() {
 
   const updateTrack = (i, patch) => setTracks(list => list.map((t,idx)=>idx===i?{...t,...patch}:t));
 
-  const runSearch = (i, q) => {
-    if (debounceRefs[i].current) clearTimeout(debounceRefs[i].current);
-    if (q.length < 2) { updateTrack(i, { suggestions:[], suggestOpen:false, searching:false }); return; }
-    updateTrack(i, { searching:true });
-    fetchYoutubeSuggestions(q, (list) => {
-      setTracks(cur => cur.map((t,idx) => {
-        if (idx !== i) return t;
-        if (t.search.trim() !== q) return t; // usuário já digitou outra coisa
-        return { ...t, suggestions:list, suggestOpen: list.length>0, searching:false };
-      }));
-    });
+  const runSearch = async (i, q) => {
+    updateTrack(i, { searching:true, results:null });
+    const serverVideos = await searchYoutubeServer(q);
+    setTracks(cur => cur.map((t,idx) => {
+      if (idx !== i) return t;
+      if (t.search.trim() !== q) return t; // usuário já digitou outra coisa
+      if (serverVideos) return { ...t, results:serverVideos, suggestions:[], suggestOpen:true, searching:false };
+      return { ...t, results:null, suggestOpen:false, searching:false };
+    }));
+    if (!serverVideos) {
+      // sem backend disponível: cai pro modo antigo de sugestões de texto
+      fetchYoutubeSuggestions(q, (list) => {
+        setTracks(cur => cur.map((t,idx) => {
+          if (idx !== i) return t;
+          if (t.search.trim() !== q) return t;
+          return { ...t, suggestions:list, suggestOpen:true, searching:false };
+        }));
+      });
+    }
   };
 
   const onSearchChange = (i, val) => {
-    updateTrack(i, { search: val });
+    updateTrack(i, { search: val, results:null });
     if (debounceRefs[i].current) clearTimeout(debounceRefs[i].current);
     const q = val.trim();
-    if (q.length < 2) { updateTrack(i, { suggestions:[], suggestOpen:false, searching:false }); return; }
+    if (q.length < 2) { updateTrack(i, { suggestions:[], results:null, suggestOpen:false, searching:false }); return; }
     debounceRefs[i].current = setTimeout(() => runSearch(i, q), 400);
   };
 
   const onSearchEnter = (i) => {
     const q = tracks[i].search.trim();
-    if (q) window.open(youtubeSearchUrl(q), '_blank', 'noopener');
+    if (q) runSearch(i, q);
   };
 
   const pickTextSuggestion = (i, text) => {
     updateTrack(i, { search:text, suggestOpen:false });
     window.open(youtubeSearchUrl(text), '_blank', 'noopener');
+  };
+
+  const pickVideoResult = (i, video) => {
+    const audioEl = audioRefs[i].current;
+    if (audioEl) { audioEl.pause(); audioEl.removeAttribute('src'); audioEl.load(); }
+    updateTrack(i, { mode:'youtube', videoId: video.videoId, fileName:'', playing:true, link:'', search:'', results:null, suggestOpen:false });
   };
 
   const pickFile = (i) => { fileInputRefs[i].current && fileInputRefs[i].current.click(); };
@@ -2397,18 +2434,32 @@ function BackgroundAudioMixer() {
 
           <div style=${{position:'relative', zIndex: t.suggestOpen ? 300 : 'auto'}}>
             <input
-              placeholder="Buscar no YouTube e apertar Enter..." value=${t.search}
+              placeholder="Buscar vídeo no YouTube..." value=${t.search}
               onChange=${e=>onSearchChange(i, e.target.value)}
-              onFocus=${()=>{ if (t.suggestions.length>0) updateTrack(i,{suggestOpen:true}); }}
+              onFocus=${()=>{ if ((t.results && t.results.length>0) || t.suggestions.length>0) updateTrack(i,{suggestOpen:true}); }}
               onBlur=${()=>setTimeout(()=>updateTrack(i,{suggestOpen:false}), 150)}
               onKeyDown=${e=>{ if(e.key==='Enter'){ e.preventDefault(); onSearchEnter(i); } if(e.key==='Escape'){ updateTrack(i,{suggestOpen:false}); } }}
               style=${{...inputStyle, fontSize:'10.5px', padding:'6px 8px', width:'100%'}}
             />
             ${t.searching && html`<div style=${{fontSize:'9.5px', color:'var(--text-dim)', padding:'3px 2px'}}>Buscando...</div>`}
-            ${!t.searching && t.suggestOpen && t.suggestions.length === 0 && t.search.trim().length >= 2 && html`
+            ${!t.searching && t.suggestOpen && t.results && t.results.length === 0 && html`
+              <div style=${{fontSize:'9.5px', color:'var(--text-dim)', padding:'3px 2px'}}>Nenhum resultado encontrado.</div>
+            `}
+            ${!t.searching && t.suggestOpen && !t.results && t.suggestions.length === 0 && t.search.trim().length >= 2 && html`
               <div style=${{fontSize:'9.5px', color:'var(--text-dim)', padding:'3px 2px'}}>Nenhuma sugestão pra essa palavra-chave. Aperte Enter pra buscar direto no YouTube.</div>
             `}
-            ${t.suggestOpen && t.suggestions.length > 0 && html`
+            ${t.suggestOpen && t.results && t.results.length > 0 && html`
+              <div class="glass fade-up" style=${{position:'absolute', top:'calc(100% + 4px)', left:0, right:0, borderRadius:'10px', padding:'4px', display:'grid', gap:'3px', maxHeight:'260px', overflowY:'auto', boxShadow:'0 12px 26px -8px rgba(0,0,0,0.5)'}}>
+                <div style=${{fontSize:'9px', color:'var(--text-dim)', padding:'2px 4px'}}>Toque pra tocar direto:</div>
+                ${t.results.map((v,vi) => html`
+                  <button key=${v.videoId+vi} type="button" onMouseDown=${e=>e.preventDefault()} onClick=${()=>pickVideoResult(i, v)} style=${{display:'flex', gap:'6px', alignItems:'center', padding:'4px', borderRadius:'7px', border:'none', background:'transparent', textAlign:'left', width:'100%'}}>
+                    <img src=${v.thumbnail} alt="" style=${{width:'44px', height:'26px', objectFit:'cover', borderRadius:'4px', flexShrink:0}} />
+                    <span style=${{fontSize:'10px', color:'var(--text-mid)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${v.title}</span>
+                  </button>
+                `)}
+              </div>
+            `}
+            ${t.suggestOpen && !t.results && t.suggestions.length > 0 && html`
               <div class="glass fade-up" style=${{position:'absolute', top:'calc(100% + 4px)', left:0, right:0, borderRadius:'10px', padding:'4px', display:'grid', gap:'2px', maxHeight:'220px', overflowY:'auto', boxShadow:'0 12px 26px -8px rgba(0,0,0,0.5)'}}>
                 <div style=${{fontSize:'9px', color:'var(--text-dim)', padding:'2px 4px'}}>Toque pra abrir a busca no YouTube:</div>
                 ${t.suggestions.map((s,si) => html`
