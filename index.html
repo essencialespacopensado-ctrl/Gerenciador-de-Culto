@@ -1085,7 +1085,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
   const [category, setCategory] = useState(act.category);
   const [time, setTime] = useState(act.time === '--:--' ? '' : act.time);
   const [media, setMedia] = useState(act.media || null);
-  const needsMedia = category === 'mensagem_musical' || category === 'video';
+  const needsMedia = category === 'mensagem_musical' || category === 'louvor';
 
   const save = () => {
     onEdit({ ...act, name: name.trim() || act.name, responsible: responsible.trim() || 'A definir', category, time: time || '--:--', media: media || null });
@@ -1103,7 +1103,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
           </select>
         </div>
         <input type="time" value=${time} onChange=${e=>setTime(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-        <${MediaSearchField} media=${media} onChange=${setMedia} />
+        ${needsMedia && html`<${MediaSearchField} media=${media} onChange=${setMedia} />`}
         <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end'}}>
           <button onClick=${()=>setEditing(false)} style=${btnGhost}>Cancelar</button>
           <button onClick=${save} style=${{...btnPrimary, width:'auto', padding:'8px 16px'}}>Salvar</button>
@@ -1125,12 +1125,16 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
         <button onClick=${()=>setEditing(true)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'14px', padding:'4px 6px', borderRadius:'8px'}} title="Editar">✏️</button>
         <button onClick=${()=>onDelete(act.id)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'16px', padding:'4px 8px', borderRadius:'8px'}} title="Remover">✕</button>
       </div>
-      <div style=${{marginLeft:'46px', display:'flex', gap:'8px', alignItems:'flex-start'}}>
-        <div style=${{flex:1}}>
-          <${MediaSearchField} media=${media} onChange=${(m)=>{ setMedia(m); onEdit({...act, media: m || null}); }} />
+      ${(needsMedia || (media && media.title)) && html`
+        <div style=${{marginLeft:'46px', display:'flex', gap:'8px', alignItems:'flex-start'}}>
+          <div style=${{flex:1}}>
+            ${needsMedia
+              ? html`<${MediaSearchField} media=${media} onChange=${(m)=>{ setMedia(m); onEdit({...act, media: m || null}); }} />`
+              : html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>🎬 ${media.title}</div>`}
+          </div>
+          ${media && media.title && html`<${ProjectButton} churchId=${churchId} media=${media} />`}
         </div>
-        ${media && media.title && html`<${ProjectButton} churchId=${churchId} media=${media} />`}
-      </div>
+      `}
     </div>
   `;
 }
@@ -1143,7 +1147,7 @@ function AddActivityForm({ defaultSection, activities, onAddAt, onClose }) {
   const [position, setPosition] = useState('depois');
   const [refId, setRefId] = useState('');
   const [media, setMedia] = useState(null);
-  const needsMedia = category === 'mensagem_musical' || category === 'video';
+  const needsMedia = category === 'mensagem_musical' || category === 'louvor';
 
   const sectionItems = activities.filter(a => a.section === section);
 
@@ -1170,7 +1174,7 @@ function AddActivityForm({ defaultSection, activities, onAddAt, onClose }) {
         </select>
       </div>
 
-      <${MediaSearchField} media=${media} onChange=${setMedia} />
+      ${needsMedia && html`<${MediaSearchField} media=${media} onChange=${setMedia} />`}
 
       <div style=${{display:'grid', gridTemplateColumns:'110px 1fr', gap:'10px'}}>
         <select value=${position} onChange=${e=>setPosition(e.target.value)} style=${inputStyle}>
@@ -1842,52 +1846,35 @@ function NumberDrawTool({ churchId }) {
   `;
 }
 
+// Ligado direto às atividades de categoria "mensagem_musical" da liturgia da semana (mesmo
+// armazenamento usado pela aba Liturgia) — a pessoa só escolhe o vídeo, o horário já vem pronto.
+// Pensado pra ser preenchido pelo celular, por quem vai cantar/tocar, sem precisar mexer na liturgia inteira.
 function MensagensMusicaisTool({ churchId }) {
-  const storeKey = 'gc_mensagens_musicais_' + churchId;
-  const load = () => { try { const raw = localStorage.getItem(storeKey); if (raw) return JSON.parse(raw); } catch(e) {} return []; };
-  const save = (list) => { try { localStorage.setItem(storeKey, JSON.stringify(list)); } catch(e) {} };
+  const [activities, setActivities] = useState(() => loadActivities(churchId));
+  const items = activities.filter(a => a.category === 'mensagem_musical');
 
-  const [items, setItems] = useState(load);
-  const [title, setTitle] = useState('');
-  const [singer, setSinger] = useState('');
-  const [dateLabel, setDateLabel] = useState('');
-  const [notes, setNotes] = useState('');
-
-  useEffect(() => save(items), [items]);
-
-  const add = (e) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-    setItems(list => [...list, { id:'mm-'+Date.now(), title:title.trim(), singer:singer.trim(), dateLabel:dateLabel.trim(), notes:notes.trim() }]);
-    setTitle(''); setSinger(''); setDateLabel(''); setNotes('');
+  const setMediaFor = (actId, media) => {
+    setActivities(list => {
+      const next = list.map(a => a.id === actId ? { ...a, media: media || null } : a);
+      saveActivities(churchId, next);
+      return next;
+    });
   };
-  const remove = (id) => setItems(list => list.filter(i => i.id !== id));
 
   return html`
     <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
       <div style=${{fontWeight:800, fontSize:'13px'}}>🎙️ Mensagens Musicais</div>
-      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Cadastre aqui as mensagens musicais especiais — título, quem vai cantar/tocar e pra qual data. Sem letra de música, só a organização.</div>
+      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Feito pra usar pelo celular: escolha qual mensagem musical da semana é a sua e busque o vídeo — o horário já vem certo. Isso atualiza na hora a liturgia do sábado.</div>
 
-      <form onSubmit=${add} style=${{display:'grid', gap:'8px'}}>
-        <input placeholder="Título da mensagem musical" value=${title} onChange=${e=>setTitle(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-        <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
-          <input placeholder="Quem vai cantar/tocar" value=${singer} onChange=${e=>setSinger(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-          <input placeholder="Data / culto (opcional)" value=${dateLabel} onChange=${e=>setDateLabel(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-        </div>
-        <input placeholder="Observações (opcional)" value=${notes} onChange=${e=>setNotes(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-        <button type="submit" style=${{...btnPrimary, width:'auto', justifySelf:'start', padding:'9px 16px'}}>+ Adicionar Mensagem Musical</button>
-      </form>
-
-      <div style=${{display:'grid', gap:'8px'}}>
-        ${items.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhuma mensagem musical cadastrada ainda.</div>`}
-        ${items.map(it => html`
-          <div key=${it.id} class="glass fade-up" style=${{padding:'10px 12px', borderRadius:'12px', display:'flex', alignItems:'center', gap:'10px'}}>
-            <div style=${{flex:1}}>
-              <div style=${{fontWeight:700, fontSize:'12.5px'}}>${it.title}</div>
-              <div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${it.singer || 'Sem responsável definido'}${it.dateLabel ? ' • '+it.dateLabel : ''}</div>
-              ${it.notes && html`<div style=${{fontSize:'10px', color:'var(--text-dim)', marginTop:'2px'}}>${it.notes}</div>`}
+      <div style=${{display:'grid', gap:'10px'}}>
+        ${items.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhuma mensagem musical na liturgia desta semana ainda. Vá na aba Liturgia pra criar a atividade primeiro.</div>`}
+        ${items.map((a,i) => html`
+          <div key=${a.id} class="glass" style=${{padding:'12px', borderRadius:'14px', border:'1px solid var(--border-soft)', display:'grid', gap:'8px'}}>
+            <div>
+              <div style=${{fontWeight:700, fontSize:'12.5px'}}>${items.length > 1 ? 'Mensagem Musical '+(i+1)+' — ' : ''}${a.name}</div>
+              <div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${a.responsible} • ${a.time} • ${SECTION_LABELS[a.section]}</div>
             </div>
-            <button type="button" onClick=${()=>remove(it.id)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'14px'}}>✕</button>
+            <${MediaSearchField} media=${a.media} onChange=${(m)=>setMediaFor(a.id, m)} />
           </div>
         `)}
       </div>
@@ -2138,63 +2125,35 @@ function ColetaneasCategoryGrid({ churchId, category }) {
   `;
 }
 
+// Ligado direto às atividades de categoria "louvor" da liturgia da semana (mesmo armazenamento
+// usado pela aba Liturgia) — a equipe só escolhe qual louvor é o seu (1, 2 ou 3) e busca o vídeo;
+// o horário já vem pronto. Pensado pra ser preenchido pelo celular, sem precisar mexer na liturgia inteira.
 function MomentosLouvorTool({ churchId }) {
-  const storeKey = 'gc_momentos_louvor_' + churchId;
-  const load = () => { try { const raw = localStorage.getItem(storeKey); if (raw) return JSON.parse(raw); } catch(e) {} return []; };
-  const save = (list) => { try { localStorage.setItem(storeKey, JSON.stringify(list)); } catch(e) {} };
+  const [activities, setActivities] = useState(() => loadActivities(churchId));
+  const items = activities.filter(a => a.category === 'louvor');
 
-  const [items, setItems] = useState(load);
-  const [title, setTitle] = useState('');
-  const [leader, setLeader] = useState('');
-  const [moment, setMoment] = useState('');
-  const [notes, setNotes] = useState('');
-
-  useEffect(() => save(items), [items]);
-
-  const add = (e) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-    setItems(list => [...list, { id:'ml-'+Date.now(), title:title.trim(), leader:leader.trim(), moment:moment.trim(), notes:notes.trim() }]);
-    setTitle(''); setLeader(''); setMoment(''); setNotes('');
+  const setMediaFor = (actId, media) => {
+    setActivities(list => {
+      const next = list.map(a => a.id === actId ? { ...a, media: media || null } : a);
+      saveActivities(churchId, next);
+      return next;
+    });
   };
-  const remove = (id) => setItems(list => list.filter(i => i.id !== id));
-  const move = (idx, dir) => setItems(list => {
-    const next = [...list];
-    const target = idx + dir;
-    if (target < 0 || target >= next.length) return list;
-    [next[idx], next[target]] = [next[target], next[idx]];
-    return next;
-  });
 
   return html`
     <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
       <div style=${{fontWeight:800, fontSize:'13px'}}>🎤 Momentos de Louvor</div>
-      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Cadastre aqui a ordem dos louvores do culto — título, quem vai apresentar e observações. Isso não inclui letra da música, só a organização.</div>
+      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Feito pra usar pelo celular: escolha qual louvor da semana é o seu (Louvor 1, 2 ou 3) e busque o vídeo — o horário já vem certo. Isso atualiza na hora a liturgia do sábado.</div>
 
-      <form onSubmit=${add} style=${{display:'grid', gap:'8px'}}>
-        <input placeholder="Título do louvor (ex: Hino 480, ou nome da música)" value=${title} onChange=${e=>setTitle(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-        <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
-          <input placeholder="Quem vai apresentar" value=${leader} onChange=${e=>setLeader(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-          <input placeholder="Momento (ex: Abertura, Especial)" value=${moment} onChange=${e=>setMoment(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-        </div>
-        <input placeholder="Observações (opcional)" value=${notes} onChange=${e=>setNotes(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-        <button type="submit" style=${{...btnPrimary, width:'auto', justifySelf:'start', padding:'9px 16px'}}>+ Adicionar Momento</button>
-      </form>
-
-      <div style=${{display:'grid', gap:'8px'}}>
-        ${items.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhum momento de louvor cadastrado ainda.</div>`}
-        ${items.map((it,idx) => html`
-          <div key=${it.id} class="glass fade-up" style=${{padding:'10px 12px', borderRadius:'12px', display:'flex', alignItems:'center', gap:'10px'}}>
-            <div style=${{display:'flex', flexDirection:'column', gap:'2px'}}>
-              <button type="button" onClick=${()=>move(idx,-1)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'11px', padding:0}}>▲</button>
-              <button type="button" onClick=${()=>move(idx,1)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'11px', padding:0}}>▼</button>
+      <div style=${{display:'grid', gap:'10px'}}>
+        ${items.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhum momento de louvor na liturgia desta semana ainda. Vá na aba Liturgia pra criar a atividade primeiro.</div>`}
+        ${items.map((a,i) => html`
+          <div key=${a.id} class="glass" style=${{padding:'12px', borderRadius:'14px', border:'1px solid var(--border-soft)', display:'grid', gap:'8px'}}>
+            <div>
+              <div style=${{fontWeight:700, fontSize:'12.5px'}}>Louvor ${i+1} — ${a.name}</div>
+              <div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${a.responsible} • ${a.time} • ${SECTION_LABELS[a.section]}</div>
             </div>
-            <div style=${{flex:1}}>
-              <div style=${{fontWeight:700, fontSize:'12.5px'}}>${idx+1}. ${it.title}</div>
-              <div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${it.leader || 'Sem responsável definido'}${it.moment ? ' • '+it.moment : ''}</div>
-              ${it.notes && html`<div style=${{fontSize:'10px', color:'var(--text-dim)', marginTop:'2px'}}>${it.notes}</div>`}
-            </div>
-            <button type="button" onClick=${()=>remove(it.id)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'14px'}}>✕</button>
+            <${MediaSearchField} media=${a.media} onChange=${(m)=>setMediaFor(a.id, m)} />
           </div>
         `)}
       </div>
