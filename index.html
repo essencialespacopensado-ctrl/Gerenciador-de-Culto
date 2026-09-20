@@ -74,6 +74,44 @@
 <script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
 <script>
+  // Configuração do banco de dados compartilhado (Firebase). Preencha com as chaves do seu
+  // projeto Firebase (console.firebase.google.com) para que igrejas cadastradas e sugestões
+  // enviadas fiquem visíveis de qualquer dispositivo no Painel do Desenvolvedor. Enquanto isso
+  // não for preenchido, o app continua funcionando normalmente, só que só localmente (como antes).
+  window.__FIREBASE_CONFIG__ = {
+    apiKey: "AIzaSyAHE_hlXxmRXn0MoZEPNbMxqZDSjM9Zk0U",
+    authDomain: "gerenciador-de-culto.firebaseapp.com",
+    projectId: "gerenciador-de-culto",
+    storageBucket: "gerenciador-de-culto.firebasestorage.app",
+    messagingSenderId: "220320448302",
+    appId: "1:220320448302:web:f54cae328abd0c5cae04bf"
+  };
+  if (!window.__FIREBASE_CONFIG__.apiKey || window.__FIREBASE_CONFIG__.apiKey === 'COLE_AQUI') {
+    window.__FIREBASE_CONFIG__ = null;
+  }
+</script>
+<script type="module">
+  window.__fb = { ready:false, db:null, helpers:null, error:null };
+  (async () => {
+    try {
+      const cfg = window.__FIREBASE_CONFIG__;
+      if (!cfg) { window.__fb.error = 'no-config'; return; }
+      const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js');
+      const { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, serverTimestamp } =
+        await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js');
+      const app = initializeApp(cfg);
+      const db = getFirestore(app);
+      window.__fb.db = db;
+      window.__fb.helpers = { collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, serverTimestamp };
+      window.__fb.ready = true;
+      window.dispatchEvent(new Event('fb-ready'));
+    } catch (e) {
+      window.__fb.error = String(e);
+      window.dispatchEvent(new Event('fb-error'));
+    }
+  })();
+</script>
+<script>
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef } = React;
 
@@ -105,6 +143,69 @@ function loadSuggestions() {
   return [];
 }
 function saveSuggestions(list) { try { localStorage.setItem(SUGGESTIONS_KEY, JSON.stringify(list)); } catch(e) {} }
+
+// ---- Sincronização com o banco compartilhado (Firebase) ----
+// Guarda só o essencial pra visualização no Painel do Desenvolvedor: NUNCA sincroniza senha
+// nem pergunta/resposta de recuperação de senha, por segurança. Falha em silêncio se o
+// Firebase não estiver configurado (ver window.__FIREBASE_CONFIG__ no <head>) ou sem rede —
+// nesse caso o app segue funcionando só com os dados locais, como sempre funcionou.
+function fbIsReady() { return !!(window.__fb && window.__fb.ready && window.__fb.db); }
+
+async function fbAddChurch(church) {
+  if (!fbIsReady()) return false;
+  try {
+    const { collection, addDoc, serverTimestamp } = window.__fb.helpers;
+    await addDoc(collection(window.__fb.db, 'igrejas'), {
+      churchId: church.id, name: church.name, city: church.city || '', state: church.state || '',
+      association: church.association || '', district: church.district || '',
+      pastorName: church.pastorName || '', login: church.login,
+      createdAt: church.createdAt, syncedAt: serverTimestamp()
+    });
+    return true;
+  } catch(e) { return false; }
+}
+
+async function fbAddSuggestion(sug) {
+  if (!fbIsReady()) return false;
+  try {
+    const { collection, addDoc, serverTimestamp } = window.__fb.helpers;
+    await addDoc(collection(window.__fb.db, 'sugestoes'), {
+      localId: sug.id, churchId: sug.churchId, churchName: sug.churchName, text: sug.text,
+      status: 'pending', response: '', createdAt: sug.createdAt, respondedAt: null, syncedAt: serverTimestamp()
+    });
+    return true;
+  } catch(e) { return false; }
+}
+
+async function fbRespondSuggestion(docId, response) {
+  if (!fbIsReady() || !docId) return false;
+  try {
+    const { doc, updateDoc } = window.__fb.helpers;
+    await updateDoc(doc(window.__fb.db, 'sugestoes', docId), { response, status:'answered', respondedAt: new Date().toISOString() });
+    return true;
+  } catch(e) { return false; }
+}
+
+// callback(list) é chamado sempre que a lista mudar (tempo real). Retorna uma função pra parar de escutar.
+function fbListenChurches(callback) {
+  if (!fbIsReady()) return () => {};
+  try {
+    const { collection, onSnapshot, query, orderBy } = window.__fb.helpers;
+    const q = query(collection(window.__fb.db, 'igrejas'), orderBy('createdAt', 'desc'));
+    return onSnapshot(q, snap => callback(snap.docs.map(d => ({ docId: d.id, ...d.data() }))), () => {});
+  } catch(e) { return () => {}; }
+}
+
+// Sem churchId: escuta todas as sugestões (uso do Painel do Desenvolvedor). Com churchId: só as dessa igreja.
+function fbListenSuggestions(callback, churchId) {
+  if (!fbIsReady()) return () => {};
+  try {
+    const { collection, onSnapshot, query, where } = window.__fb.helpers;
+    const base = collection(window.__fb.db, 'sugestoes');
+    const q = churchId ? query(base, where('churchId', '==', churchId)) : base;
+    return onSnapshot(q, snap => callback(snap.docs.map(d => ({ docId: d.id, ...d.data() }))), () => {});
+  } catch(e) { return () => {}; }
+}
 
 const inputStyle = { padding:'11px 13px', borderRadius:'10px', border:'1px solid var(--border-soft)', background:'rgba(15,23,42,0.35)', color:'var(--text-hi)', fontSize:'13.5px', outline:'none', width:'100%' };
 const btnPrimary = { padding:'12px 18px', borderRadius:'14px', border:'none', background:'linear-gradient(150deg,var(--accent-1),var(--accent-2))', color:'#fff', fontWeight:800, fontSize:'13px', width:'100%', boxShadow:'0 6px 16px -6px rgba(0,0,0,0.5)', cursor:'pointer' };
@@ -197,6 +298,7 @@ function LoginScreen({ onLogin }) {
     const nextDB = [...db, church];
     saveDB(nextDB);
     pushLog(loadLog(), { type:'cadastro', churchName: church.name, churchId: church.id });
+    fbAddChurch(church);
 
     onLogin({ type:'church', church });
   };
@@ -446,15 +548,60 @@ function PasswordResetRow({ church, onReset, onCancel }) {
 function DeveloperPanel({ onLogout }) {
   const [db, setDb] = useState(loadDB);
   const [log, setLog] = useState(loadLog);
-  const [suggestions, setSuggestions] = useState(loadSuggestions);
+  const [localSuggestions, setLocalSuggestions] = useState(loadSuggestions);
+  const [remoteChurches, setRemoteChurches] = useState(null);
+  const [remoteSuggestions, setRemoteSuggestions] = useState(null);
+  const [syncStatus, setSyncStatus] = useState(fbIsReady() ? 'ready' : (window.__fb && window.__fb.error === 'no-config' ? 'no-config' : 'connecting'));
   const [tab, setTab] = useState('igrejas');
   const [expandedId, setExpandedId] = useState(null);
   const [resetId, setResetId] = useState(null);
 
-  const refresh = () => { setDb(loadDB()); setLog(loadLog()); setSuggestions(loadSuggestions()); };
+  useEffect(() => {
+    const onReady = () => { setSyncStatus('ready'); };
+    const onError = () => { setSyncStatus(window.__fb && window.__fb.error === 'no-config' ? 'no-config' : 'error'); };
+    window.addEventListener('fb-ready', onReady);
+    window.addEventListener('fb-error', onError);
+    if (fbIsReady()) setSyncStatus('ready');
+    const unsub1 = fbListenChurches(list => setRemoteChurches(list));
+    const unsub2 = fbListenSuggestions(list => setRemoteSuggestions(list));
+    return () => {
+      window.removeEventListener('fb-ready', onReady);
+      window.removeEventListener('fb-error', onError);
+      if (typeof unsub1 === 'function') unsub1();
+      if (typeof unsub2 === 'function') unsub2();
+    };
+  }, []);
+
+  // Igrejas: mistura o que veio do banco compartilhado (de qualquer aparelho) com igrejas
+  // cadastradas só neste aparelho antes de o banco compartilhado existir (ou sem sincronizar ainda).
+  const db_merged = useMemo(() => {
+    if (!remoteChurches) return db;
+    const remoteIds = new Set(remoteChurches.map(r => r.churchId));
+    const localOnly = db.filter(c => !remoteIds.has(c.id));
+    const remoteMapped = remoteChurches.map(r => ({
+      id: r.churchId, name: r.name, city: r.city, state: r.state, login: r.login,
+      association: r.association, district: r.district, pastorName: r.pastorName,
+      createdAt: r.createdAt, __remote: !localOnly.some(l => l.id === r.churchId)
+    }));
+    return [...remoteMapped, ...localOnly];
+  }, [remoteChurches, db]);
+
+  const suggestions = useMemo(() => {
+    if (!remoteSuggestions) return localSuggestions;
+    const remoteLocalIds = new Set(remoteSuggestions.map(r => r.localId).filter(Boolean));
+    const localOnly = localSuggestions.filter(s => !remoteLocalIds.has(s.id));
+    const remoteMapped = remoteSuggestions.map(r => ({
+      id: r.localId || r.docId, docId: r.docId, churchId: r.churchId, churchName: r.churchName,
+      text: r.text, createdAt: r.createdAt, status: r.status, response: r.response, respondedAt: r.respondedAt
+    }));
+    return [...remoteMapped, ...localOnly].sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }, [remoteSuggestions, localSuggestions]);
+
+  const refresh = () => { setDb(loadDB()); setLog(loadLog()); setLocalSuggestions(loadSuggestions()); };
 
   const removeChurch = (id) => {
     const church = db.find(c=>c.id===id);
+    if (!church) { alert('Essa igreja foi cadastrada em outro aparelho — só é possível removê-la ou redefinir a senha dela no dispositivo onde ela se cadastrou.'); return; }
     const next = db.filter(c=>c.id!==id);
     saveDB(next);
     const nl = pushLog(loadLog(), { type:'remocao', churchName: church ? church.name : id, churchId: id });
@@ -463,15 +610,20 @@ function DeveloperPanel({ onLogout }) {
 
   const resetChurchPassword = (id, newPass) => {
     const church = db.find(c=>c.id===id);
+    if (!church) { alert('Essa igreja foi cadastrada em outro aparelho — só é possível removê-la ou redefinir a senha dela no dispositivo onde ela se cadastrou.'); return; }
     const next = db.map(c => c.id===id ? { ...c, password: newPass, updatedAt: new Date().toISOString() } : c);
     saveDB(next);
     const nl = pushLog(loadLog(), { type:'atualizacao', churchName: church ? church.name : id, churchId: id, detail: 'Senha redefinida pelo desenvolvedor' });
     setDb(next); setLog(nl); setResetId(null);
   };
 
-  const respondSuggestion = (id, response) => {
-    setSuggestions(list => {
-      const next = list.map(s => s.id===id ? { ...s, response, status:'answered', respondedAt: new Date().toISOString() } : s);
+  const respondSuggestion = (s, response) => {
+    if (s.docId) {
+      fbRespondSuggestion(s.docId, response);
+      return;
+    }
+    setLocalSuggestions(list => {
+      const next = list.map(x => x.id===s.id ? { ...x, response, status:'answered', respondedAt: new Date().toISOString() } : x);
       saveSuggestions(next);
       return next;
     });
@@ -485,10 +637,17 @@ function DeveloperPanel({ onLogout }) {
           <div class="breathe" style=${{width:'38px',height:'38px',borderRadius:'12px',background:'linear-gradient(135deg,var(--accent-1),var(--accent-2),var(--accent-3))',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'18px'}}>👑</div>
           <div>
             <div style=${{fontWeight:800, fontSize:'14px'}}>Painel do Desenvolvedor</div>
-            <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>${db.length} igreja(s) cadastrada(s)</div>
+            <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>${db_merged.length} igreja(s) cadastrada(s)</div>
           </div>
         </div>
-        <button onClick=${onLogout} style=${btnGhost}>Sair</button>
+        <div style=${{display:'flex', alignItems:'center', gap:'10px'}}>
+          <span style=${{fontSize:'10px', fontWeight:700, padding:'4px 9px', borderRadius:'999px',
+            background: syncStatus==='ready' ? 'color-mix(in srgb, var(--success-1) 20%, transparent)' : syncStatus==='connecting' ? 'color-mix(in srgb, var(--highlight) 20%, transparent)' : 'rgba(148,163,184,0.15)',
+            color: syncStatus==='ready' ? 'var(--success-1)' : syncStatus==='connecting' ? 'var(--highlight)' : 'var(--text-dim)'}}>
+            ${syncStatus==='ready' ? '☁️ Sincronizado' : syncStatus==='connecting' ? '⏳ Conectando...' : syncStatus==='no-config' ? '📴 Só neste aparelho' : '⚠️ Sem conexão'}
+          </span>
+          <button onClick=${onLogout} style=${btnGhost}>Sair</button>
+        </div>
       </div>
 
       <div style=${{display:'flex', gap:'6px', marginBottom:'16px', flexWrap:'wrap'}}>
@@ -503,23 +662,28 @@ function DeveloperPanel({ onLogout }) {
 
       ${tab === 'igrejas' && html`
         <div style=${{display:'grid', gap:'10px'}}>
-          ${db.length === 0 && html`<div class="glass fade-up" style=${{padding:'24px', borderRadius:'16px', textAlign:'center', color:'var(--text-dim)', fontSize:'13px'}}>Nenhuma igreja cadastrada ainda.</div>`}
-          ${db.map((c,i) => html`
+          ${db_merged.length === 0 && html`<div class="glass fade-up" style=${{padding:'24px', borderRadius:'16px', textAlign:'center', color:'var(--text-dim)', fontSize:'13px'}}>Nenhuma igreja cadastrada ainda.</div>`}
+          ${db_merged.map((c,i) => html`
             <div key=${c.id} class="glass fade-up" style=${{padding:'14px 16px', borderRadius:'14px', animationDelay:(i*0.03)+'s'}}>
               <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center', gap:'12px', flexWrap:'wrap'}}>
                 <div>
-                  <div style=${{fontWeight:700, fontSize:'13.5px'}}>${c.name}</div>
+                  <div style=${{display:'flex', alignItems:'center', gap:'6px'}}>
+                    <span style=${{fontWeight:700, fontSize:'13.5px'}}>${c.name}</span>
+                    ${c.__remote && html`<span style=${{fontSize:'9px', fontWeight:800, padding:'2px 7px', borderRadius:'999px', background:'color-mix(in srgb, var(--accent-1) 20%, transparent)', color:'var(--accent-1)'}}>☁️ outro aparelho</span>`}
+                  </div>
                   <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>${c.city}${c.state ? ' - '+c.state : ''} • login: ${c.login}</div>
                   <div style=${{fontSize:'10px', color:'var(--text-dim)', marginTop:'2px'}}>Cadastrada em ${new Date(c.createdAt).toLocaleString('pt-BR')}</div>
                 </div>
                 <div style=${{display:'flex', gap:'6px'}}>
-                  <button onClick=${()=>setExpandedId(expandedId===c.id ? null : c.id)} style=${btnGhost}>${expandedId===c.id ? 'Fechar' : 'Ver detalhes'}</button>
-                  <button onClick=${()=>{ setResetId(resetId===c.id ? null : c.id); }} style=${btnGhost}>🔑 Redefinir Senha</button>
-                  <button onClick=${()=>removeChurch(c.id)} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>Remover</button>
+                  ${!c.__remote && html`
+                    <button onClick=${()=>setExpandedId(expandedId===c.id ? null : c.id)} style=${btnGhost}>${expandedId===c.id ? 'Fechar' : 'Ver detalhes'}</button>
+                    <button onClick=${()=>{ setResetId(resetId===c.id ? null : c.id); }} style=${btnGhost}>🔑 Redefinir Senha</button>
+                    <button onClick=${()=>removeChurch(c.id)} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>Remover</button>
+                  `}
                 </div>
               </div>
-              ${resetId === c.id && html`<${PasswordResetRow} church=${c} onReset=${(pass)=>resetChurchPassword(c.id, pass)} onCancel=${()=>setResetId(null)} />`}
-              ${expandedId === c.id && html`<${ChurchDetailExpanded} church=${c} />`}
+              ${resetId === c.id && !c.__remote && html`<${PasswordResetRow} church=${c} onReset=${(pass)=>resetChurchPassword(c.id, pass)} onCancel=${()=>setResetId(null)} />`}
+              ${expandedId === c.id && !c.__remote && html`<${ChurchDetailExpanded} church=${c} />`}
             </div>
           `)}
         </div>
@@ -556,7 +720,7 @@ function DeveloperPanel({ onLogout }) {
 
 function SuggestionDevCard({ s, idx, onRespond }) {
   const [text, setText] = useState(s.response || '');
-  const submit = (e) => { e.preventDefault(); onRespond(s.id, text.trim()); };
+  const submit = (e) => { e.preventDefault(); onRespond(s, text.trim()); };
   return html`
     <div class="glass fade-up" style=${{padding:'14px 16px', borderRadius:'14px', display:'grid', gap:'10px', animationDelay:(idx*0.03)+'s', border: s.status==='answered' ? '1px solid var(--success-1)' : '1px solid var(--highlight)'}}>
       <div style=${{display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:'10px'}}>
@@ -3670,20 +3834,39 @@ function PresencaView({ churchId }) {
 }
 
 function SugestoesView({ church }) {
-  const [suggestions, setSuggestions] = useState(loadSuggestions);
+  const [localSuggestions, setLocalSuggestions] = useState(loadSuggestions);
+  const [remoteSuggestions, setRemoteSuggestions] = useState(null);
   const [text, setText] = useState('');
 
-  const mine = suggestions.filter(s => s.churchId === church.id).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+  useEffect(() => {
+    const unsub = fbListenSuggestions((list) => setRemoteSuggestions(list), church.id);
+    return () => { if (typeof unsub === 'function') unsub(); };
+  }, [church.id]);
+
+  // Enquanto o Firebase não estiver configurado (ou sem rede), mostra só o que está salvo neste
+  // aparelho — igual funcionava antes. Quando conectado, mistura com o que veio de outros aparelhos.
+  const mine = useMemo(() => {
+    if (!remoteSuggestions) return localSuggestions.filter(s => s.churchId === church.id);
+    const remoteLocalIds = new Set(remoteSuggestions.map(r => r.localId).filter(Boolean));
+    const localOnly = localSuggestions.filter(s => s.churchId === church.id && !remoteLocalIds.has(s.id));
+    const remoteMapped = remoteSuggestions.map(r => ({
+      id: r.localId || r.docId, docId: r.docId, churchId: r.churchId, churchName: r.churchName,
+      text: r.text, createdAt: r.createdAt, status: r.status, response: r.response, respondedAt: r.respondedAt
+    }));
+    return [...remoteMapped, ...localOnly];
+  }, [remoteSuggestions, localSuggestions, church.id]);
+  mine.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   const submit = (e) => {
     e.preventDefault();
     const clean = text.trim();
     if (!clean) return;
     const entry = { id:'sug-'+Date.now(), churchId: church.id, churchName: church.name, text: clean, createdAt: new Date().toISOString(), status:'pending', response:null, respondedAt:null };
-    const next = [entry, ...suggestions];
+    const next = [entry, ...loadSuggestions()];
     saveSuggestions(next);
-    setSuggestions(next);
+    setLocalSuggestions(next);
     setText('');
+    fbAddSuggestion(entry);
   };
 
   return html`
