@@ -3975,7 +3975,18 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
     setTimeout(()=>setRecSaved(false), 2200);
   };
 
-  const SECTIONS = [['dados','🏠 Dados da Igreja'],['senha','🔒 Alterar Senha'],['recuperacao','🔑 Palavra de Recuperação']];
+  /* ---- Cores do tema ---- */
+  const [theme, setTheme] = useState(loadTheme);
+  const chooseTheme = (t) => { setTheme(t); applyTheme(t); saveThemeToStorage(t); };
+  const customThemeChange = (field, value) => { chooseTheme({ ...theme, [field]: value, name:'Personalizado' }); };
+  const themeColorField = (label, field) => html`
+    <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px'}}>
+      <span style=${{fontSize:'12px', color:'var(--text-mid)'}}>${label}</span>
+      <input type="color" value=${theme[field]} onChange=${e=>customThemeChange(field, e.target.value)} style=${{width:'48px', height:'30px', borderRadius:'7px', border:'1px solid var(--border-soft)', background:'transparent', padding:0}} />
+    </div>
+  `;
+
+  const SECTIONS = [['dados','🏠 Dados da Igreja'],['senha','🔒 Alterar Senha'],['recuperacao','🔑 Palavra de Recuperação'],['cores','🎨 Cores do Tema']];
 
   return html`
     <div style=${{maxWidth:'640px', margin:'0 auto', padding:'20px 16px 60px', display:'grid', gap:'16px'}}>
@@ -4053,6 +4064,34 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
           <button type="submit" style=${btnPrimary}>${recSaved ? '✅ Salvo!' : '🔑 Salvar Pergunta de Recuperação'}</button>
         </form>
       `}
+
+      ${section === 'cores' && html`
+        <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
+          <div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Escolha um tema pronto ou personalize as cores do app do seu jeito.</div>
+
+          <div style=${sectionLabelStyle}>Temas Prontos</div>
+          <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
+            ${THEME_PRESETS.map(p => html`
+              <button key=${p.name} type="button" onClick=${()=>chooseTheme(p)} style=${{display:'flex', alignItems:'center', gap:'8px', padding:'9px 10px', borderRadius:'10px', border: theme.name===p.name ? '1.5px solid '+p.a1 : '1px solid var(--border-soft)', background:'transparent', fontSize:'12px', color:'var(--text-mid)'}}>
+                <span style=${{width:'16px', height:'16px', borderRadius:'50%', background:'linear-gradient(135deg,'+p.a1+','+p.a2+')', flexShrink:0, border:'1px solid rgba(255,255,255,0.15)'}}></span>
+                ${p.name}
+              </button>
+            `)}
+          </div>
+
+          <div style=${{...sectionLabelStyle, marginTop:'6px'}}>Cores Personalizadas</div>
+          <div style=${{display:'grid', gap:'8px'}}>
+            ${themeColorField('Fundo', 'bg')}
+            ${themeColorField('Texto', 'text')}
+            ${themeColorField('Destaque 1 (botões)', 'a1')}
+            ${themeColorField('Destaque 2', 'a2')}
+            ${themeColorField('Destaque 3', 'a3')}
+            ${themeColorField('Realce (hinário)', 'highlight')}
+            ${themeColorField('Sucesso / concluído', 'success')}
+            ${themeColorField('Erro / remover', 'danger')}
+          </div>
+        </div>
+      `}
     </div>
   `;
 }
@@ -4111,59 +4150,6 @@ function applyTheme(t) {
   set('--glass-bg', isLight ? '#ffffffee' : '#0f172acc');
 }
 
-function ThemeSwitcher() {
-  const [open, setOpen] = useState(false);
-  const [theme, setTheme] = useState(loadTheme);
-
-  useEffect(() => { applyTheme(theme); }, []);
-
-  const choose = (t) => {
-    setTheme(t);
-    applyTheme(t);
-    saveThemeToStorage(t);
-  };
-  const customChange = (field, value) => {
-    const next = { ...theme, [field]: value, name:'Personalizado' };
-    choose(next);
-  };
-
-  const colorField = (label, field) => html`
-    <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px'}}>
-      <span style=${{fontSize:'11px', color:'var(--text-mid)'}}>${label}</span>
-      <input type="color" value=${theme[field]} onChange=${e=>customChange(field, e.target.value)} style=${{width:'44px', height:'26px', borderRadius:'6px', border:'1px solid var(--border-soft)', background:'transparent', padding:0}} />
-    </div>
-  `;
-
-  return html`
-    <div style=${{position:'fixed', top:'14px', right:'14px', zIndex:100}}>
-      <button onClick=${()=>setOpen(o=>!o)} class="glass" style=${{width:'38px', height:'38px', borderRadius:'50%', border:'1px solid var(--border-soft)', fontSize:'16px', display:'flex', alignItems:'center', justifyContent:'center'}} title="Personalizar cores">🎨</button>
-      ${open && html`
-        <div class="glass fade-up" style=${{position:'absolute', top:'46px', right:0, width:'260px', padding:'14px', borderRadius:'16px', display:'grid', gap:'10px', maxHeight:'80vh', overflowY:'auto'}}>
-          <div style=${{fontSize:'11px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em'}}>Temas Prontos</div>
-          <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px'}}>
-            ${THEME_PRESETS.map(p => html`
-              <button key=${p.name} onClick=${()=>choose(p)} style=${{display:'flex', alignItems:'center', gap:'6px', padding:'6px 8px', borderRadius:'10px', border: theme.name===p.name ? '1.5px solid '+p.a1 : '1px solid var(--border-soft)', background:'transparent', fontSize:'10.5px', color:'var(--text-mid)'}}>
-                <span style=${{width:'14px', height:'14px', borderRadius:'50%', background:'linear-gradient(135deg,'+p.a1+','+p.a2+')', flexShrink:0, border:'1px solid rgba(255,255,255,0.15)'}}></span>
-                ${p.name}
-              </button>
-            `)}
-          </div>
-
-          <div style=${{fontSize:'11px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', marginTop:'6px', borderTop:'1px solid var(--border-soft)', paddingTop:'10px'}}>Cores Personalizadas</div>
-          ${colorField('Fundo', 'bg')}
-          ${colorField('Texto', 'text')}
-          ${colorField('Destaque 1 (botões)', 'a1')}
-          ${colorField('Destaque 2', 'a2')}
-          ${colorField('Destaque 3', 'a3')}
-          ${colorField('Realce (hinário)', 'highlight')}
-          ${colorField('Sucesso / concluído', 'success')}
-          ${colorField('Erro / remover', 'danger')}
-        </div>
-      `}
-    </div>
-  `;
-}
-
 function App() {
   const [session, setSession] = useState(() => {
     try { const raw = localStorage.getItem(SESSION_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
@@ -4190,7 +4176,6 @@ function App() {
 
   return html`
     <div>
-      <${ThemeSwitcher} />
       ${!session ? html`<${LoginScreen} onLogin=${login} />` :
         session.type === 'developer' ? html`<${DeveloperPanel} onLogout=${logout} />` :
         html`<${ChurchDashboard} church=${session.church} onLogout=${logout} onUpdateChurch=${updateChurchSession} />`}
