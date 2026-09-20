@@ -1191,6 +1191,158 @@ function AddActivityForm({ defaultSection, activities, onAddAt, onClose }) {
   `;
 }
 
+// ---- Assistente de Liturgia: lê um texto colado e monta as atividades sozinho ----
+// Reconhece cabeçalhos de seção (Escola Sabática / Culto Divino), horários, responsáveis
+// (depois de um hífen ou entre parênteses) e tenta adivinhar a categoria pelas palavras usadas
+// na linha. O resultado sempre passa por uma prévia editável antes de entrar na liturgia de verdade.
+const LITURGY_CATEGORY_KEYWORDS = [
+  ['sermao', ['sermão','sermao','pregação','pregacao','prédica','predica','palavra de deus','mensagem da palavra']],
+  ['mensagem_musical', ['mensagem musical','especial musical','número musical','numero musical','solo de']],
+  ['video', ['vídeo','video','filme','informativo mundial']],
+  ['ofertas', ['oferta','dízimo','dizimo','provai e vede']],
+  ['oracao', ['oração','oracao','bênção','bencao','benção','joelhos','intercess']],
+  ['infantil', ['infantil','criança','crianca','jardim de infância','primários','primarios']],
+  ['anuncios', ['aviso','anúncio','anuncio','comunicação','comunicacao']],
+  ['abertura', ['boas-vindas','boas vindas','recepção','recepcao']],
+  ['louvor', ['hino','louvor','cântico','cantico','prelúdio','preludio','coral']],
+];
+function guessLiturgyCategory(text) {
+  const low = text.toLowerCase();
+  for (const [cat, words] of LITURGY_CATEGORY_KEYWORDS) {
+    if (words.some(w => low.includes(w))) return cat;
+  }
+  return 'geral';
+}
+function guessLiturgySection(text, current) {
+  const low = text.toLowerCase();
+  if (low.includes('escola sabatina') || low.includes('escola sabática') || low.includes('escola sabatica')) return 'escola_sabatina';
+  if (low.includes('culto divino') || low.includes('culto de adoração') || low.includes('culto de adoracao')) return 'culto_divino';
+  return current;
+}
+function parseLiturgyText(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const drafts = [];
+  let currentSection = 'escola_sabatina';
+  let idx = 0;
+  for (const raw of lines) {
+    const low = raw.toLowerCase();
+    const isHeader = raw.length < 40 && /(escola sabatina|escola sab[aá]tica|culto divino|culto de ador)/.test(low) && !/\d{1,2}[:h]\d{2}/.test(raw);
+    if (isHeader) {
+      currentSection = low.includes('escola') ? 'escola_sabatina' : 'culto_divino';
+      continue;
+    }
+
+    let line = raw.replace(/^[-•*•\d]+[.\)]?\s*/, '');
+    if (!line.trim()) continue;
+
+    let time = '--:--';
+    const timeMatch = line.match(/(\d{1,2})[:h](\d{2})/);
+    if (timeMatch) {
+      time = timeMatch[1].padStart(2,'0') + ':' + timeMatch[2];
+      line = (line.slice(0, timeMatch.index) + line.slice(timeMatch.index + timeMatch[0].length)).trim();
+    }
+    line = line.replace(/^[-–—:\s]+|[-–—:\s]+$/g, '');
+    if (!line) continue;
+
+    let name = line, responsible = '';
+    const parenMatch = line.match(/\(([^)]+)\)\s*$/);
+    if (parenMatch) {
+      responsible = parenMatch[1].trim();
+      name = line.slice(0, parenMatch.index).trim();
+    } else {
+      const dashParts = line.split(/\s[-–—]\s/);
+      if (dashParts.length >= 2) {
+        name = dashParts[0].trim();
+        responsible = dashParts.slice(1).join(' - ').trim();
+      }
+    }
+    responsible = responsible.replace(/^(com|por)\s+/i, '').trim();
+    name = name.replace(/^[-–—:\s]+|[-–—:\s]+$/g, '');
+    if (!name) continue;
+
+    currentSection = guessLiturgySection(raw, currentSection);
+    const category = guessLiturgyCategory(raw);
+
+    drafts.push({ tempId:'draft-'+(idx++), name, responsible: responsible || 'A definir', time, section: currentSection, category });
+  }
+  return drafts;
+}
+
+function LiturgyAssistantModal({ onImportAll, onClose }) {
+  const [text, setText] = useState('');
+  const [drafts, setDrafts] = useState(null);
+
+  const analyze = () => {
+    const parsed = parseLiturgyText(text);
+    if (parsed.length === 0) { alert('Não consegui identificar nenhuma atividade nesse texto. Tente colar um item por linha, um por atividade.'); return; }
+    setDrafts(parsed);
+  };
+  const updateDraft = (tempId, patch) => setDrafts(list => list.map(d => d.tempId===tempId ? {...d, ...patch} : d));
+  const removeDraft = (tempId) => setDrafts(list => list.filter(d => d.tempId !== tempId));
+  const confirm = () => { onImportAll(drafts); onClose(); };
+
+  return html`
+    <div style=${{position:'fixed', inset:0, background:'rgba(2,6,23,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:60, padding:'16px'}} onClick=${onClose}>
+      <div class="glass fade-up" style=${{maxWidth:'580px', width:'100%', maxHeight:'86vh', overflowY:'auto', padding:'22px', borderRadius:'20px', display:'grid', gap:'14px'}} onClick=${e=>e.stopPropagation()}>
+        <div style=${{display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:'10px'}}>
+          <div>
+            <div style=${{fontWeight:800, fontSize:'16px'}}>🤖 Assistente de Liturgia</div>
+            <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Cole a liturgia em texto (um item por linha) e eu identifico sozinho o horário, o responsável e a categoria de cada atividade.</div>
+          </div>
+          <button onClick=${onClose} style=${{background:'transparent', border:'none', color:'var(--text-mid)', fontSize:'18px'}}>✕</button>
+        </div>
+
+        ${!drafts && html`
+          <textarea placeholder="Exemplo:
+ESCOLA SABATINA
+08:45 - Momentos de louvor - Equipe Azul
+09:00 - Boas-vindas - Direção da ES
+09:07 - Oração de joelhos - Diretor ES
+
+CULTO DIVINO
+10:45 - Prelúdio e louvor - Equipe de Louvor
+11:16 - Sermão - Pastor" value=${text} onChange=${e=>setText(e.target.value)} rows="12" style=${{...inputStyle, resize:'vertical', fontFamily:'inherit', fontSize:'12.5px'}}></textarea>
+          <div style=${{display:'flex', justifyContent:'flex-end', gap:'8px'}}>
+            <button type="button" onClick=${onClose} style=${btnGhost}>Cancelar</button>
+            <button type="button" onClick=${analyze} disabled=${!text.trim()} style=${{...btnPrimary, width:'auto', padding:'9px 18px', opacity: text.trim() ? 1 : 0.5}}>🔎 Analisar Texto</button>
+          </div>
+        `}
+
+        ${drafts && html`
+          <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Encontrei ${drafts.length} atividade(s). Confira e ajuste o que for preciso — os itens entram no final de cada seção.</div>
+          <div style=${{display:'grid', gap:'8px'}}>
+            ${drafts.map(d => html`
+              <div key=${d.tempId} class="glass" style=${{padding:'10px 12px', borderRadius:'12px', display:'grid', gap:'6px', border:'1px solid var(--border-soft)'}}>
+                <div style=${{display:'flex', gap:'6px'}}>
+                  <input value=${d.name} onChange=${e=>updateDraft(d.tempId,{name:e.target.value})} style=${{...inputStyle, fontSize:'12px', padding:'7px 9px', flex:1}} />
+                  <button type="button" onClick=${()=>removeDraft(d.tempId)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'16px'}}>✕</button>
+                </div>
+                <div style=${{display:'grid', gridTemplateColumns:'1.2fr 1.2fr 1fr 70px', gap:'6px'}}>
+                  <select value=${d.section} onChange=${e=>updateDraft(d.tempId,{section:e.target.value})} style=${{...inputStyle, fontSize:'11px', padding:'6px 7px'}}>
+                    ${Object.entries(SECTION_LABELS).map(([k,l])=>html`<option key=${k} value=${k}>${l}</option>`)}
+                  </select>
+                  <select value=${d.category} onChange=${e=>updateDraft(d.tempId,{category:e.target.value})} style=${{...inputStyle, fontSize:'11px', padding:'6px 7px'}}>
+                    ${Object.keys(CATEGORY_ICON).map(c=>html`<option key=${c} value=${c}>${CATEGORY_ICON[c]} ${c}</option>`)}
+                  </select>
+                  <input placeholder="Responsável" value=${d.responsible} onChange=${e=>updateDraft(d.tempId,{responsible:e.target.value})} style=${{...inputStyle, fontSize:'11px', padding:'6px 7px'}} />
+                  <input placeholder="--:--" value=${d.time} onChange=${e=>updateDraft(d.tempId,{time:e.target.value})} style=${{...inputStyle, fontSize:'11px', padding:'6px 7px', textAlign:'center'}} />
+                </div>
+              </div>
+            `)}
+          </div>
+          <div style=${{display:'flex', justifyContent:'space-between', gap:'8px', flexWrap:'wrap'}}>
+            <button type="button" onClick=${()=>setDrafts(null)} style=${btnGhost}>← Colar outro texto</button>
+            <div style=${{display:'flex', gap:'8px'}}>
+              <button type="button" onClick=${onClose} style=${btnGhost}>Cancelar</button>
+              <button type="button" onClick=${confirm} disabled=${drafts.length===0} style=${{...btnPrimary, width:'auto', padding:'9px 18px', opacity: drafts.length ? 1 : 0.5}}>✅ Adicionar ${drafts.length} Atividade(s)</button>
+            </div>
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
 function DefaultLiturgyPasswordGate({ hasPassword, onUnlock, onClose }) {
   const [password, setPassword] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
@@ -1385,6 +1537,10 @@ function openMediaInNewTab(media) {
       win.document.open();
       win.document.write(embedHtml);
       win.document.close();
+      try {
+        const el = win.document.documentElement;
+        if (el && el.requestFullscreen) { el.requestFullscreen().catch(()=>{}); }
+      } catch(e) {}
     } else {
       win.location.href = media.url;
     }
@@ -1413,6 +1569,12 @@ function sendToScreenObj(scr, kind, payload) {
         win.document.open();
         win.document.write(embedHtml);
         win.document.close();
+        // Pede tela cheia aqui mesmo, ainda dentro do clique do usuário (é isso que o navegador exige
+        // pra permitir tela cheia automática) — sai mais confiável do que só o script de dentro da janela.
+        try {
+          const el = win.document.documentElement;
+          if (el && el.requestFullscreen) { el.requestFullscreen().catch(()=>{}); }
+        } catch(e) {}
       } else if (media.url) {
         win.location.href = media.url;
       } else {
@@ -2723,6 +2885,7 @@ function CultoLiveMode({ activities, sections, churchId, onAdvance, onClose, onO
 function LiturgiaView({ churchId, churchName }) {
   const [activities, setActivities] = useState(() => loadActivities(churchId));
   const [adding, setAdding] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [finalizeOpen, setFinalizeOpen] = useState(false);
 
   useEffect(() => saveActivities(churchId, activities), [activities, churchId]);
@@ -2781,6 +2944,14 @@ function LiturgiaView({ churchId, churchName }) {
       return next;
     });
     pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Nova atividade: '+act.name });
+  };
+  const importFromAssistant = (drafts) => {
+    const newActs = drafts.map((d,i) => ({
+      id: 'act-'+Date.now()+'-'+i, name: d.name.trim(), section: d.section, category: d.category,
+      responsible: (d.responsible || 'A definir').trim(), time: d.time || '--:--', dur: 5, done:false, media:null
+    }));
+    setActivities(list => [...list, ...newActs]);
+    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Assistente de liturgia: '+newActs.length+' atividade(s) adicionada(s) por texto' });
   };
 
   const savedDefault = loadDefaultLiturgy(churchId);
@@ -2859,6 +3030,7 @@ function LiturgiaView({ churchId, churchName }) {
       <div style=${{fontSize:'10.5px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:'6px'}}>🎚️ Fundos Musicais</div>
       <${BackgroundAudioMixer} />
 
+      <button onClick=${()=>setAssistantOpen(true)} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1.5px dashed var(--accent-1)', color:'var(--accent-1)', fontWeight:700}}>🤖 Assistente de Liturgia (colar texto)</button>
       <div style=${{display:'grid', gridTemplateColumns:'1fr auto', gap:'8px', marginBottom:'8px'}}>
         <button onClick=${()=>setAdding(v=>!v)} style=${{...btnGhost, border:'1.5px dashed var(--border-soft)', padding:'12px'}}>➕ Acrescentar Atividade</button>
         <button onClick=${resetToDefault} style=${{...btnGhost, padding:'12px'}}>🔄 Restaurar Padrão</button>
@@ -2869,6 +3041,7 @@ function LiturgiaView({ churchId, churchName }) {
 
       ${finalizeOpen && finalizeSummary && html`<${FinalizeCultoModal} summary=${finalizeSummary} onConfirm=${confirmFinalize} onClose=${()=>setFinalizeOpen(false)} />`}
       ${adding && html`<${AddActivityForm} defaultSection="escola_sabatina" activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} />`}
+      ${assistantOpen && html`<${LiturgyAssistantModal} onImportAll=${importFromAssistant} onClose=${()=>setAssistantOpen(false)} />`}
 
       ${sections.map(sec => {
         const items = activities.filter(a => a.section === sec);
