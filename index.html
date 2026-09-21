@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.4';
+const APP_VERSION = '2026-09-21.5';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -550,6 +550,7 @@ function LoginScreen({ onLogin }) {
   const [showPassword, setShowPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [remember, setRemember] = useState(true);
   const churches = useSyncedChurches();
 
   // Filtro em cascata pra achar a igreja no login: Associação/Missão > Distrito > Igreja — cada
@@ -604,7 +605,7 @@ function LoginScreen({ onLogin }) {
     if (!login.trim() || !password.trim()) { setError('Digite usuário e senha.'); return; }
 
     if (login.trim().toLowerCase() === DEV_ACCOUNT.login && password === DEV_ACCOUNT.password) {
-      onLogin({ type:'developer', name: DEV_ACCOUNT.name });
+      onLogin({ type:'developer', name: DEV_ACCOUNT.name }, remember);
       return;
     }
 
@@ -620,7 +621,7 @@ function LoginScreen({ onLogin }) {
     if (church.paused) { setError('O acesso dessa igreja está pausado no momento. Fale com o desenvolvedor (Paulo) pra reativar.'); return; }
     pushLog(loadLog(), { type:'login', churchName: church.name, churchId: church.id });
     fbAddActivity({ id:'log-'+Date.now(), type:'login', churchName: church.name, churchId: church.id, at: new Date().toISOString() });
-    onLogin({ type:'church', church });
+    onLogin({ type:'church', church }, remember);
   };
 
   const doRegister = async (e) => {
@@ -715,6 +716,10 @@ function LoginScreen({ onLogin }) {
                 <input type=${showPassword ? 'text' : 'password'} placeholder="Senha" value=${password} onChange=${e=>setPassword(e.target.value)} style=${{...inputStyle, paddingRight:'42px'}} />
                 <button type="button" onClick=${()=>setShowPassword(v=>!v)} style=${{position:'absolute', right:'6px', top:'50%', transform:'translateY(-50%)', background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'15px', padding:'4px 6px', cursor:'pointer'}} title=${showPassword ? 'Ocultar senha' : 'Mostrar senha'}>${showPassword ? '🙈' : '👁️'}</button>
               </div>
+              <label style=${{display:'flex', alignItems:'center', gap:'8px', fontSize:'12.5px', color:'var(--text-mid)', padding:'2px 2px'}}>
+                <input type="checkbox" checked=${remember} onChange=${e=>setRemember(e.target.checked)} style=${{width:'16px',height:'16px'}} />
+                Manter conectado neste aparelho
+              </label>
               <button type="submit" style=${btnPrimary}>Entrar no Sistema</button>
               <button type="button" onClick=${()=>setForgotOpen(true)} style=${{background:'transparent', border:'none', color:'var(--accent-1)', fontSize:'11.5px', fontWeight:700, cursor:'pointer', padding:'2px'}}>Esqueci minha senha</button>
               <div style=${{fontSize:'11px', color:'var(--text-dim)', textAlign:'center'}}>Não encontrou sua igreja? Cadastre na aba ao lado.</div>
@@ -5357,27 +5362,49 @@ function useChurchBackfillSync() {
   }, []);
 }
 
+// "Manter conectado": por padrão a sessão vai pro localStorage (sobrevive a fechar o navegador,
+// reiniciar o aparelho etc.). Se a pessoa desmarcar a opção no login, a sessão vai só pro
+// sessionStorage (dura só enquanto essa aba/janela do navegador estiver aberta) — útil num aparelho
+// compartilhado. Ao abrir o app, olha os dois lugares pra saber onde a sessão (se houver) está salva.
+function readStoredSession() {
+  try { const raw = localStorage.getItem(SESSION_KEY); if (raw) return { session: JSON.parse(raw), remember: true }; } catch(e) {}
+  try { const raw = sessionStorage.getItem(SESSION_KEY); if (raw) return { session: JSON.parse(raw), remember: false }; } catch(e) {}
+  return { session: null, remember: true };
+}
+
 function App() {
   useChurchBackfillSync();
-  const [session, setSession] = useState(() => {
-    try { const raw = localStorage.getItem(SESSION_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
-    return null;
-  });
+  const initialStored = useRef(null);
+  if (!initialStored.current) initialStored.current = readStoredSession();
+  const [session, setSession] = useState(() => initialStored.current.session);
+  const rememberRef = useRef(initialStored.current.remember);
 
   useEffect(() => { applyTheme(loadTheme()); }, []);
 
-  const login = (s) => {
+  const login = (s, remember) => {
+    rememberRef.current = remember !== false;
     setSession(s);
-    try { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch(e) {}
+    try {
+      if (rememberRef.current) {
+        localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+        sessionStorage.removeItem(SESSION_KEY);
+      } else {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
+        localStorage.removeItem(SESSION_KEY);
+      }
+    } catch(e) {}
   };
   const logout = () => {
     setSession(null);
-    try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
+    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); } catch(e) {}
   };
   const updateChurchSession = (updatedChurch) => {
     setSession(s => {
       const next = { ...s, church: updatedChurch };
-      try { localStorage.setItem(SESSION_KEY, JSON.stringify(next)); } catch(e) {}
+      try {
+        if (rememberRef.current) localStorage.setItem(SESSION_KEY, JSON.stringify(next));
+        else sessionStorage.setItem(SESSION_KEY, JSON.stringify(next));
+      } catch(e) {}
       return next;
     });
   };
