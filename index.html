@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.8';
+const APP_VERSION = '2026-09-21.9';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1793,6 +1793,23 @@ function useIsMobile() {
   return isMobile;
 }
 
+// Compartilha o link do próprio app (a página que está aberta agora) — usa o menu nativo de
+// compartilhamento do celular quando existe (WhatsApp, e-mail, etc.); no computador, ou quando o
+// celular não oferece esse menu, copia o link pra área de transferência pra colar onde quiser.
+async function shareAppLink() {
+  const url = window.location.href;
+  const title = 'Gerenciador de Culto & Hinário Adventista';
+  try {
+    if (navigator.share) { await navigator.share({ title, url }); return; }
+  } catch(e) { if (e && e.name === 'AbortError') return; }
+  try {
+    await navigator.clipboard.writeText(url);
+    alert('Link copiado! Agora é só colar (Ctrl+V ou manter apertado e colar) onde quiser mandar.');
+  } catch(e) {
+    window.prompt('Copie o link abaixo:', url);
+  }
+}
+
 function ChurchHeader({ church, tab, setTab, onLogout }) {
   const [clock, setClock] = useState('');
   const [navOpen, setNavOpen] = useState(false);
@@ -1824,6 +1841,7 @@ function ChurchHeader({ church, tab, setTab, onLogout }) {
               <span>${navOpen ? '▲' : '▼'}</span>
             </button>
           `}
+          <button onClick=${shareAppLink} title="Compartilhar o link do app" style=${{...btnGhost, padding: isMobile ? '7px 10px' : undefined, fontSize: isMobile ? '11px' : undefined}}>🔗${isMobile ? '' : ' Compartilhar'}</button>
           <button onClick=${onLogout} style=${{...btnGhost, padding: isMobile ? '7px 10px' : undefined, fontSize: isMobile ? '11px' : undefined}}>Sair</button>
         </div>
       </div>
@@ -3705,8 +3723,11 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
             <button type="button" onClick=${()=>useYoutubeLink(i)} style=${{...btnGhost, padding:'6px 8px', fontSize:'10.5px'}}>✅</button>
           </div>
 
-          <input type="range" min="0" max="100" value=${t.volume} onChange=${e=>setVolume(i, e.target.value)} style=${{width:'100%'}} />
-          <div style=${{fontSize:'10px', color:'var(--text-dim)', textAlign:'center'}}>🔊 ${t.volume}%</div>
+          <div style=${{display:'flex', alignItems:'center', gap:'6px', marginTop:'2px'}}>
+            <span style=${{fontSize:'10.5px', opacity:0.55}}>🔉</span>
+            <input type="range" min="0" max="100" value=${t.volume} onChange=${e=>setVolume(i, e.target.value)} style=${{flex:1, height:'3px', accentColor:'var(--text-dim)', opacity:0.7}} />
+            <span style=${{fontSize:'9px', color:'var(--text-dim)', minWidth:'24px', textAlign:'right'}}>${t.volume}%</span>
+          </div>
         </div>
       `)}
     </div>
