@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-20.3';
+const APP_VERSION = '2026-09-20.4';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -766,16 +766,26 @@ function DeveloperPanel({ onLogout }) {
 
   // Igrejas: mistura o que veio do banco compartilhado (de qualquer aparelho) com igrejas
   // cadastradas só neste aparelho antes de o banco compartilhado existir (ou sem sincronizar ainda).
+  // Se este aparelho tiver uma cópia local da igreja (por ex. porque uma ação administrativa —
+  // pausar/remover/restaurar — foi feita aqui), o estado local de pausado/removido tem prioridade
+  // sobre o que veio do banco: isso garante que a ação apareça na hora, mesmo que a sincronização
+  // com o Firestore ainda não esteja liberada pelas regras de segurança.
   const db_merged = useMemo(() => {
     if (!remoteChurches) return db;
+    const localById = new Map(db.map(c => [c.id, c]));
     const remoteIds = new Set(remoteChurches.map(r => r.churchId));
     const localOnly = db.filter(c => !remoteIds.has(c.id));
-    const remoteMapped = remoteChurches.map(r => ({
-      id: r.churchId, name: r.name, city: r.city, state: r.state, login: r.login,
-      association: r.association, district: r.district, pastorName: r.pastorName,
-      paused: !!r.paused, removed: !!r.removed, fbDocId: r.docId,
-      createdAt: r.createdAt, __remote: !localOnly.some(l => l.id === r.churchId)
-    }));
+    const remoteMapped = remoteChurches.map(r => {
+      const local = localById.get(r.churchId);
+      return {
+        id: r.churchId, name: r.name, city: r.city, state: r.state, login: r.login,
+        association: r.association, district: r.district, pastorName: r.pastorName,
+        paused: local ? !!local.paused : !!r.paused,
+        removed: local ? !!local.removed : !!r.removed,
+        fbDocId: r.docId || (local && local.fbDocId),
+        createdAt: r.createdAt, __remote: !local
+      };
+    });
     return [...remoteMapped, ...localOnly];
   }, [remoteChurches, db]);
 
@@ -809,14 +819,16 @@ function DeveloperPanel({ onLogout }) {
   const refresh = () => { setDb(loadDB()); setLog(loadLog()); setLocalSuggestions(loadSuggestions()); };
 
   // Aplica uma mudança administrativa (pausar, reativar, remover, restaurar, redefinir senha) numa
-  // igreja: atualiza local (se essa igreja também existir neste aparelho), sincroniza com o banco
-  // compartilhado (se já tiver docId) e registra no histórico de atividade, visível em qualquer aparelho.
+  // igreja: atualiza local sempre (mesmo que essa igreja tenha se cadastrado em outro aparelho —
+  // nesse caso cria uma cópia local só com o essencial, pra a mudança aparecer na hora aqui),
+  // sincroniza com o banco compartilhado (se já tiver docId) e registra no histórico de atividade,
+  // visível em qualquer aparelho.
   const updateChurchAdmin = (c, patch, logType, logDetail) => {
     const localMatch = db.find(x => x.id === c.id);
-    if (localMatch) {
-      const next = db.map(x => x.id === c.id ? { ...x, ...patch, updatedAt: new Date().toISOString() } : x);
-      saveDB(next); setDb(next);
-    }
+    const next = localMatch
+      ? db.map(x => x.id === c.id ? { ...x, ...patch, updatedAt: new Date().toISOString() } : x)
+      : [...db, { ...c, ...patch, updatedAt: new Date().toISOString() }];
+    saveDB(next); setDb(next);
     const docId = c.fbDocId || c.docId;
     if (docId) fbUpdateChurchFields(docId, patch);
     const nl = pushLog(loadLog(), { type: logType, churchName: c.name, churchId: c.id, detail: logDetail });
