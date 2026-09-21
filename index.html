@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.5';
+const APP_VERSION = '2026-09-21.6';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -354,7 +354,7 @@ function useSyncedChurches() {
             passwordHash: rc.passwordHash || null,
             recoveryQuestion: rc.recoveryQuestion || '',
             recoveryAnswerHash: rc.recoveryAnswerHash || null,
-            paused: !!rc.paused, removed: !!rc.removed,
+            paused: !!rc.paused, removed: !!rc.removed, bgMusic: rc.bgMusic || null,
             createdAt: rc.createdAt, fbDocId: rc.docId, remoteOnly: true
           });
           currentLogins.add(loginLower);
@@ -368,6 +368,10 @@ function useSyncedChurches() {
             if (rc.passwordHash && rc.passwordHash !== cur.passwordHash) patch.passwordHash = rc.passwordHash;
             if (!!rc.paused !== !!cur.paused) patch.paused = !!rc.paused;
             if (!!rc.removed !== !!cur.removed) patch.removed = !!rc.removed;
+            // bgMusic é comparado como texto porque é uma lista — só atualiza o cache local (e assim
+            // o próximo login neste aparelho já vem com os fundos musicais de outro aparelho) quando
+            // realmente mudou, pra não ficar regravando localStorage sem necessidade.
+            if (JSON.stringify(rc.bgMusic || null) !== JSON.stringify(cur.bgMusic || null)) patch.bgMusic = rc.bgMusic || null;
             if (Object.keys(patch).length) { merged[idx] = { ...cur, ...patch }; changed = true; }
           }
         }
@@ -3392,14 +3396,16 @@ function saveBgMusic(churchId, tracks) {
     localStorage.setItem(bgMusicKey(churchId), JSON.stringify(toSave));
   } catch(e) {}
 }
-function BackgroundAudioMixer({ churchId }) {
+function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
   const [tracks, setTracks] = useState(() => {
     const base = [
       { name:'Fundo 1', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
       { name:'Fundo 2', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
       { name:'Fundo 3', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
     ];
-    const saved = loadSavedBgMusic(churchId);
+    // Prioriza o que estiver salvo na nuvem (funciona em qualquer aparelho); se não tiver, usa o
+    // que ficou salvo só neste aparelho (localStorage) de antes dessa opção existir.
+    const saved = (church && Array.isArray(church.bgMusic)) ? church.bgMusic : loadSavedBgMusic(churchId);
     if (!saved) return base;
     return base.map((b,i) => {
       const s = saved[i];
@@ -3408,9 +3414,36 @@ function BackgroundAudioMixer({ churchId }) {
       return { ...b, name: s.name || b.name, mode: isYoutube ? 'youtube' : 'none', videoId: isYoutube ? s.videoId : null, playing: isYoutube, volume: typeof s.volume === 'number' ? s.volume : b.volume };
     });
   });
-  // Salva sozinho toda vez que o vídeo, o nome ou o volume de algum fundo muda — pra já vir tudo
-  // pronto na próxima vez que essa igreja abrir o app, sem precisar buscar de novo.
+  const [cloudStatus, setCloudStatus] = useState('idle'); // idle | saving | saved | error
+  // Salva sozinho neste aparelho toda vez que o vídeo, o nome ou o volume de algum fundo muda —
+  // pra já vir tudo pronto na próxima vez que abrir o app aqui, sem precisar buscar de novo.
   useEffect(() => { saveBgMusic(churchId, tracks); }, [churchId, tracks.map(t=>t.mode+'|'+t.videoId+'|'+t.name+'|'+t.volume).join(';')]);
+
+  // Salvar na nuvem é uma ação separada (botão), não automática — assim dá pra testar um fundo
+  // musical sem "sujar" o que está salvo pros outros aparelhos até decidir que é isso mesmo.
+  const salvarNaNuvem = async () => {
+    const docId = church && (church.fbDocId || church.docId);
+    const toSave = tracks.map(t => ({
+      name: t.name,
+      mode: t.mode === 'youtube' ? 'youtube' : 'none',
+      videoId: t.mode === 'youtube' ? t.videoId : null,
+      volume: t.volume
+    }));
+    if (!docId) {
+      alert('Não foi possível salvar na nuvem agora (sem conexão com o banco compartilhado). O que já está tocando continua salvo só neste aparelho.');
+      return;
+    }
+    setCloudStatus('saving');
+    const ok = await fbUpdateChurchFields(docId, { bgMusic: toSave });
+    if (ok) {
+      setCloudStatus('saved');
+      if (onUpdateChurch && church) onUpdateChurch({ ...church, bgMusic: toSave });
+      setTimeout(() => setCloudStatus('idle'), 2500);
+    } else {
+      setCloudStatus('error');
+      setTimeout(() => setCloudStatus('idle'), 3500);
+    }
+  };
   const audioRefs = [useRef(null), useRef(null), useRef(null)];
   const iframeRefs = [useRef(null), useRef(null), useRef(null)];
   const fileInputRefs = [useRef(null), useRef(null), useRef(null)];
@@ -3566,6 +3599,12 @@ function BackgroundAudioMixer({ churchId }) {
   };
 
   return html`
+    <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px', marginBottom:'8px', flexWrap:'wrap'}}>
+      <div style=${{fontSize:'10px', color:'var(--text-dim)'}}>Fica salvo neste aparelho sozinho. Pra aparecer também em outros aparelhos, salve na nuvem:</div>
+      <button type="button" onClick=${salvarNaNuvem} disabled=${cloudStatus==='saving'} style=${{...btnGhost, padding:'6px 12px', fontSize:'11px', fontWeight:700, opacity: cloudStatus==='saving' ? 0.6 : 1, color: cloudStatus==='saved' ? 'var(--success-1)' : cloudStatus==='error' ? 'var(--danger)' : undefined}}>
+        ${cloudStatus==='saving' ? '⏳ Salvando...' : cloudStatus==='saved' ? '✅ Salvo na nuvem!' : cloudStatus==='error' ? '⚠️ Erro — tentar de novo' : '☁️ Salvar na nuvem'}
+      </button>
+    </div>
     <div style=${{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'8px', marginBottom:'10px'}}>
       ${tracks.map((t,i) => html`
         <div key=${i} class="glass fade-up" style=${{padding:'10px', borderRadius:'14px', display:'grid', gap:'6px'}}>
@@ -3717,7 +3756,7 @@ function CultoLiveMode({ activities, sections, churchId, onAdvance, onClose, onO
   `;
 }
 
-function LiturgiaView({ churchId, churchName }) {
+function LiturgiaView({ churchId, churchName, church, onUpdateChurch }) {
   const [activities, setActivities] = useState(() => loadActivities(churchId));
   const [adding, setAdding] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -3863,7 +3902,7 @@ function LiturgiaView({ churchId, churchName }) {
       ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
 
       <div style=${{fontSize:'10.5px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:'6px'}}>🎚️ Fundos Musicais</div>
-      <${BackgroundAudioMixer} churchId=${churchId} />
+      <${BackgroundAudioMixer} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} />
 
       <button onClick=${()=>setAssistantOpen(true)} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1.5px dashed var(--accent-1)', color:'var(--accent-1)', fontWeight:700}}>🤖 Assistente de Liturgia (colar texto)</button>
       <div style=${{display:'grid', gridTemplateColumns:'1fr auto', gap:'8px', marginBottom:'8px'}}>
@@ -5227,7 +5266,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
     <div>
       <${ChurchHeader} church=${church} tab=${tab} setTab=${setTab} onLogout=${onLogout} />
       ${tab === 'presenca' ? html`<${PresencaView} key="presenca" churchId=${church.id} />` : ''}
-      ${tab === 'liturgia' ? html`<${LiturgiaView} key="lit" churchId=${church.id} churchName=${church.name} />` : ''}
+      ${tab === 'liturgia' ? html`<${LiturgiaView} key="lit" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       ${tab === 'musicas' ? html`<${MusicasView} key="musicas" churchId=${church.id} />` : ''}
       ${tab === 'gestao' ? html`<${GestaoView} key="gestao" churchId=${church.id} churchName=${church.name} />` : ''}
       ${tab === 'telas' ? html`<${TelasView} key="telas" churchId=${church.id} />` : ''}
