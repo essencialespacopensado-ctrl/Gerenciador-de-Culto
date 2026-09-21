@@ -97,12 +97,12 @@
       const cfg = window.__FIREBASE_CONFIG__;
       if (!cfg) { window.__fb.error = 'no-config'; return; }
       const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js');
-      const { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, getDocs } =
+      const { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, getDocs, runTransaction } =
         await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js');
       const app = initializeApp(cfg);
       const db = getFirestore(app);
       window.__fb.db = db;
-      window.__fb.helpers = { collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, getDocs };
+      window.__fb.helpers = { collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, getDocs, runTransaction };
       window.__fb.ready = true;
       window.dispatchEvent(new Event('fb-ready'));
     } catch (e) {
@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-20.9';
+const APP_VERSION = '2026-09-20.10';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -170,22 +170,49 @@ function simpleHash(str) {
   return h1.toString(16).padStart(8,'0') + h2.toString(16).padStart(8,'0');
 }
 
+// Gera um ID de documento determinístico a partir do login (minúsculo), pra usar como "trava"
+// natural do Firestore: dois cadastros com o mesmo login sempre disputam o MESMO documento, então
+// mesmo que aconteçam ao mesmo tempo (dois aparelhos clicando "Cadastrar" no mesmo segundo), a
+// transação abaixo garante que só um vence.
+function loginDocId(loginLower) {
+  let id = (loginLower || '').trim();
+  if (!id) return null;
+  if (/^__.*__$/.test(id)) id = 'login-' + id; // IDs assim são reservados pelo Firestore
+  return id;
+}
+
+// Cadastra uma igreja no banco compartilhado usando uma TRANSAÇÃO do Firestore: o documento
+// dessa igreja usa como ID o próprio login (em minúsculo), então duas tentativas de cadastro com
+// o mesmo login sempre disputam o mesmo documento. A transação lê o documento e só cria se ele
+// não existir (ou se existir mas estiver marcado como removido — permite reaproveitar o login de
+// uma igreja removida). Isso impede a duplicidade mesmo se dois cadastros acontecerem no mesmo
+// instante em aparelhos diferentes — só um dos dois vence de verdade.
+// Retorna { docId, loginTaken } — loginTaken:true significa que outra igreja ativa já usa esse login.
 async function fbAddChurch(church) {
-  if (!fbIsReady()) return null;
+  if (!fbIsReady()) return { docId: null, loginTaken: false, offline: true };
   try {
-    const { collection, addDoc, serverTimestamp } = window.__fb.helpers;
-    const ref = await addDoc(collection(window.__fb.db, 'igrejas'), {
-      churchId: church.id, name: church.name, city: church.city || '', state: church.state || '',
-      association: church.association || '', district: church.district || '',
-      pastorName: church.pastorName || '', login: church.login,
-      passwordHash: church.passwordHash || null,
-      recoveryQuestion: church.recoveryQuestion || '',
-      recoveryAnswerHash: church.recoveryAnswerHash || null,
-      paused: !!church.paused, removed: !!church.removed,
-      createdAt: church.createdAt, syncedAt: serverTimestamp()
+    const { doc, runTransaction, serverTimestamp } = window.__fb.helpers;
+    const loginLower = (church.login || '').trim().toLowerCase();
+    const docId = loginDocId(loginLower);
+    if (!docId) return { docId: null, loginTaken: false, offline: true };
+    const ref = doc(window.__fb.db, 'igrejas', docId);
+    let loginTaken = false;
+    await runTransaction(window.__fb.db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (snap.exists() && !snap.data().removed) { loginTaken = true; return; }
+      tx.set(ref, {
+        churchId: church.id, name: church.name, city: church.city || '', state: church.state || '',
+        association: church.association || '', district: church.district || '',
+        pastorName: church.pastorName || '', login: church.login,
+        passwordHash: church.passwordHash || null,
+        recoveryQuestion: church.recoveryQuestion || '',
+        recoveryAnswerHash: church.recoveryAnswerHash || null,
+        paused: !!church.paused, removed: false, purged: false,
+        createdAt: church.createdAt, syncedAt: serverTimestamp()
+      });
     });
-    return ref.id;
-  } catch(e) { return null; }
+    return loginTaken ? { docId: null, loginTaken: true } : { docId, loginTaken: false };
+  } catch(e) { return { docId: null, loginTaken: false, error: true }; }
 }
 
 async function fbUpdateChurchPassword(docId, passwordHash) {
@@ -258,23 +285,6 @@ function fbListenChurches(callback) {
     const q = query(collection(window.__fb.db, 'igrejas'), orderBy('createdAt', 'desc'));
     return onSnapshot(q, snap => callback(snap.docs.map(d => ({ docId: d.id, ...d.data() }))), () => {});
   } catch(e) { return () => {}; }
-}
-
-// Verifica no banco compartilhado, na hora, se algum login (case-insensitive) já está em uso por
-// outra igreja não removida — usado antes de cadastrar, pra nunca deixar dois cadastros com o
-// mesmo login ao mesmo tempo (foi essa duplicidade que causava igrejas restauradas "voltarem"
-// a ficar removidas sozinhas). Se o banco compartilhado não estiver disponível, retorna false
-// (a checagem local em loadDB() continua servindo de proteção nesse caso).
-async function fbCheckLoginTaken(loginLower) {
-  if (!fbIsReady()) return false;
-  try {
-    const { collection, getDocs } = window.__fb.helpers;
-    const snap = await getDocs(collection(window.__fb.db, 'igrejas'));
-    return snap.docs.some(d => {
-      const data = d.data();
-      return !data.removed && (data.login || '').trim().toLowerCase() === loginLower;
-    });
-  } catch(e) { return false; }
 }
 
 // Sem churchId: escuta todas as sugestões (uso do Painel do Desenvolvedor). Com churchId: só as dessa igreja.
@@ -429,19 +439,9 @@ function LoginScreen({ onLogin }) {
 
     const newLoginLower = newLogin.trim().toLowerCase();
     const db = loadDB();
-    // Checa primeiro localmente (rápido) e, se este aparelho estiver conectado ao banco
-    // compartilhado, confirma direto no Firestore antes de cadastrar — assim nunca fica dois
-    // cadastros com o mesmo login mesmo se a igreja duplicada tiver se cadastrado em outro
-    // aparelho e essa cópia local ainda não tiver sincronizado.
+    // Checagem local rápida primeiro (evita esperar a rede pra um erro óbvio).
     if (db.some(c => !c.removed && c.login.toLowerCase() === newLoginLower) || newLoginLower === DEV_ACCOUNT.login) {
       setError('Esse login já está em uso. Escolha outro.');
-      return;
-    }
-    setChecking(true);
-    const takenRemotely = await fbCheckLoginTaken(newLoginLower);
-    setChecking(false);
-    if (takenRemotely) {
-      setError('Esse login já está em uso por outra igreja. Escolha outro.');
       return;
     }
 
@@ -457,17 +457,26 @@ function LoginScreen({ onLogin }) {
       recoveryAnswerHash: simpleHash(recoveryAnswerLower),
       createdAt: now, updatedAt: now
     };
+
+    // A checagem que realmente decide é a transação do Firestore (fbAddChurch): ela usa o login
+    // como ID do documento, então dois cadastros com o mesmo login — mesmo em aparelhos
+    // diferentes, mesmo no mesmo instante — sempre disputam o mesmo documento, e só um vence.
+    // Por isso salvamos localmente só DEPOIS de confirmar que ninguém "roubou" o login na frente.
+    setChecking(true);
+    const result = await fbAddChurch(church);
+    setChecking(false);
+    if (result.loginTaken) {
+      setError('Esse login já está em uso por outra igreja. Escolha outro.');
+      return;
+    }
+    if (result.docId) church.fbDocId = result.docId;
+    // Se o banco compartilhado não estiver disponível (offline ou sem configuração), segue só
+    // localmente, como antes — nesse caso não há como conflitar com outro aparelho mesmo assim.
+
     const nextDB = [...db, church];
     saveDB(nextDB);
     pushLog(loadLog(), { type:'cadastro', churchName: church.name, churchId: church.id });
     fbAddActivity({ id:'log-'+Date.now(), type:'cadastro', churchName: church.name, churchId: church.id, at: now });
-    // Sincroniza com o banco compartilhado (hash da senha, nunca a senha em texto puro) pra
-    // que essa igreja consiga entrar de qualquer aparelho — celular, tablet, computador, etc.
-    fbAddChurch(church).then(docId => {
-      if (!docId) return;
-      const next = loadDB().map(c => c.id === church.id ? { ...c, fbDocId: docId } : c);
-      saveDB(next);
-    });
 
     onLogin({ type:'church', church });
   };
@@ -742,10 +751,11 @@ function AddChurchForm({ onAdd, onCancel }) {
     const loginLower = login.trim().toLowerCase();
     if (loadDB().some(c => !c.removed && c.login.toLowerCase() === loginLower) || loginLower === DEV_ACCOUNT.login) { setError('Esse login já está em uso. Escolha outro.'); return; }
     setChecking(true);
-    const takenRemotely = await fbCheckLoginTaken(loginLower);
+    // Quem decide de verdade é a transação do Firestore dentro de onAdd (fbAddChurch) — essa
+    // checagem local é só pra dar um retorno rápido antes de tentar.
+    const err = await onAdd({ name: name.trim(), city: city.trim(), state: state.trim(), association: association.trim(), district: district.trim(), pastorName: pastorName.trim(), login: login.trim(), password });
     setChecking(false);
-    if (takenRemotely) { setError('Esse login já está em uso por outra igreja. Escolha outro.'); return; }
-    onAdd({ name: name.trim(), city: city.trim(), state: state.trim(), association: association.trim(), district: district.trim(), pastorName: pastorName.trim(), login: login.trim(), password });
+    if (err) setError(err);
   };
 
   return html`
@@ -836,12 +846,15 @@ function DeveloperPanel({ onLogout }) {
   const visibleChurches = useMemo(() => db_merged.filter(c => !c.purged && (showRemoved ? c.removed : !c.removed)), [db_merged, showRemoved]);
   const removedCount = useMemo(() => db_merged.filter(c => c.removed && !c.purged).length, [db_merged]);
 
-  // Detecta logins duplicados (duas ou mais igrejas cadastradas com o mesmo login), o que pode
-  // causar comportamento inconsistente (uma ação numa igreja "vazando" pra outra). Avisa o
-  // desenvolvedor pra ele poder corrigir renomeando o login de uma delas.
+  // Detecta logins duplicados de verdade: duas ou mais igrejas ATIVAS (não removidas, não
+  // limpas) cadastradas com o mesmo login ao mesmo tempo — isso sim é um conflito real, porque
+  // as duas disputam o mesmo login pra entrar no sistema e uma ação numa pode "vazar" pra outra.
+  // Uma igreja removida com o mesmo login de uma igreja ativa NÃO entra aqui: isso é esperado
+  // (o login foi reaproveitado depois da remoção) e não é motivo de aviso.
   const duplicateLoginGroups = useMemo(() => {
     const byLogin = new Map();
     db_merged.forEach(c => {
+      if (c.purged || c.removed) return;
       const key = (c.login || '').trim().toLowerCase();
       if (!key) return;
       if (!byLogin.has(key)) byLogin.set(key, []);
@@ -932,7 +945,10 @@ function DeveloperPanel({ onLogout }) {
     setResetId(null);
   };
 
-  const addChurchByDev = (data) => {
+  // Retorna undefined em caso de sucesso, ou uma mensagem de erro (login já em uso) pra
+  // AddChurchForm mostrar sem fechar o formulário. A transação do Firestore em fbAddChurch é
+  // quem decide de verdade — evita duas igrejas com o mesmo login mesmo cadastradas ao mesmo tempo.
+  const addChurchByDev = async (data) => {
     const now = new Date().toISOString();
     const church = {
       id: 'igreja-'+Date.now(), name: data.name, city: data.city, state: data.state,
@@ -941,16 +957,15 @@ function DeveloperPanel({ onLogout }) {
       recoveryQuestion: '', recoveryAnswer: '', recoveryAnswerHash: null,
       createdAt: now, updatedAt: now, paused: false, removed: false
     };
+    const result = await fbAddChurch(church);
+    if (result.loginTaken) return 'Esse login já está em uso por outra igreja. Escolha outro.';
+    if (result.docId) church.fbDocId = result.docId;
+
     const next = [...loadDB(), church];
     saveDB(next); setDb(next);
     const nl = pushLog(loadLog(), { type:'cadastro', churchName: church.name, churchId: church.id, detail: 'Cadastrada pelo desenvolvedor' });
     setLog(nl);
     fbAddActivity({ id:'log-'+Date.now(), type:'cadastro', churchName: church.name, churchId: church.id, detail: 'Cadastrada pelo desenvolvedor', at: now });
-    fbAddChurch(church).then(docId => {
-      if (!docId) return;
-      const n2 = loadDB().map(x => x.id === church.id ? { ...x, fbDocId: docId } : x);
-      saveDB(n2); setDb(n2);
-    });
     setAddOpen(false);
   };
 
@@ -1006,7 +1021,7 @@ function DeveloperPanel({ onLogout }) {
           <ul style=${{margin:'8px 0 0', paddingLeft:'18px', fontSize:'12px', color:'var(--text-hi)'}}>
             ${duplicateLoginGroups.map(([login, list]) => html`
               <li key=${login} style=${{marginBottom:'2px'}}>
-                <strong>${login}</strong>: ${list.map(c => c.name + (c.removed ? ' (removida)' : '')).join(', ')}
+                <strong>${login}</strong>: ${list.map(c => c.name).join(', ')}
               </li>
             `)}
           </ul>
@@ -1065,10 +1080,10 @@ function DeveloperPanel({ onLogout }) {
           ${activities.length === 0 && html`<div class="glass fade-up" style=${{padding:'24px', borderRadius:'16px', textAlign:'center', color:'var(--text-dim)', fontSize:'13px'}}>Nenhuma atividade registrada ainda.</div>`}
           ${activities.map((l,i) => html`
             <div key=${l.id} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'12px', display:'flex', alignItems:'center', gap:'10px', animationDelay:(i*0.02)+'s'}}>
-              <span style=${{fontSize:'16px'}}>${l.type==='cadastro' ? '🆕' : l.type==='remocao' ? '🗑️' : l.type==='restauracao' ? '↺' : l.type==='pausa' ? '⏸️' : l.type==='reativacao' ? '▶️' : l.type==='login' ? '🔓' : '✏️'}</span>
+              <span style=${{fontSize:'16px'}}>${l.type==='cadastro' ? '🆕' : l.type==='remocao' ? '🗑️' : l.type==='restauracao' ? '↺' : l.type==='pausa' ? '⏸️' : l.type==='reativacao' ? '▶️' : l.type==='login' ? '🔓' : l.type==='limpeza' ? '🧹' : l.type==='conflito' ? '⚠️' : '✏️'}</span>
               <div style=${{flex:1}}>
                 <div style=${{fontSize:'12.5px', fontWeight:600}}>
-                  ${l.type==='cadastro' ? 'Nova igreja cadastrada: ' : l.type==='remocao' ? 'Igreja removida: ' : l.type==='restauracao' ? 'Igreja restaurada: ' : l.type==='pausa' ? 'Acesso pausado: ' : l.type==='reativacao' ? 'Acesso reativado: ' : l.type==='login' ? 'Login realizado: ' : 'Atualização em '}${l.churchName}
+                  ${l.type==='cadastro' ? 'Nova igreja cadastrada: ' : l.type==='remocao' ? 'Igreja removida: ' : l.type==='restauracao' ? 'Igreja restaurada: ' : l.type==='pausa' ? 'Acesso pausado: ' : l.type==='reativacao' ? 'Acesso reativado: ' : l.type==='login' ? 'Login realizado: ' : l.type==='limpeza' ? 'Removida da lista: ' : l.type==='conflito' ? 'Conflito de login: ' : 'Atualização em '}${l.churchName}
                 </div>
                 ${l.detail && html`<div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${l.detail}</div>`}
                 <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>${new Date(l.at).toLocaleString('pt-BR')}</div>
@@ -4890,10 +4905,17 @@ function useChurchBackfillSync() {
       pending.forEach(c => {
         const passwordHash = c.passwordHash || (c.password ? simpleHash(c.password) : null);
         const recoveryAnswerHash = c.recoveryAnswerHash || (c.recoveryAnswer ? simpleHash(c.recoveryAnswer) : null);
-        fbAddChurch({ ...c, passwordHash, recoveryAnswerHash }).then(docId => {
-          if (!docId) return;
-          const next = loadDB().map(x => x.id === c.id ? { ...x, fbDocId: docId, passwordHash, recoveryAnswerHash } : x);
-          saveDB(next);
+        fbAddChurch({ ...c, passwordHash, recoveryAnswerHash }).then(result => {
+          if (result.docId) {
+            const next = loadDB().map(x => x.id === c.id ? { ...x, fbDocId: result.docId, passwordHash, recoveryAnswerHash } : x);
+            saveDB(next);
+          } else if (result.loginTaken) {
+            // Esse login foi ocupado por outra igreja antes desta cópia local (só neste
+            // aparelho) conseguir sincronizar — registra no histórico pra Paulo ver e decidir
+            // (renomear o login desta ou remover a duplicata) em vez de sincronizar silenciosamente
+            // uma igreja "fantasma" que já perdeu a disputa pelo login.
+            fbAddActivity({ id:'log-'+Date.now(), type:'conflito', churchName: c.name, churchId: c.id, detail: 'Login "'+c.login+'" já estava em uso ao tentar sincronizar esta igreja (cadastrada só neste aparelho). Ela não foi enviada ao banco compartilhado — verifique se é uma duplicata.', at: new Date().toISOString() });
+          }
         });
       });
     };
