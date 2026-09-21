@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.2';
+const APP_VERSION = '2026-09-21.3';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -548,6 +548,7 @@ function LoginScreen({ onLogin }) {
   const [error, setError] = useState('');
   const [forgotOpen, setForgotOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [checking, setChecking] = useState(false);
   const churches = useSyncedChurches();
 
@@ -754,7 +755,10 @@ function LoginScreen({ onLogin }) {
 
               <div style=${sectionLabelStyle}>Acesso ao Sistema</div>
               <input placeholder="Login de acesso desejado" value=${newLogin} onChange=${e=>setNewLogin(e.target.value)} style=${inputStyle} />
-              <input type="password" placeholder="Senha (mínimo 4 caracteres)" value=${newPassword} onChange=${e=>setNewPassword(e.target.value)} style=${inputStyle} />
+              <div style=${{position:'relative'}}>
+                <input type=${showNewPassword ? 'text' : 'password'} placeholder="Senha (mínimo 4 caracteres)" value=${newPassword} onChange=${e=>setNewPassword(e.target.value)} style=${{...inputStyle, paddingRight:'42px'}} />
+                <button type="button" onClick=${()=>setShowNewPassword(v=>!v)} style=${{position:'absolute', right:'6px', top:'50%', transform:'translateY(-50%)', background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'15px', padding:'4px 6px', cursor:'pointer'}} title=${showNewPassword ? 'Ocultar senha' : 'Mostrar senha'}>${showNewPassword ? '🙈' : '👁️'}</button>
+              </div>
 
               <div style=${sectionLabelStyle}>Recuperação de Senha</div>
               <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginTop:'-4px'}}>Se um dia esquecer a senha, é essa pergunta que vai te ajudar a criar uma nova.</div>
@@ -777,6 +781,7 @@ function ForgotPasswordModal({ onClose }) {
   const [answer, setAnswer] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [error, setError] = useState('');
   const churches = useSyncedChurches();
   const church = churches.find(c => c.login === churchLogin);
@@ -852,8 +857,11 @@ function ForgotPasswordModal({ onClose }) {
         ${step === 'reset' && html`
           <form onSubmit=${doReset} style=${{display:'grid', gap:'10px'}}>
             <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Resposta certa! Agora crie sua nova senha.</div>
-            <input type="password" placeholder="Nova senha (mínimo 4 caracteres)" value=${newPassword} onChange=${e=>setNewPassword(e.target.value)} style=${inputStyle} autoFocus />
-            <input type="password" placeholder="Confirmar nova senha" value=${confirmPassword} onChange=${e=>setConfirmPassword(e.target.value)} style=${inputStyle} />
+            <div style=${{position:'relative'}}>
+              <input type=${showNewPassword ? 'text' : 'password'} placeholder="Nova senha (mínimo 4 caracteres)" value=${newPassword} onChange=${e=>setNewPassword(e.target.value)} style=${{...inputStyle, paddingRight:'42px'}} autoFocus />
+              <button type="button" onClick=${()=>setShowNewPassword(v=>!v)} style=${{position:'absolute', right:'6px', top:'50%', transform:'translateY(-50%)', background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'15px', padding:'4px 6px', cursor:'pointer'}} title=${showNewPassword ? 'Ocultar senha' : 'Mostrar senha'}>${showNewPassword ? '🙈' : '👁️'}</button>
+            </div>
+            <input type=${showNewPassword ? 'text' : 'password'} placeholder="Confirmar nova senha" value=${confirmPassword} onChange=${e=>setConfirmPassword(e.target.value)} style=${inputStyle} />
             <button type="submit" style=${btnPrimary}>Salvar Nova Senha</button>
           </form>
         `}
@@ -1724,8 +1732,23 @@ function TabTile({ text, active, onClick, idx, delay }) {
   `;
 }
 
+// Detecta tela pequena (celular) pra decidir se o menu do cabeçalho começa fechado, economizando
+// espaço vertical — sem isso o cabeçalho com todos os grupos abertos ocupava quase a tela toda
+// num celular. Reage a giro de tela / redimensionamento.
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 680);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 680);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return isMobile;
+}
+
 function ChurchHeader({ church, tab, setTab, onLogout }) {
   const [clock, setClock] = useState('');
+  const [navOpen, setNavOpen] = useState(false);
+  const isMobile = useIsMobile();
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit',second:'2-digit'}));
     tick();
@@ -1733,28 +1756,41 @@ function ChurchHeader({ church, tab, setTab, onLogout }) {
     return () => clearInterval(id);
   }, []);
   let tileIdx = 0;
+  const activeItem = NAV_ITEMS.find(n => n.tab === tab);
+  const showNav = !isMobile || navOpen;
+  const selectTab = (t) => { setTab(t); if (isMobile) setNavOpen(false); };
   return html`
-    <header class="glass fade-up" style=${{position:'sticky', top:0, zIndex:40, padding:'14px 20px 16px', display:'grid', gap:'14px', borderRadius:'0 0 22px 22px'}}>
+    <header class="glass fade-up" style=${{position:'sticky', top:0, zIndex:40, padding: isMobile ? '10px 14px 12px' : '14px 20px 16px', display:'grid', gap: isMobile ? '10px' : '14px', borderRadius:'0 0 22px 22px'}}>
       <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:'12px'}}>
         <div style=${{display:'flex', alignItems:'center', gap:'12px'}}>
-          <div class="breathe" style=${{width:'42px',height:'42px',borderRadius:'14px',background:'linear-gradient(135deg,var(--accent-1),var(--accent-2),var(--accent-3))',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'20px'}}>⛪</div>
+          <div class="breathe" style=${{width: isMobile ? '34px' : '42px', height: isMobile ? '34px' : '42px', borderRadius:'14px',background:'linear-gradient(135deg,var(--accent-1),var(--accent-2),var(--accent-3))',display:'flex',alignItems:'center',justifyContent:'center',fontSize: isMobile ? '16px' : '20px'}}>⛪</div>
           <div>
-            <div class="grad-text" style=${{fontWeight:800, fontSize:'15px'}}>${church.name}</div>
-            <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>${church.city}${church.state ? ' - '+church.state : ''} • ${clock}</div>
+            <div class="grad-text" style=${{fontWeight:800, fontSize: isMobile ? '13px' : '15px'}}>${church.name}</div>
+            ${!isMobile && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>${church.city}${church.state ? ' - '+church.state : ''} • ${clock}</div>`}
           </div>
         </div>
-        <button onClick=${onLogout} style=${btnGhost}>Sair</button>
+        <div style=${{display:'flex', alignItems:'center', gap:'8px'}}>
+          ${isMobile && html`
+            <button onClick=${()=>setNavOpen(o=>!o)} style=${{...btnGhost, display:'flex', alignItems:'center', gap:'6px', fontSize:'11px'}}>
+              <span>${activeItem ? activeItem.icon+' '+activeItem.label : '☰ Menu'}</span>
+              <span>${navOpen ? '▲' : '▼'}</span>
+            </button>
+          `}
+          <button onClick=${onLogout} style=${{...btnGhost, padding: isMobile ? '7px 10px' : undefined, fontSize: isMobile ? '11px' : undefined}}>Sair</button>
+        </div>
       </div>
+      ${showNav && html`
       <div style=${{display:'flex', flexWrap:'wrap', gap:'16px 22px'}}>
         ${NAV_GROUPS.map(g => html`
           <div key=${g} style=${{display:'flex', flexDirection:'column', gap:'7px'}}>
             <div style=${{fontSize:'10px', fontWeight:800, letterSpacing:'0.08em', textTransform:'uppercase', color:'var(--text-dim)', paddingLeft:'2px'}}>${g}</div>
             <nav style=${{display:'flex', gap:'8px', flexWrap:'wrap'}}>
-              ${NAV_ITEMS.filter(n => n.group === g).map(n => html`<${NavTile} key=${n.tab} icon=${n.icon} label=${n.label} c1=${n.c1} c2=${n.c2} active=${tab===n.tab} onClick=${()=>setTab(n.tab)} delay=${tileIdx++} />`)}
+              ${NAV_ITEMS.filter(n => n.group === g).map(n => html`<${NavTile} key=${n.tab} icon=${n.icon} label=${n.label} c1=${n.c1} c2=${n.c2} active=${tab===n.tab} onClick=${()=>selectTab(n.tab)} delay=${tileIdx++} />`)}
             </nav>
           </div>
         `)}
       </div>
+      `}
     </header>
   `;
 }
