@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-20.11';
+const APP_VERSION = '2026-09-21.1';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -246,14 +246,34 @@ async function fbAddActivity(entry) {
   } catch(e) { return null; }
 }
 
+// O Firebase carrega em segundo plano (é um import assíncrono) e normalmente ainda não está
+// pronto no exato instante em que a tela monta e chama fbListenChurches/Suggestions/Activities.
+// Sem isso, a checagem "if (!fbIsReady())" desistia na hora e NUNCA mais tentava de novo — mesmo
+// segundos depois, quando o Firebase já estava pronto — deixando o app preso só com os dados
+// deste aparelho (essa era a causa raiz de igrejas cadastradas em outro aparelho não aparecerem).
+// Esta função espera o evento "fb-ready" (disparado quando o Firebase termina de carregar) antes
+// de tentar de novo, e só desiste de vez se o componente for desmontado antes disso.
+function fbListenWhenReady(startListening) {
+  if (fbIsReady()) return startListening();
+  let stopped = false;
+  let unsub = () => {};
+  const onReady = () => {
+    if (stopped) return;
+    unsub = startListening();
+  };
+  window.addEventListener('fb-ready', onReady, { once: true });
+  return () => { stopped = true; window.removeEventListener('fb-ready', onReady); unsub(); };
+}
+
 function fbListenActivities(callback) {
-  if (!fbIsReady()) return () => {};
-  try {
-    const { collection, onSnapshot, query, orderBy, limit } = window.__fb.helpers;
-    const base = collection(window.__fb.db, 'atividades');
-    const q = limit ? query(base, orderBy('at', 'desc'), limit(300)) : query(base, orderBy('at', 'desc'));
-    return onSnapshot(q, snap => callback(snap.docs.map(d => ({ docId: d.id, ...d.data() }))), () => {});
-  } catch(e) { return () => {}; }
+  return fbListenWhenReady(() => {
+    try {
+      const { collection, onSnapshot, query, orderBy, limit } = window.__fb.helpers;
+      const base = collection(window.__fb.db, 'atividades');
+      const q = limit ? query(base, orderBy('at', 'desc'), limit(300)) : query(base, orderBy('at', 'desc'));
+      return onSnapshot(q, snap => callback(snap.docs.map(d => ({ docId: d.id, ...d.data() }))), () => {});
+    } catch(e) { return () => {}; }
+  });
 }
 
 async function fbAddSuggestion(sug) {
@@ -279,23 +299,25 @@ async function fbRespondSuggestion(docId, response) {
 
 // callback(list) é chamado sempre que a lista mudar (tempo real). Retorna uma função pra parar de escutar.
 function fbListenChurches(callback) {
-  if (!fbIsReady()) return () => {};
-  try {
-    const { collection, onSnapshot, query, orderBy } = window.__fb.helpers;
-    const q = query(collection(window.__fb.db, 'igrejas'), orderBy('createdAt', 'desc'));
-    return onSnapshot(q, snap => callback(snap.docs.map(d => ({ docId: d.id, ...d.data() }))), () => {});
-  } catch(e) { return () => {}; }
+  return fbListenWhenReady(() => {
+    try {
+      const { collection, onSnapshot, query, orderBy } = window.__fb.helpers;
+      const q = query(collection(window.__fb.db, 'igrejas'), orderBy('createdAt', 'desc'));
+      return onSnapshot(q, snap => callback(snap.docs.map(d => ({ docId: d.id, ...d.data() }))), () => {});
+    } catch(e) { return () => {}; }
+  });
 }
 
 // Sem churchId: escuta todas as sugestões (uso do Painel do Desenvolvedor). Com churchId: só as dessa igreja.
 function fbListenSuggestions(callback, churchId) {
-  if (!fbIsReady()) return () => {};
-  try {
-    const { collection, onSnapshot, query, where } = window.__fb.helpers;
-    const base = collection(window.__fb.db, 'sugestoes');
-    const q = churchId ? query(base, where('churchId', '==', churchId)) : base;
-    return onSnapshot(q, snap => callback(snap.docs.map(d => ({ docId: d.id, ...d.data() }))), () => {});
-  } catch(e) { return () => {}; }
+  return fbListenWhenReady(() => {
+    try {
+      const { collection, onSnapshot, query, where } = window.__fb.helpers;
+      const base = collection(window.__fb.db, 'sugestoes');
+      const q = churchId ? query(base, where('churchId', '==', churchId)) : base;
+      return onSnapshot(q, snap => callback(snap.docs.map(d => ({ docId: d.id, ...d.data() }))), () => {});
+    } catch(e) { return () => {}; }
+  });
 }
 
 // Lista de igrejas pra tela de login/recuperação: mistura as cadastradas neste aparelho com
