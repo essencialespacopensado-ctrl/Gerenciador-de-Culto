@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-20.7';
+const APP_VERSION = '2026-09-20.8';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -790,6 +790,7 @@ function DeveloperPanel({ onLogout }) {
         association: r.association, district: r.district, pastorName: r.pastorName,
         paused: local ? !!local.paused : !!r.paused,
         removed: local ? !!local.removed : !!r.removed,
+        purged: local ? !!local.purged : !!r.purged,
         fbDocId: r.docId || (local && local.fbDocId),
         createdAt: r.createdAt, __remote: !local
       };
@@ -797,8 +798,8 @@ function DeveloperPanel({ onLogout }) {
     return [...remoteMapped, ...localOnly];
   }, [remoteChurches, db]);
 
-  const visibleChurches = useMemo(() => db_merged.filter(c => showRemoved ? c.removed : !c.removed), [db_merged, showRemoved]);
-  const removedCount = useMemo(() => db_merged.filter(c => c.removed).length, [db_merged]);
+  const visibleChurches = useMemo(() => db_merged.filter(c => !c.purged && (showRemoved ? c.removed : !c.removed)), [db_merged, showRemoved]);
+  const removedCount = useMemo(() => db_merged.filter(c => c.removed && !c.purged).length, [db_merged]);
 
   // Detecta logins duplicados (duas ou mais igrejas cadastradas com o mesmo login), o que pode
   // causar comportamento inconsistente (uma ação numa igreja "vazando" pra outra). Avisa o
@@ -866,6 +867,17 @@ function DeveloperPanel({ onLogout }) {
     setExpandedId(null); setResetId(null);
   };
   const restoreChurch = (c) => updateChurchAdmin(c, { removed: false }, 'restauracao', 'Igreja restaurada pelo desenvolvedor');
+
+  // Limpa (some da lista, inclusive da lista de removidas) todas as igrejas atualmente removidas.
+  // Como o Firestore não permite apagar o registro de verdade (regra de segurança), isso marca as
+  // igrejas com "purged: true" — elas continuam existindo no banco, mas somem de todo o painel.
+  const clearRemovedChurches = () => {
+    const removedList = db_merged.filter(c => c.removed && !c.purged);
+    if (removedList.length === 0) return;
+    if (!confirm('Limpar '+removedList.length+' igreja(s) removida(s) da lista? Elas somem de vez do painel (não aparecem nem em "Ver removidas"). Essa ação não pode ser desfeita.')) return;
+    removedList.forEach(c => updateChurchAdmin(c, { purged: true }, 'limpeza', 'Removida da lista de removidas pelo desenvolvedor'));
+    setShowRemoved(false);
+  };
 
   const resetChurchPassword = (c, newPass) => {
     const passwordHash = simpleHash(newPass);
@@ -966,7 +978,10 @@ function DeveloperPanel({ onLogout }) {
           ` : html`<${AddChurchForm} onAdd=${addChurchByDev} onCancel=${()=>setAddOpen(false)} />`}
 
           ${removedCount > 0 && html`
-            <button onClick=${()=>setShowRemoved(v=>!v)} style=${{...btnGhost, justifySelf:'start'}}>${showRemoved ? '← Ver igrejas ativas' : '🗑️ Ver removidas ('+removedCount+')'}</button>
+            <div style=${{display:'flex', gap:'8px', flexWrap:'wrap'}}>
+              <button onClick=${()=>setShowRemoved(v=>!v)} style=${{...btnGhost, justifySelf:'start'}}>${showRemoved ? '← Ver igrejas ativas' : '🗑️ Ver removidas ('+removedCount+')'}</button>
+              ${showRemoved && html`<button onClick=${clearRemovedChurches} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🧹 Limpar removidas</button>`}
+            </div>
           `}
 
           ${visibleChurches.length === 0 && html`<div class="glass fade-up" style=${{padding:'24px', borderRadius:'16px', textAlign:'center', color:'var(--text-dim)', fontSize:'13px'}}>${showRemoved ? 'Nenhuma igreja removida.' : 'Nenhuma igreja cadastrada ainda.'}</div>`}
