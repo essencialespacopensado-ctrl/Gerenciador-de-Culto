@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.3';
+const APP_VERSION = '2026-09-21.4';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1734,13 +1734,20 @@ function TabTile({ text, active, onClick, idx, delay }) {
 
 // Detecta tela pequena (celular) pra decidir se o menu do cabeçalho começa fechado, economizando
 // espaço vertical — sem isso o cabeçalho com todos os grupos abertos ocupava quase a tela toda
-// num celular. Reage a giro de tela / redimensionamento.
+// num celular. Olha tanto a largura (celular em pé) quanto a altura (celular deitado — na
+// horizontal a largura fica grande, mas a altura fica bem curta, e é isso que faz o cabeçalho
+// tomar a tela toda e esconder os botões de baixo). Reage a giro de tela / redimensionamento.
+function isCompactScreen() {
+  if (typeof window === 'undefined') return false;
+  return window.innerWidth <= 680 || window.innerHeight <= 480;
+}
 function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 680);
+  const [isMobile, setIsMobile] = useState(isCompactScreen);
   useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth <= 680);
+    const onResize = () => setIsMobile(isCompactScreen());
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => { window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); };
   }, []);
   return isMobile;
 }
@@ -1850,6 +1857,7 @@ function ImageProjectButton({ churchId, item }) {
 }
 
 function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, idx }) {
+  const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(act.name);
   const [responsible, setResponsible] = useState(act.responsible);
@@ -1897,13 +1905,13 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
         <button onClick=${()=>onDelete(act.id)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'16px', padding:'4px 8px', borderRadius:'8px'}} title="Remover">✕</button>
       </div>
       ${(needsMedia || (media && media.title)) && html`
-        <div style=${{marginLeft:'46px', display:'flex', gap:'8px', alignItems:'flex-start'}}>
-          <div style=${{flex:1}}>
+        <div style=${{marginLeft: isMobile ? '0' : '46px', display:'flex', flexDirection: isMobile ? 'column' : 'row', gap:'8px', alignItems: isMobile ? 'stretch' : 'flex-start'}}>
+          <div style=${{flex:1, minWidth:0}}>
             ${needsMedia
               ? html`<${MediaSearchField} media=${media} onChange=${(m)=>{ setMedia(m); onEdit({...act, media: m || null}); }} />`
               : html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>🎬 ${media.title}</div>`}
           </div>
-          ${media && media.title && html`<${ProjectButton} churchId=${churchId} media=${media} />`}
+          ${media && media.title && html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${ProjectButton} churchId=${churchId} media=${media} /></div>`}
         </div>
       `}
     </div>
@@ -2272,8 +2280,26 @@ function FinalizeCultoModal({ summary, onConfirm, onClose }) {
   `;
 }
 
+// Script comum injetado em toda janela de projeção: tenta tela cheia sozinho assim que a janela
+// abre (funciona na maioria das vezes, porque ainda está "dentro" do clique em Projetar) e, se o
+// navegador bloquear essa tentativa automática, QUALQUER toque/clique na tela — em qualquer lugar,
+// não só no botãozinho — repete a tentativa e também manda o vídeo tocar (se houver um player do
+// YouTube na página). Assim, na pior das hipóteses, é só um toque em vez de precisar caçar o botão
+// de play E o de tela cheia separadamente.
+function projectionAutoScript(withPlayer) {
+  return '<scr'+'ipt>'
+    + 'function gcTryStart(){'
+    + 'try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen().then(function(){var b=document.getElementById("fs-fallback");if(b)b.style.display="none";}).catch(function(){});}catch(e){}'
+    + (withPlayer ? 'try{var f=document.getElementById("gc-player");if(f&&f.contentWindow)f.contentWindow.postMessage(JSON.stringify({event:"command",func:"playVideo",args:[]}),"*");}catch(e){}' : '')
+    + '}'
+    + 'gcTryStart();'
+    + 'document.addEventListener("click",gcTryStart);'
+    + 'document.addEventListener("touchend",gcTryStart);'
+    + '<\/scr'+'ipt>';
+}
+
 function blankWindowHtml(title, bodyHtml) {
-  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+title+'</title><style>html,body{margin:0;height:100%;background:#000;color:#fff;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;overflow:hidden;}h1{font-size:5vw;text-align:center;padding:0 4vw;}#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;}</style></head><body>'+bodyHtml+'<button id="fs-fallback" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();this.style.display=\'none\';">⛶ Tela Cheia</button><scr'+'ipt>try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen().then(()=>{var b=document.getElementById(\'fs-fallback\');if(b)b.style.display=\'none\';}).catch(()=>{});}catch(e){}<\/scr'+'ipt></body></html>';
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+title+'</title><style>html,body{margin:0;height:100%;background:#000;color:#fff;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;overflow:hidden;}h1{font-size:5vw;text-align:center;padding:0 4vw;}#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;}</style></head><body>'+bodyHtml+'<button id="fs-fallback" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();this.style.display=\'none\';">⛶ Tela Cheia</button>'+projectionAutoScript(false)+'</body></html>';
 }
 
 // Janelas de projeção compartilhadas entre abas/telas da aplicação (evita reabrir com popup toda vez)
@@ -2294,13 +2320,19 @@ function getProjectorScreen(churchId) {
 }
 
 function videoEmbedHtml(media) {
+  // youtube-nocookie.com em vez de youtube.com: evita a caixinha de consentimento de cookies do
+  // Google que às vezes aparece por cima do vídeo na primeira vez (a "caixa de popup" que atrapalha
+  // a reprodução automática). modestbranding/rel/iv_load_policy tiram distrações da tela; playsinline
+  // evita que o celular assuma um player nativo separado em vez da nossa própria tela cheia;
+  // enablejsapi permite mandar o comando de "play" por script se a reprodução automática for bloqueada.
+  const params = 'autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1&mute=0';
   const src = media.videoId
-    ? 'https://www.youtube.com/embed/'+media.videoId+'?autoplay=1&rel=0'
+    ? 'https://www.youtube-nocookie.com/embed/'+media.videoId+'?'+params
     : media.playlistId
-    ? 'https://www.youtube.com/embed/videoseries?list='+media.playlistId+'&autoplay=1&rel=0'
+    ? 'https://www.youtube-nocookie.com/embed/videoseries?list='+media.playlistId+'&'+params
     : null;
   if (!src) return null;
-  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Projeção</title><style>html,body{margin:0;height:100%;background:#000;overflow:hidden;}iframe{position:fixed;inset:0;width:100%;height:100%;border:none;}#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;z-index:10;}</style></head><body><iframe src="'+src+'" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe><button id="fs-fallback" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();this.style.display=\'none\';">⛶ Tela Cheia</button><scr'+'ipt>try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen().then(()=>{var b=document.getElementById(\'fs-fallback\');if(b)b.style.display=\'none\';}).catch(()=>{});}catch(e){}<\/scr'+'ipt></body></html>';
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Projeção</title><style>html,body{margin:0;height:100%;background:#000;overflow:hidden;}iframe{position:fixed;inset:0;width:100%;height:100%;border:none;}#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;z-index:10;}</style></head><body><iframe id="gc-player" src="'+src+'" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe><button id="fs-fallback" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();this.style.display=\'none\';">⛶ Tela Cheia</button>'+projectionAutoScript(true)+'</body></html>';
 }
 
 function openMediaInNewTab(media) {
@@ -2326,7 +2358,7 @@ function openMediaInNewTab(media) {
 
 function imageEmbedHtml(item) {
   const safeTitle = (item.title || 'Anúncio').replace(/</g,'&lt;');
-  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+safeTitle+'</title><style>html,body{margin:0;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center;}img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;}#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;z-index:10;}</style></head><body><img src="'+item.dataUrl+'" alt="'+safeTitle+'" /><button id="fs-fallback" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();this.style.display=\'none\';">⛶ Tela Cheia</button><scr'+'ipt>try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen().then(()=>{var b=document.getElementById(\'fs-fallback\');if(b)b.style.display=\'none\';}).catch(()=>{});}catch(e){}<\/scr'+'ipt></body></html>';
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+safeTitle+'</title><style>html,body{margin:0;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center;}img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;}#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;z-index:10;}</style></head><body><img src="'+item.dataUrl+'" alt="'+safeTitle+'" /><button id="fs-fallback" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();this.style.display=\'none\';">⛶ Tela Cheia</button>'+projectionAutoScript(false)+'</body></html>';
 }
 
 function openImageInNewTab(item) {
@@ -3330,12 +3362,50 @@ async function searchYoutubeServer(query) {
 // sem um servidor próprio. Por isso o caminho aqui é o mais simples e confiável possível: sugestão de
 // texto em tempo real (JSONP, do próprio Google) + um clique abre a busca de verdade no youtube.com +
 // colar o link do vídeo escolhido de volta aqui.
-function BackgroundAudioMixer() {
-  const [tracks, setTracks] = useState([
-    { name:'Fundo 1', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
-    { name:'Fundo 2', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
-    { name:'Fundo 3', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
-  ]);
+// Guarda o que cada igreja deixou tocando/escolhido nos Fundos Musicais (só o que dá pra guardar:
+// link/vídeo do YouTube, nome e volume — um arquivo de áudio do computador não sobrevive a um
+// recarregamento de página, então esse continua precisando ser escolhido de novo). Assim, ao abrir
+// o app de novo, os fundos já vêm com o mesmo vídeo carregado e tentando tocar sozinhos, sem
+// precisar buscar tudo de novo toda vez.
+function bgMusicKey(churchId) { return 'gc_fundos_musicais_' + churchId; }
+function loadSavedBgMusic(churchId) {
+  try {
+    const raw = localStorage.getItem(bgMusicKey(churchId));
+    if (!raw) return null;
+    const saved = JSON.parse(raw);
+    return Array.isArray(saved) ? saved : null;
+  } catch(e) { return null; }
+}
+function saveBgMusic(churchId, tracks) {
+  try {
+    const toSave = tracks.map(t => ({
+      name: t.name,
+      mode: t.mode === 'youtube' ? 'youtube' : 'none',
+      videoId: t.mode === 'youtube' ? t.videoId : null,
+      volume: t.volume
+    }));
+    localStorage.setItem(bgMusicKey(churchId), JSON.stringify(toSave));
+  } catch(e) {}
+}
+function BackgroundAudioMixer({ churchId }) {
+  const [tracks, setTracks] = useState(() => {
+    const base = [
+      { name:'Fundo 1', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
+      { name:'Fundo 2', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
+      { name:'Fundo 3', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
+    ];
+    const saved = loadSavedBgMusic(churchId);
+    if (!saved) return base;
+    return base.map((b,i) => {
+      const s = saved[i];
+      if (!s) return b;
+      const isYoutube = s.mode === 'youtube' && s.videoId;
+      return { ...b, name: s.name || b.name, mode: isYoutube ? 'youtube' : 'none', videoId: isYoutube ? s.videoId : null, playing: isYoutube, volume: typeof s.volume === 'number' ? s.volume : b.volume };
+    });
+  });
+  // Salva sozinho toda vez que o vídeo, o nome ou o volume de algum fundo muda — pra já vir tudo
+  // pronto na próxima vez que essa igreja abrir o app, sem precisar buscar de novo.
+  useEffect(() => { saveBgMusic(churchId, tracks); }, [churchId, tracks.map(t=>t.mode+'|'+t.videoId+'|'+t.name+'|'+t.volume).join(';')]);
   const audioRefs = [useRef(null), useRef(null), useRef(null)];
   const iframeRefs = [useRef(null), useRef(null), useRef(null)];
   const fileInputRefs = [useRef(null), useRef(null), useRef(null)];
@@ -3505,7 +3575,7 @@ function BackgroundAudioMixer() {
             <iframe
               key=${t.videoId}
               ref=${iframeRefs[i]}
-              src=${'https://www.youtube.com/embed/'+t.videoId+'?enablejsapi=1&autoplay=1&loop=1&playlist='+t.videoId+'&controls=0'}
+              src=${'https://www.youtube-nocookie.com/embed/'+t.videoId+'?enablejsapi=1&autoplay=1&loop=1&playlist='+t.videoId+'&controls=0&playsinline=1'}
               allow="autoplay; encrypted-media"
               onLoad=${()=>onIframeLoad(i)}
               style=${{width:'1px', height:'1px', opacity:0, position:'absolute', pointerEvents:'none'}}
@@ -3788,7 +3858,7 @@ function LiturgiaView({ churchId, churchName }) {
       ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
 
       <div style=${{fontSize:'10.5px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:'6px'}}>🎚️ Fundos Musicais</div>
-      <${BackgroundAudioMixer} />
+      <${BackgroundAudioMixer} churchId=${churchId} />
 
       <button onClick=${()=>setAssistantOpen(true)} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1.5px dashed var(--accent-1)', color:'var(--accent-1)', fontWeight:700}}>🤖 Assistente de Liturgia (colar texto)</button>
       <div style=${{display:'grid', gridTemplateColumns:'1fr auto', gap:'8px', marginBottom:'8px'}}>
