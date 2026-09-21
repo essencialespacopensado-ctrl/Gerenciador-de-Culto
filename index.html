@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-20.10';
+const APP_VERSION = '2026-09-20.11';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -934,6 +934,88 @@ function DeveloperPanel({ onLogout }) {
     setShowRemoved(false);
   };
 
+  // "Assistente" da aba do desenvolvedor: não é um chat, é uma varredura automática que roda a
+  // cada mudança nos dados (igrejas, sugestões, histórico) e aponta problemas reais — com um
+  // botão de ação pronto pra resolver cada um, sem precisar caçar informação pelas outras abas.
+  const diagnostics = useMemo(() => {
+    const out = [];
+    const daysSince = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 86400000 : Infinity;
+
+    // 1) Logins duplicados de verdade (duas+ igrejas ativas com o mesmo login).
+    duplicateLoginGroups.forEach(([login, list]) => {
+      out.push({
+        id: 'dup-'+login, severity: 'critica', icon: '⚠️',
+        title: 'Login duplicado: "'+login+'"',
+        description: list.length+' igrejas ativas estão cadastradas com esse mesmo login: '+list.map(c=>c.name).join(', ')+'. Enquanto isso não for resolvido, uma ação numa dessas igrejas pode acabar afetando a outra por engano.',
+        actions: [
+          { label: '👁️ Ver na lista', onClick: () => setTab('igrejas') },
+          ...list.map(c => ({ label: '🗑️ Remover "'+c.name+'"', danger: true, onClick: () => removeChurch(c) }))
+        ]
+      });
+    });
+
+    // 2) Muitas igrejas removidas acumuladas sem limpar.
+    if (removedCount >= 5) {
+      out.push({
+        id: 'removidas-acumuladas', severity: 'atencao', icon: '🗑️',
+        title: removedCount+' igrejas removidas acumuladas',
+        description: 'Isso não atrapalha o funcionamento, mas deixa o painel mais cheio do que precisa. Você pode limpar as que não vai mais usar.',
+        actions: [
+          { label: '👁️ Ver removidas', onClick: () => { setTab('igrejas'); setShowRemoved(true); } },
+          { label: '🧹 Limpar todas', danger: true, onClick: clearRemovedChurches }
+        ]
+      });
+    }
+
+    // 3) Igrejas pausadas há muito tempo (podem ter sido esquecidas).
+    db_merged.filter(c => c.paused && !c.removed && !c.purged && daysSince(c.updatedAt || c.createdAt) >= 14).forEach(c => {
+      out.push({
+        id: 'pausada-'+c.id, severity: 'atencao', icon: '⏸️',
+        title: '"'+c.name+'" está pausada há mais de 2 semanas',
+        description: 'Se foi um esquecimento, reative o acesso. Se não é mais pra usar o sistema, considere remover.',
+        actions: [
+          { label: '▶️ Reativar', onClick: () => reactivateChurch(c) },
+          { label: '🗑️ Remover', danger: true, onClick: () => removeChurch(c) }
+        ]
+      });
+    });
+
+    // 4) Sugestões esperando resposta há muito tempo.
+    const oldPending = suggestions.filter(s => s.status !== 'answered' && daysSince(s.createdAt) >= 5);
+    if (oldPending.length > 0) {
+      out.push({
+        id: 'sugestoes-pendentes', severity: 'atencao', icon: '💡',
+        title: oldPending.length+' sugestão(ões) esperando resposta há mais de 5 dias',
+        description: 'Igrejas enviaram sugestões e ainda não tiveram retorno: '+oldPending.slice(0,4).map(s=>s.churchName).join(', ')+(oldPending.length>4?'...':'')+'.',
+        actions: [ { label: '👁️ Ver sugestões', onClick: () => setTab('sugestoes') } ]
+      });
+    }
+
+    // 5) Conflitos de sincronização recentes (login disputado durante backfill).
+    const recentConflicts = activities.filter(a => a.type === 'conflito' && daysSince(a.at) <= 14);
+    if (recentConflicts.length > 0) {
+      out.push({
+        id: 'conflitos-sync', severity: 'atencao', icon: '🔀',
+        title: recentConflicts.length+' conflito(s) de sincronização recente(s)',
+        description: 'Uma igreja cadastrada só num aparelho tentou sincronizar, mas o login dela já tinha sido ocupado por outra. Vale conferir se é uma duplicata: '+recentConflicts.slice(0,3).map(a=>a.churchName).join(', ')+'.',
+        actions: [ { label: '👁️ Ver no histórico', onClick: () => setTab('log') } ]
+      });
+    }
+
+    // 6) Banco compartilhado fora do ar.
+    if (syncStatus === 'error') {
+      out.push({
+        id: 'sync-erro', severity: 'critica', icon: '📴',
+        title: 'Sem conexão com o banco compartilhado agora',
+        description: 'Enquanto isso durar, cadastros e ações feitas neste aparelho não aparecem nos outros. Verifique sua internet ou tente atualizar a página.',
+        actions: [ { label: '↻ Tentar de novo', onClick: () => window.location.reload() } ]
+      });
+    }
+
+    const order = { critica: 0, atencao: 1 };
+    return out.sort((a,b) => order[a.severity] - order[b.severity]);
+  }, [duplicateLoginGroups, removedCount, db_merged, suggestions, activities, syncStatus]);
+
   const resetChurchPassword = (c, newPass) => {
     const passwordHash = simpleHash(newPass);
     updateChurchAdmin(c, { passwordHash }, 'atualizacao', 'Senha redefinida pelo desenvolvedor');
@@ -1003,6 +1085,10 @@ function DeveloperPanel({ onLogout }) {
       </div>
 
       <div style=${{display:'flex', gap:'6px', marginBottom:'16px', flexWrap:'wrap'}}>
+        <button onClick=${()=>setTab('assistente')} style=${{padding:'8px 16px', borderRadius:'10px', fontSize:'12px', fontWeight:700, border:'1px solid var(--border-soft)', background: tab==='assistente' ? 'linear-gradient(90deg,var(--accent-1),var(--accent-2))' : 'transparent', color: tab==='assistente' ? '#fff' : 'var(--text-mid)', display:'flex', alignItems:'center', gap:'6px'}}>
+          🤖 Assistente
+          ${diagnostics.length > 0 && html`<span style=${{padding:'1px 7px', borderRadius:'999px', fontSize:'10px', background: diagnostics.some(d=>d.severity==='critica') ? 'var(--danger)' : 'var(--highlight)', color:'#fff', fontWeight:800}}>${diagnostics.length}</span>`}
+        </button>
         <button onClick=${()=>setTab('igrejas')} style=${{padding:'8px 16px', borderRadius:'10px', fontSize:'12px', fontWeight:700, border:'1px solid var(--border-soft)', background: tab==='igrejas' ? 'linear-gradient(90deg,var(--accent-1),var(--accent-2))' : 'transparent', color: tab==='igrejas' ? '#fff' : 'var(--text-mid)'}}>Igrejas Cadastradas</button>
         <button onClick=${()=>setTab('log')} style=${{padding:'8px 16px', borderRadius:'10px', fontSize:'12px', fontWeight:700, border:'1px solid var(--border-soft)', background: tab==='log' ? 'linear-gradient(90deg,var(--accent-1),var(--accent-2))' : 'transparent', color: tab==='log' ? '#fff' : 'var(--text-mid)'}}>Histórico de Atividade</button>
         <button onClick=${()=>setTab('sugestoes')} style=${{padding:'8px 16px', borderRadius:'10px', fontSize:'12px', fontWeight:700, border:'1px solid var(--border-soft)', background: tab==='sugestoes' ? 'linear-gradient(90deg,var(--accent-1),var(--accent-2))' : 'transparent', color: tab==='sugestoes' ? '#fff' : 'var(--text-mid)', display:'flex', alignItems:'center', gap:'6px'}}>
@@ -1012,11 +1098,14 @@ function DeveloperPanel({ onLogout }) {
         <button onClick=${refresh} style=${btnGhost}>↻ Atualizar</button>
       </div>
 
-      ${duplicateLoginGroups.length > 0 && html`
+      ${duplicateLoginGroups.length > 0 && tab !== 'assistente' && html`
         <div class="glass fade-up" style=${{padding:'14px 18px', borderRadius:'14px', marginBottom:'16px', border:'1.5px solid color-mix(in srgb, var(--danger) 45%, transparent)', background:'color-mix(in srgb, var(--danger) 10%, transparent)'}}>
-          <div style=${{fontWeight:800, fontSize:'13px', color:'var(--danger)', marginBottom:'4px'}}>⚠️ Login duplicado detectado</div>
-          <div style=${{fontSize:'12px', color:'var(--text-mid)', lineHeight:1.5}}>
-            ${duplicateLoginGroups.length === 1 ? 'Existe mais de uma igreja usando o mesmo login abaixo. Isso pode causar comportamento estranho (uma ação numa igreja afetar a outra). Renomeie o login de uma delas para resolver:' : 'Existem igrejas usando o mesmo login em alguns casos abaixo. Isso pode causar comportamento estranho (uma ação numa igreja afetar a outra). Renomeie o login de cada uma para resolver:'}
+          <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center', gap:'10px', flexWrap:'wrap'}}>
+            <div style=${{fontWeight:800, fontSize:'13px', color:'var(--danger)'}}>⚠️ Login duplicado detectado</div>
+            <button onClick=${()=>setTab('assistente')} style=${{...btnGhost, padding:'5px 12px', fontSize:'11px'}}>🤖 Resolver no Assistente</button>
+          </div>
+          <div style=${{fontSize:'12px', color:'var(--text-mid)', lineHeight:1.5, marginTop:'4px'}}>
+            ${duplicateLoginGroups.length === 1 ? 'Existe mais de uma igreja ativa usando o mesmo login abaixo.' : 'Existem igrejas ativas usando o mesmo login em alguns casos abaixo.'}
           </div>
           <ul style=${{margin:'8px 0 0', paddingLeft:'18px', fontSize:'12px', color:'var(--text-hi)'}}>
             ${duplicateLoginGroups.map(([login, list]) => html`
@@ -1025,6 +1114,38 @@ function DeveloperPanel({ onLogout }) {
               </li>
             `)}
           </ul>
+        </div>
+      `}
+
+      ${tab === 'assistente' && html`
+        <div style=${{display:'grid', gap:'12px'}}>
+          <div class="glass fade-up" style=${{padding:'14px 18px', borderRadius:'16px'}}>
+            <div style=${{fontWeight:800, fontSize:'13.5px', marginBottom:'4px'}}>🤖 Assistente do Painel</div>
+            <div style=${{fontSize:'11.5px', color:'var(--text-dim)', lineHeight:1.5}}>Faço uma varredura automática toda vez que algo muda — igrejas, sugestões, histórico — e aponto aqui só o que realmente precisa da sua atenção, com um botão pronto pra resolver.</div>
+          </div>
+
+          ${diagnostics.length === 0 && html`
+            <div class="glass fade-up" style=${{padding:'28px', borderRadius:'16px', textAlign:'center'}}>
+              <div style=${{fontSize:'30px', marginBottom:'6px'}}>✅</div>
+              <div style=${{fontSize:'13px', fontWeight:700, color:'var(--text-hi)'}}>Tudo certo por aqui!</div>
+              <div style=${{fontSize:'11.5px', color:'var(--text-dim)', marginTop:'2px'}}>Não encontrei nenhum problema agora. Assim que algo precisar da sua atenção, aparece aqui.</div>
+            </div>
+          `}
+
+          ${diagnostics.map(d => html`
+            <div key=${d.id} class="glass fade-up" style=${{padding:'14px 18px', borderRadius:'14px', border: '1.5px solid color-mix(in srgb, '+(d.severity==='critica'?'var(--danger)':'var(--highlight)')+' 45%, transparent)', background: 'color-mix(in srgb, '+(d.severity==='critica'?'var(--danger)':'var(--highlight)')+' 8%, transparent)'}}>
+              <div style=${{display:'flex', alignItems:'flex-start', gap:'10px'}}>
+                <span style=${{fontSize:'18px'}}>${d.icon}</span>
+                <div style=${{flex:1}}>
+                  <div style=${{fontWeight:800, fontSize:'13px', color: d.severity==='critica' ? 'var(--danger)' : 'var(--text-hi)'}}>${d.title}</div>
+                  <div style=${{fontSize:'12px', color:'var(--text-mid)', marginTop:'3px', lineHeight:1.5}}>${d.description}</div>
+                  <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', marginTop:'10px'}}>
+                    ${d.actions.map((a,i) => html`<button key=${i} onClick=${a.onClick} style=${a.danger ? {...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'} : btnGhost}>${a.label}</button>`)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          `)}
         </div>
       `}
 
