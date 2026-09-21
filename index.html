@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.7';
+const APP_VERSION = '2026-09-21.8';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1562,11 +1562,38 @@ function ConfirmVideoLink({ media, onChange }) {
   `;
 }
 
-function MediaSearchField({ media, onChange }) {
-  const [q, setQ] = useState('');
-  const [videos, setVideos] = useState(null); // null = não buscou ainda; [] = buscou e veio vazio
+// Guarda o que a pessoa digitou/achou na busca de mídia, pra não sumir se ela trocar de aba,
+// editar outra atividade ou o app recarregar o componente — só troca quando ela mesma faz outra
+// busca (ou escolhe um resultado). Cada campo de busca tem sua própria chave (geralmente o id da
+// atividade), então a busca de uma atividade nunca se mistura com a de outra.
+function mediaSearchStorageKey(searchKey) { return 'gc_media_search_' + searchKey; }
+function loadMediaSearchState(searchKey) {
+  if (!searchKey) return null;
+  try {
+    const raw = localStorage.getItem(mediaSearchStorageKey(searchKey));
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) { return null; }
+}
+function saveMediaSearchState(searchKey, state) {
+  if (!searchKey) return;
+  try { localStorage.setItem(mediaSearchStorageKey(searchKey), JSON.stringify(state)); } catch(e) {}
+}
+function clearMediaSearchState(searchKey) {
+  if (!searchKey) return;
+  try { localStorage.removeItem(mediaSearchStorageKey(searchKey)); } catch(e) {}
+}
+
+function MediaSearchField({ media, onChange, searchKey }) {
+  const [q, setQ] = useState(() => { const s = loadMediaSearchState(searchKey); return (s && s.q) || ''; });
+  const [videos, setVideos] = useState(() => { const s = loadMediaSearchState(searchKey); return s && s.videos !== undefined ? s.videos : null; }); // null = não buscou ainda; [] = buscou e veio vazio
   const [searching, setSearching] = useState(false);
   const matches = q.trim() ? MEDIA_LIBRARY.filter(m => m.title.toLowerCase().includes(q.toLowerCase())).slice(0,5) : [];
+
+  useEffect(() => {
+    if (!searchKey) return;
+    if (!q.trim() && videos === null) { clearMediaSearchState(searchKey); return; }
+    saveMediaSearchState(searchKey, { q, videos });
+  }, [searchKey, q, videos]);
 
   const doSearch = async () => {
     const query = q.trim();
@@ -1576,6 +1603,11 @@ function MediaSearchField({ media, onChange }) {
     setSearching(false);
     if (result) { setVideos(result); return; }
     window.open(youtubeSearchUrl(query), '_blank', 'noopener'); // sem servidor de busca disponível
+  };
+
+  const pick = (payload) => {
+    clearMediaSearchState(searchKey);
+    onChange(payload);
   };
 
   if (media && media.title) {
@@ -1598,14 +1630,14 @@ function MediaSearchField({ media, onChange }) {
       ${matches.length > 0 && html`
         <div style=${{display:'grid', gap:'4px'}}>
           ${matches.map(m => html`
-            <button key=${m.title} type="button" onClick=${()=>onChange({ title: m.title + (m.dynamic ? ' ('+weekDateSuffix()+')' : ''), url: mediaLibraryUrl(m), playlistId: m.playlistId || null })} style=${{textAlign:'left', padding:'7px 10px', borderRadius:'8px', border:'1px solid var(--border-soft)', background:'transparent', fontSize:'11.5px', color:'var(--text-mid)'}}>🎵 ${m.title}${m.dynamic ? ' 📅' : ''}</button>
+            <button key=${m.title} type="button" onClick=${()=>pick({ title: m.title + (m.dynamic ? ' ('+weekDateSuffix()+')' : ''), url: mediaLibraryUrl(m), playlistId: m.playlistId || null })} style=${{textAlign:'left', padding:'7px 10px', borderRadius:'8px', border:'1px solid var(--border-soft)', background:'transparent', fontSize:'11.5px', color:'var(--text-mid)'}}>🎵 ${m.title}${m.dynamic ? ' 📅' : ''}</button>
           `)}
         </div>
       `}
       ${videos && videos.length > 0 && html`
         <div style=${{display:'grid', gap:'4px', maxHeight:'260px', overflowY:'auto'}}>
           ${videos.map((v,vi) => html`
-            <button key=${v.videoId+vi} type="button" onClick=${()=>onChange({ title: v.title, url: v.watchUrl || ('https://www.youtube.com/watch?v='+v.videoId), videoId: v.videoId })} style=${{display:'flex', gap:'8px', alignItems:'center', padding:'5px', borderRadius:'8px', border:'1px solid var(--border-soft)', background:'transparent', textAlign:'left'}}>
+            <button key=${v.videoId+vi} type="button" onClick=${()=>pick({ title: v.title, url: v.watchUrl || ('https://www.youtube.com/watch?v='+v.videoId), videoId: v.videoId })} style=${{display:'flex', gap:'8px', alignItems:'center', padding:'5px', borderRadius:'8px', border:'1px solid var(--border-soft)', background:'transparent', textAlign:'left'}}>
               <img src=${v.thumbnail} alt="" style=${{width:'56px', height:'32px', objectFit:'cover', borderRadius:'5px', flexShrink:0}} />
               <span style=${{fontSize:'11px', color:'var(--text-hi)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${v.title}</span>
             </button>
@@ -1891,7 +1923,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
           </select>
         </div>
         <input type="time" value=${time} onChange=${e=>setTime(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-        ${needsMedia && html`<${MediaSearchField} media=${media} onChange=${setMedia} />`}
+        ${needsMedia && html`<${MediaSearchField} media=${media} onChange=${setMedia} searchKey=${act.id} />`}
         <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end'}}>
           <button onClick=${()=>setEditing(false)} style=${btnGhost}>Cancelar</button>
           <button onClick=${save} style=${{...btnPrimary, width:'auto', padding:'8px 16px'}}>Salvar</button>
@@ -1917,7 +1949,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
         <div style=${{marginLeft: isMobile ? '0' : '46px', display:'flex', flexDirection: isMobile ? 'column' : 'row', gap:'8px', alignItems: isMobile ? 'stretch' : 'flex-start'}}>
           <div style=${{flex:1, minWidth:0}}>
             ${needsMedia
-              ? html`<${MediaSearchField} media=${media} onChange=${(m)=>{ setMedia(m); onEdit({...act, media: m || null}); }} />`
+              ? html`<${MediaSearchField} media=${media} onChange=${(m)=>{ setMedia(m); onEdit({...act, media: m || null}); }} searchKey=${act.id} />`
               : html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>🎬 ${media.title}</div>`}
           </div>
           ${media && media.title && html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${ProjectButton} churchId=${churchId} media=${media} /></div>`}
@@ -1962,7 +1994,7 @@ function AddActivityForm({ defaultSection, activities, onAddAt, onClose }) {
         </select>
       </div>
 
-      ${needsMedia && html`<${MediaSearchField} media=${media} onChange=${setMedia} />`}
+      ${needsMedia && html`<${MediaSearchField} media=${media} onChange=${setMedia} searchKey="nova-atividade" />`}
 
       <div style=${{display:'grid', gridTemplateColumns:'110px 1fr', gap:'10px'}}>
         <select value=${position} onChange=${e=>setPosition(e.target.value)} style=${inputStyle}>
@@ -2716,7 +2748,7 @@ function MensagensMusicaisTool({ churchId }) {
               <div style=${{fontWeight:700, fontSize:'12.5px'}}>${items.length > 1 ? 'Mensagem Musical '+(i+1)+' — ' : ''}${a.name}</div>
               <div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${a.responsible} • ${a.time} • ${SECTION_LABELS[a.section]}</div>
             </div>
-            <${MediaSearchField} media=${a.media} onChange=${(m)=>setMediaFor(a.id, m)} />
+            <${MediaSearchField} media=${a.media} onChange=${(m)=>setMediaFor(a.id, m)} searchKey=${a.id} />
           </div>
         `)}
       </div>
@@ -2995,7 +3027,7 @@ function MomentosLouvorTool({ churchId }) {
               <div style=${{fontWeight:700, fontSize:'12.5px'}}>Louvor ${i+1} — ${a.name}</div>
               <div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${a.responsible} • ${a.time} • ${SECTION_LABELS[a.section]}</div>
             </div>
-            <${MediaSearchField} media=${a.media} onChange=${(m)=>setMediaFor(a.id, m)} />
+            <${MediaSearchField} media=${a.media} onChange=${(m)=>setMediaFor(a.id, m)} searchKey=${a.id} />
           </div>
         `)}
       </div>
@@ -5262,6 +5294,31 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
 
 function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   const [tab, setTab] = useState('liturgia');
+  // Aparelho que fica logado (opção "Manter conectado") não passa mais pela tela de login a cada
+  // acesso, que era o único lugar que buscava os dados atualizados da igreja no banco compartilhado.
+  // Por isso os fundos musicais salvos na nuvem por outro aparelho podiam demorar a aparecer aqui —
+  // só quando a pessoa deslogava e logava de novo. Este "ouvinte" corrige isso: fica escutando o
+  // documento desta igreja no Firestore e, assim que algo mudar em qualquer aparelho, atualiza a
+  // sessão automaticamente, sem precisar sair e entrar de novo.
+  const docId = church.fbDocId || church.docId;
+  useEffect(() => {
+    if (!docId) return;
+    const unsub = fbListenWhenReady(() => {
+      try {
+        const { doc, onSnapshot } = window.__fb.helpers;
+        return onSnapshot(doc(window.__fb.db, 'igrejas', docId), snap => {
+          if (!snap.exists()) return;
+          const data = snap.data();
+          onUpdateChurch({
+            bgMusic: data.bgMusic || null,
+            paused: !!data.paused,
+            removed: !!data.removed,
+          });
+        }, () => {});
+      } catch(e) { return () => {}; }
+    });
+    return unsub;
+  }, [docId]);
   return html`
     <div>
       <${ChurchHeader} church=${church} tab=${tab} setTab=${setTab} onLogout=${onLogout} />
@@ -5437,9 +5494,13 @@ function App() {
     setSession(null);
     try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); } catch(e) {}
   };
+  // Sempre MESCLA os campos recebidos com o que já está na sessão (em vez de substituir a igreja
+  // inteira) — assim uma atualização parcial vinda de um "ouvinte" em segundo plano (como os fundos
+  // musicais chegando de outro aparelho) nunca apaga por acidente outro campo que tenha mudado
+  // entre o momento em que a tela pegou os dados e agora.
   const updateChurchSession = (updatedChurch) => {
     setSession(s => {
-      const next = { ...s, church: updatedChurch };
+      const next = { ...s, church: { ...s.church, ...updatedChurch } };
       try {
         if (rememberRef.current) localStorage.setItem(SESSION_KEY, JSON.stringify(next));
         else sessionStorage.setItem(SESSION_KEY, JSON.stringify(next));
