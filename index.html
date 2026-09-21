@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-20.5';
+const APP_VERSION = '2026-09-20.6';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -283,9 +283,17 @@ function useSyncedChurches() {
       const currentLogins = new Set(current.map(c => (c.login||'').toLowerCase()));
       let changed = false;
       const merged = [...current];
+      // Se por algum motivo existir mais de um cadastro remoto com o mesmo login (por exemplo,
+      // uma igreja que se cadastrou de novo depois de já existir), só o mais recente (a consulta
+      // já vem ordenada do mais novo pro mais antigo) é considerado — evita que o app fique
+      // "brigando" entre dois registros e revertendo pausa/remoção sozinho.
+      const remoteByLogin = new Map();
       remote.forEach(rc => {
         if (!rc.login) return;
         const loginLower = rc.login.toLowerCase();
+        if (!remoteByLogin.has(loginLower)) remoteByLogin.set(loginLower, rc);
+      });
+      remoteByLogin.forEach((rc, loginLower) => {
         if (!currentLogins.has(loginLower)) {
           merged.push({
             id: rc.churchId || ('igreja-remote-' + rc.docId),
