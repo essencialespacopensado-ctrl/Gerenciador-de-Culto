@@ -97,12 +97,12 @@
       const cfg = window.__FIREBASE_CONFIG__;
       if (!cfg) { window.__fb.error = 'no-config'; return; }
       const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js');
-      const { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp } =
+      const { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, getDocs } =
         await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js');
       const app = initializeApp(cfg);
       const db = getFirestore(app);
       window.__fb.db = db;
-      window.__fb.helpers = { collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp };
+      window.__fb.helpers = { collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, getDocs };
       window.__fb.ready = true;
       window.dispatchEvent(new Event('fb-ready'));
     } catch (e) {
@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-20.8';
+const APP_VERSION = '2026-09-20.9';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -260,6 +260,23 @@ function fbListenChurches(callback) {
   } catch(e) { return () => {}; }
 }
 
+// Verifica no banco compartilhado, na hora, se algum login (case-insensitive) já está em uso por
+// outra igreja não removida — usado antes de cadastrar, pra nunca deixar dois cadastros com o
+// mesmo login ao mesmo tempo (foi essa duplicidade que causava igrejas restauradas "voltarem"
+// a ficar removidas sozinhas). Se o banco compartilhado não estiver disponível, retorna false
+// (a checagem local em loadDB() continua servindo de proteção nesse caso).
+async function fbCheckLoginTaken(loginLower) {
+  if (!fbIsReady()) return false;
+  try {
+    const { collection, getDocs } = window.__fb.helpers;
+    const snap = await getDocs(collection(window.__fb.db, 'igrejas'));
+    return snap.docs.some(d => {
+      const data = d.data();
+      return !data.removed && (data.login || '').trim().toLowerCase() === loginLower;
+    });
+  } catch(e) { return false; }
+}
+
 // Sem churchId: escuta todas as sugestões (uso do Painel do Desenvolvedor). Com churchId: só as dessa igreja.
 function fbListenSuggestions(callback, churchId) {
   if (!fbIsReady()) return () => {};
@@ -352,6 +369,7 @@ function LoginScreen({ onLogin }) {
   const [error, setError] = useState('');
   const [forgotOpen, setForgotOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [checking, setChecking] = useState(false);
   const churches = useSyncedChurches();
 
   const [name, setName] = useState('');
@@ -401,7 +419,7 @@ function LoginScreen({ onLogin }) {
     onLogin({ type:'church', church });
   };
 
-  const doRegister = (e) => {
+  const doRegister = async (e) => {
     e.preventDefault();
     setError('');
     if (!name.trim()) { setError('Informe o nome da igreja.'); return; }
@@ -409,9 +427,21 @@ function LoginScreen({ onLogin }) {
     if (!newPassword.trim() || newPassword.length < 4) { setError('A senha deve ter no mínimo 4 caracteres.'); return; }
     if (!recoveryQuestion.trim() || !recoveryAnswer.trim()) { setError('Preencha a pergunta e a resposta de segurança — é por elas que você vai recuperar a senha se esquecer.'); return; }
 
+    const newLoginLower = newLogin.trim().toLowerCase();
     const db = loadDB();
-    if (db.some(c => c.login.toLowerCase() === newLogin.trim().toLowerCase()) || newLogin.trim().toLowerCase() === DEV_ACCOUNT.login) {
+    // Checa primeiro localmente (rápido) e, se este aparelho estiver conectado ao banco
+    // compartilhado, confirma direto no Firestore antes de cadastrar — assim nunca fica dois
+    // cadastros com o mesmo login mesmo se a igreja duplicada tiver se cadastrado em outro
+    // aparelho e essa cópia local ainda não tiver sincronizado.
+    if (db.some(c => !c.removed && c.login.toLowerCase() === newLoginLower) || newLoginLower === DEV_ACCOUNT.login) {
       setError('Esse login já está em uso. Escolha outro.');
+      return;
+    }
+    setChecking(true);
+    const takenRemotely = await fbCheckLoginTaken(newLoginLower);
+    setChecking(false);
+    if (takenRemotely) {
+      setError('Esse login já está em uso por outra igreja. Escolha outro.');
       return;
     }
 
@@ -519,7 +549,7 @@ function LoginScreen({ onLogin }) {
               <input placeholder="Pergunta de segurança (ex: Nome do seu primeiro pet)" value=${recoveryQuestion} onChange=${e=>setRecoveryQuestion(e.target.value)} style=${inputStyle} />
               <input placeholder="Resposta" value=${recoveryAnswer} onChange=${e=>setRecoveryAnswer(e.target.value)} style=${inputStyle} />
 
-              <button type="submit" style=${btnPrimary}>Cadastrar e Entrar</button>
+              <button type="submit" disabled=${checking} style=${{...btnPrimary, opacity: checking ? 0.7 : 1}}>${checking ? 'Verificando login...' : 'Cadastrar e Entrar'}</button>
             </form>
           `}
         </div>
@@ -701,15 +731,20 @@ function AddChurchForm({ onAdd, onCancel }) {
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [checking, setChecking] = useState(false);
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     setError('');
     if (!name.trim()) { setError('Informe o nome da igreja.'); return; }
     if (!login.trim()) { setError('Escolha um login de acesso.'); return; }
     if (!password.trim() || password.length < 4) { setError('A senha deve ter no mínimo 4 caracteres.'); return; }
     const loginLower = login.trim().toLowerCase();
-    if (loadDB().some(c => c.login.toLowerCase() === loginLower) || loginLower === DEV_ACCOUNT.login) { setError('Esse login já está em uso. Escolha outro.'); return; }
+    if (loadDB().some(c => !c.removed && c.login.toLowerCase() === loginLower) || loginLower === DEV_ACCOUNT.login) { setError('Esse login já está em uso. Escolha outro.'); return; }
+    setChecking(true);
+    const takenRemotely = await fbCheckLoginTaken(loginLower);
+    setChecking(false);
+    if (takenRemotely) { setError('Esse login já está em uso por outra igreja. Escolha outro.'); return; }
     onAdd({ name: name.trim(), city: city.trim(), state: state.trim(), association: association.trim(), district: district.trim(), pastorName: pastorName.trim(), login: login.trim(), password });
   };
 
@@ -735,7 +770,7 @@ function AddChurchForm({ onAdd, onCancel }) {
         <input type="password" placeholder="Senha (mín. 4 caracteres)" value=${password} onChange=${e=>setPassword(e.target.value)} style=${inputStyle} />
       </div>
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>A igreja poderá trocar a senha depois. Como foi cadastrada por você, ela ainda não terá pergunta de recuperação de senha — se esquecer, é só redefinir aqui no Painel.</div>
-      <button type="submit" style=${btnPrimary}>Cadastrar Igreja</button>
+      <button type="submit" disabled=${checking} style=${{...btnPrimary, opacity: checking ? 0.7 : 1}}>${checking ? 'Verificando login...' : 'Cadastrar Igreja'}</button>
     </form>
   `;
 }
@@ -867,6 +902,13 @@ function DeveloperPanel({ onLogout }) {
     setExpandedId(null); setResetId(null);
   };
   const restoreChurch = (c) => updateChurchAdmin(c, { removed: false }, 'restauracao', 'Igreja restaurada pelo desenvolvedor');
+
+  // Limpa (some da lista, inclusive da lista de removidas) uma única igreja. Só pode ser usado
+  // numa igreja já removida — pra evitar apagar da lista uma igreja que ainda está em uso.
+  const clearOneChurch = (c) => {
+    if (!confirm('Limpar "'+c.name+'" de vez da lista? Ela some de todo o painel (não aparece nem em "Ver removidas"). Essa ação não pode ser desfeita.')) return;
+    updateChurchAdmin(c, { purged: true }, 'limpeza', 'Removida da lista de removidas pelo desenvolvedor');
+  };
 
   // Limpa (some da lista, inclusive da lista de removidas) todas as igrejas atualmente removidas.
   // Como o Firestore não permite apagar o registro de verdade (regra de segurança), isso marca as
@@ -1000,6 +1042,7 @@ function DeveloperPanel({ onLogout }) {
                 <div style=${{display:'flex', gap:'6px', flexWrap:'wrap'}}>
                   ${c.removed ? html`
                     <button onClick=${()=>restoreChurch(c)} style=${btnGhost}>↺ Restaurar</button>
+                    <button onClick=${()=>clearOneChurch(c)} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🧹 Limpar</button>
                   ` : html`
                     ${!c.__remote && html`<button onClick=${()=>setExpandedId(expandedId===c.id ? null : c.id)} style=${btnGhost}>${expandedId===c.id ? 'Fechar' : 'Ver detalhes'}</button>`}
                     <button onClick=${()=>{ setResetId(resetId===c.id ? null : c.id); }} style=${btnGhost}>🔑 Redefinir Senha</button>
