@@ -97,12 +97,12 @@
       const cfg = window.__FIREBASE_CONFIG__;
       if (!cfg) { window.__fb.error = 'no-config'; return; }
       const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js');
-      const { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, serverTimestamp } =
+      const { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp } =
         await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js');
       const app = initializeApp(cfg);
       const db = getFirestore(app);
       window.__fb.db = db;
-      window.__fb.helpers = { collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, serverTimestamp };
+      window.__fb.helpers = { collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp };
       window.__fb.ready = true;
       window.dispatchEvent(new Event('fb-ready'));
     } catch (e) {
@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-20.1';
+const APP_VERSION = '2026-09-20.3';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -181,6 +181,7 @@ async function fbAddChurch(church) {
       passwordHash: church.passwordHash || null,
       recoveryQuestion: church.recoveryQuestion || '',
       recoveryAnswerHash: church.recoveryAnswerHash || null,
+      paused: !!church.paused, removed: !!church.removed,
       createdAt: church.createdAt, syncedAt: serverTimestamp()
     });
     return ref.id;
@@ -188,12 +189,44 @@ async function fbAddChurch(church) {
 }
 
 async function fbUpdateChurchPassword(docId, passwordHash) {
+  return fbUpdateChurchFields(docId, { passwordHash });
+}
+
+// Atualiza campos administrativos da igreja no banco compartilhado (senha, pausada, removida).
+// Nunca manda senha em texto puro — só os campos passados explicitamente.
+async function fbUpdateChurchFields(docId, fields) {
   if (!fbIsReady() || !docId) return false;
   try {
     const { doc, updateDoc } = window.__fb.helpers;
-    await updateDoc(doc(window.__fb.db, 'igrejas', docId), { passwordHash });
+    await updateDoc(doc(window.__fb.db, 'igrejas', docId), fields);
     return true;
   } catch(e) { return false; }
+}
+
+// ---- Histórico de atividades (visível no Painel do Desenvolvedor, de qualquer aparelho) ----
+// Guarda só o essencial (tipo, nome da igreja, detalhe curto, data) — nunca senha ou resposta
+// de recuperação. Serve pra Paulo acompanhar cadastros, remoções, pausas e logins de qualquer lugar.
+async function fbAddActivity(entry) {
+  if (!fbIsReady()) return null;
+  try {
+    const { collection, addDoc, serverTimestamp } = window.__fb.helpers;
+    const ref = await addDoc(collection(window.__fb.db, 'atividades'), {
+      localId: entry.id, type: entry.type, churchName: entry.churchName || '',
+      churchId: entry.churchId || '', detail: entry.detail || '',
+      at: entry.at, syncedAt: serverTimestamp()
+    });
+    return ref.id;
+  } catch(e) { return null; }
+}
+
+function fbListenActivities(callback) {
+  if (!fbIsReady()) return () => {};
+  try {
+    const { collection, onSnapshot, query, orderBy, limit } = window.__fb.helpers;
+    const base = collection(window.__fb.db, 'atividades');
+    const q = limit ? query(base, orderBy('at', 'desc'), limit(300)) : query(base, orderBy('at', 'desc'));
+    return onSnapshot(q, snap => callback(snap.docs.map(d => ({ docId: d.id, ...d.data() }))), () => {});
+  } catch(e) { return () => {}; }
 }
 
 async function fbAddSuggestion(sug) {
@@ -262,13 +295,22 @@ function useSyncedChurches() {
             passwordHash: rc.passwordHash || null,
             recoveryQuestion: rc.recoveryQuestion || '',
             recoveryAnswerHash: rc.recoveryAnswerHash || null,
+            paused: !!rc.paused, removed: !!rc.removed,
             createdAt: rc.createdAt, fbDocId: rc.docId, remoteOnly: true
           });
           currentLogins.add(loginLower);
           changed = true;
         } else {
           const idx = merged.findIndex(c => (c.login||'').toLowerCase() === loginLower);
-          if (idx >= 0 && !merged[idx].fbDocId) { merged[idx] = { ...merged[idx], fbDocId: rc.docId }; changed = true; }
+          if (idx >= 0) {
+            const cur = merged[idx];
+            const patch = {};
+            if (!cur.fbDocId && rc.docId) patch.fbDocId = rc.docId;
+            if (rc.passwordHash && rc.passwordHash !== cur.passwordHash) patch.passwordHash = rc.passwordHash;
+            if (!!rc.paused !== !!cur.paused) patch.paused = !!rc.paused;
+            if (!!rc.removed !== !!cur.removed) patch.removed = !!rc.removed;
+            if (Object.keys(patch).length) { merged[idx] = { ...cur, ...patch }; changed = true; }
+          }
         }
       });
       if (changed) { saveDB(merged); setLocal(merged); }
@@ -344,6 +386,10 @@ function LoginScreen({ onLogin }) {
       (c.password !== undefined && c.password === password)
     ));
     if (!church) { setError('Usuário ou senha incorretos.'); return; }
+    if (church.removed) { setError('Esse cadastro foi removido. Fale com o desenvolvedor (Paulo) se isso for engano.'); return; }
+    if (church.paused) { setError('O acesso dessa igreja está pausado no momento. Fale com o desenvolvedor (Paulo) pra reativar.'); return; }
+    pushLog(loadLog(), { type:'login', churchName: church.name, churchId: church.id });
+    fbAddActivity({ id:'log-'+Date.now(), type:'login', churchName: church.name, churchId: church.id, at: new Date().toISOString() });
     onLogin({ type:'church', church });
   };
 
@@ -376,6 +422,7 @@ function LoginScreen({ onLogin }) {
     const nextDB = [...db, church];
     saveDB(nextDB);
     pushLog(loadLog(), { type:'cadastro', churchName: church.name, churchId: church.id });
+    fbAddActivity({ id:'log-'+Date.now(), type:'cadastro', churchName: church.name, churchId: church.id, at: now });
     // Sincroniza com o banco compartilhado (hash da senha, nunca a senha em texto puro) pra
     // que essa igreja consiga entrar de qualquer aparelho — celular, tablet, computador, etc.
     fbAddChurch(church).then(docId => {
@@ -635,16 +682,69 @@ function PasswordResetRow({ church, onReset, onCancel }) {
   `;
 }
 
+// Cadastro de igreja feito diretamente pelo desenvolvedor (sem passar pela tela de login).
+function AddChurchForm({ onAdd, onCancel }) {
+  const [name, setName] = useState('');
+  const [city, setCity] = useState('');
+  const [state, setState] = useState('');
+  const [association, setAssociation] = useState('');
+  const [district, setDistrict] = useState('');
+  const [pastorName, setPastorName] = useState('');
+  const [login, setLogin] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = (e) => {
+    e.preventDefault();
+    setError('');
+    if (!name.trim()) { setError('Informe o nome da igreja.'); return; }
+    if (!login.trim()) { setError('Escolha um login de acesso.'); return; }
+    if (!password.trim() || password.length < 4) { setError('A senha deve ter no mínimo 4 caracteres.'); return; }
+    const loginLower = login.trim().toLowerCase();
+    if (loadDB().some(c => c.login.toLowerCase() === loginLower) || loginLower === DEV_ACCOUNT.login) { setError('Esse login já está em uso. Escolha outro.'); return; }
+    onAdd({ name: name.trim(), city: city.trim(), state: state.trim(), association: association.trim(), district: district.trim(), pastorName: pastorName.trim(), login: login.trim(), password });
+  };
+
+  return html`
+    <form onSubmit=${submit} class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'10px'}}>
+      <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+        <div style=${{fontSize:'12px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em'}}>➕ Nova Igreja</div>
+        <button type="button" onClick=${onCancel} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'16px'}}>✕</button>
+      </div>
+      ${error && html`<div style=${errorBox}>${error}</div>`}
+      <input placeholder="Nome da igreja" value=${name} onChange=${e=>setName(e.target.value)} style=${inputStyle} autoFocus />
+      <div style=${{display:'grid', gridTemplateColumns:'1fr 90px', gap:'10px'}}>
+        <input placeholder="Cidade" value=${city} onChange=${e=>setCity(e.target.value)} style=${inputStyle} />
+        <input placeholder="UF" maxlength="2" value=${state} onChange=${e=>setState(e.target.value.toUpperCase())} style=${inputStyle} />
+      </div>
+      <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px'}}>
+        <input placeholder="Associação" value=${association} onChange=${e=>setAssociation(e.target.value)} style=${inputStyle} />
+        <input placeholder="Distrito" value=${district} onChange=${e=>setDistrict(e.target.value)} style=${inputStyle} />
+      </div>
+      <input placeholder="Nome do pastor" value=${pastorName} onChange=${e=>setPastorName(e.target.value)} style=${inputStyle} />
+      <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px'}}>
+        <input placeholder="Login de acesso" value=${login} onChange=${e=>setLogin(e.target.value)} style=${inputStyle} />
+        <input type="password" placeholder="Senha (mín. 4 caracteres)" value=${password} onChange=${e=>setPassword(e.target.value)} style=${inputStyle} />
+      </div>
+      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>A igreja poderá trocar a senha depois. Como foi cadastrada por você, ela ainda não terá pergunta de recuperação de senha — se esquecer, é só redefinir aqui no Painel.</div>
+      <button type="submit" style=${btnPrimary}>Cadastrar Igreja</button>
+    </form>
+  `;
+}
+
 function DeveloperPanel({ onLogout }) {
   const [db, setDb] = useState(loadDB);
   const [log, setLog] = useState(loadLog);
   const [localSuggestions, setLocalSuggestions] = useState(loadSuggestions);
   const [remoteChurches, setRemoteChurches] = useState(null);
   const [remoteSuggestions, setRemoteSuggestions] = useState(null);
+  const [remoteActivities, setRemoteActivities] = useState(null);
   const [syncStatus, setSyncStatus] = useState(fbIsReady() ? 'ready' : (window.__fb && window.__fb.error === 'no-config' ? 'no-config' : 'connecting'));
   const [tab, setTab] = useState('igrejas');
   const [expandedId, setExpandedId] = useState(null);
   const [resetId, setResetId] = useState(null);
+  const [showRemoved, setShowRemoved] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   useEffect(() => {
     const onReady = () => { setSyncStatus('ready'); };
@@ -654,11 +754,13 @@ function DeveloperPanel({ onLogout }) {
     if (fbIsReady()) setSyncStatus('ready');
     const unsub1 = fbListenChurches(list => setRemoteChurches(list));
     const unsub2 = fbListenSuggestions(list => setRemoteSuggestions(list));
+    const unsub3 = fbListenActivities(list => setRemoteActivities(list));
     return () => {
       window.removeEventListener('fb-ready', onReady);
       window.removeEventListener('fb-error', onError);
       if (typeof unsub1 === 'function') unsub1();
       if (typeof unsub2 === 'function') unsub2();
+      if (typeof unsub3 === 'function') unsub3();
     };
   }, []);
 
@@ -671,10 +773,14 @@ function DeveloperPanel({ onLogout }) {
     const remoteMapped = remoteChurches.map(r => ({
       id: r.churchId, name: r.name, city: r.city, state: r.state, login: r.login,
       association: r.association, district: r.district, pastorName: r.pastorName,
+      paused: !!r.paused, removed: !!r.removed, fbDocId: r.docId,
       createdAt: r.createdAt, __remote: !localOnly.some(l => l.id === r.churchId)
     }));
     return [...remoteMapped, ...localOnly];
   }, [remoteChurches, db]);
+
+  const visibleChurches = useMemo(() => db_merged.filter(c => showRemoved ? c.removed : !c.removed), [db_merged, showRemoved]);
+  const removedCount = useMemo(() => db_merged.filter(c => c.removed).length, [db_merged]);
 
   const suggestions = useMemo(() => {
     if (!remoteSuggestions) return localSuggestions;
@@ -687,26 +793,77 @@ function DeveloperPanel({ onLogout }) {
     return [...remoteMapped, ...localOnly].sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
   }, [remoteSuggestions, localSuggestions]);
 
+  // Histórico de atividade: mistura o log deste aparelho com o que veio de qualquer outro aparelho
+  // (cadastros, remoções, pausas, reativações e logins de igrejas) — visão central pro desenvolvedor.
+  const activities = useMemo(() => {
+    if (!remoteActivities) return log;
+    const remoteLocalIds = new Set(remoteActivities.map(r => r.localId).filter(Boolean));
+    const localOnly = log.filter(l => !remoteLocalIds.has(l.id));
+    const remoteMapped = remoteActivities.map(r => ({
+      id: r.localId || r.docId, type: r.type, churchName: r.churchName, churchId: r.churchId,
+      detail: r.detail, at: r.at
+    }));
+    return [...remoteMapped, ...localOnly].sort((a,b) => new Date(b.at) - new Date(a.at)).slice(0, 300);
+  }, [remoteActivities, log]);
+
   const refresh = () => { setDb(loadDB()); setLog(loadLog()); setLocalSuggestions(loadSuggestions()); };
 
-  const removeChurch = (id) => {
-    const church = db.find(c=>c.id===id);
-    if (!church) { alert('Essa igreja foi cadastrada em outro aparelho — só é possível removê-la ou redefinir a senha dela no dispositivo onde ela se cadastrou.'); return; }
-    const next = db.filter(c=>c.id!==id);
-    saveDB(next);
-    const nl = pushLog(loadLog(), { type:'remocao', churchName: church ? church.name : id, churchId: id });
-    setDb(next); setLog(nl);
+  // Aplica uma mudança administrativa (pausar, reativar, remover, restaurar, redefinir senha) numa
+  // igreja: atualiza local (se essa igreja também existir neste aparelho), sincroniza com o banco
+  // compartilhado (se já tiver docId) e registra no histórico de atividade, visível em qualquer aparelho.
+  const updateChurchAdmin = (c, patch, logType, logDetail) => {
+    const localMatch = db.find(x => x.id === c.id);
+    if (localMatch) {
+      const next = db.map(x => x.id === c.id ? { ...x, ...patch, updatedAt: new Date().toISOString() } : x);
+      saveDB(next); setDb(next);
+    }
+    const docId = c.fbDocId || c.docId;
+    if (docId) fbUpdateChurchFields(docId, patch);
+    const nl = pushLog(loadLog(), { type: logType, churchName: c.name, churchId: c.id, detail: logDetail });
+    setLog(nl);
+    fbAddActivity({ id:'log-'+Date.now(), type: logType, churchName: c.name, churchId: c.id, detail: logDetail, at: new Date().toISOString() });
   };
 
-  const resetChurchPassword = (id, newPass) => {
-    const church = db.find(c=>c.id===id);
-    if (!church) { alert('Essa igreja foi cadastrada em outro aparelho — só é possível removê-la ou redefinir a senha dela no dispositivo onde ela se cadastrou.'); return; }
+  const pauseChurch = (c) => updateChurchAdmin(c, { paused: true }, 'pausa', 'Acesso pausado pelo desenvolvedor');
+  const reactivateChurch = (c) => updateChurchAdmin(c, { paused: false }, 'reativacao', 'Acesso reativado pelo desenvolvedor');
+  const removeChurch = (c) => {
+    if (!confirm('Remover "'+c.name+'"? Ela deixa de conseguir entrar no sistema, mas você pode restaurar depois se precisar.')) return;
+    updateChurchAdmin(c, { removed: true }, 'remocao', 'Igreja removida pelo desenvolvedor');
+    setExpandedId(null); setResetId(null);
+  };
+  const restoreChurch = (c) => updateChurchAdmin(c, { removed: false }, 'restauracao', 'Igreja restaurada pelo desenvolvedor');
+
+  const resetChurchPassword = (c, newPass) => {
     const passwordHash = simpleHash(newPass);
-    const next = db.map(c => c.id===id ? { ...c, password: newPass, passwordHash, updatedAt: new Date().toISOString() } : c);
-    saveDB(next);
-    const nl = pushLog(loadLog(), { type:'atualizacao', churchName: church ? church.name : id, churchId: id, detail: 'Senha redefinida pelo desenvolvedor' });
-    if (church.fbDocId) fbUpdateChurchPassword(church.fbDocId, passwordHash);
-    setDb(next); setLog(nl); setResetId(null);
+    updateChurchAdmin(c, { passwordHash }, 'atualizacao', 'Senha redefinida pelo desenvolvedor');
+    const localMatch = db.find(x => x.id === c.id);
+    if (localMatch) {
+      const next = loadDB().map(x => x.id === c.id ? { ...x, password: newPass } : x);
+      saveDB(next); setDb(next);
+    }
+    setResetId(null);
+  };
+
+  const addChurchByDev = (data) => {
+    const now = new Date().toISOString();
+    const church = {
+      id: 'igreja-'+Date.now(), name: data.name, city: data.city, state: data.state,
+      association: data.association, district: data.district, pastorName: data.pastorName,
+      login: data.login, password: data.password, passwordHash: simpleHash(data.password),
+      recoveryQuestion: '', recoveryAnswer: '', recoveryAnswerHash: null,
+      createdAt: now, updatedAt: now, paused: false, removed: false
+    };
+    const next = [...loadDB(), church];
+    saveDB(next); setDb(next);
+    const nl = pushLog(loadLog(), { type:'cadastro', churchName: church.name, churchId: church.id, detail: 'Cadastrada pelo desenvolvedor' });
+    setLog(nl);
+    fbAddActivity({ id:'log-'+Date.now(), type:'cadastro', churchName: church.name, churchId: church.id, detail: 'Cadastrada pelo desenvolvedor', at: now });
+    fbAddChurch(church).then(docId => {
+      if (!docId) return;
+      const n2 = loadDB().map(x => x.id === church.id ? { ...x, fbDocId: docId } : x);
+      saveDB(n2); setDb(n2);
+    });
+    setAddOpen(false);
   };
 
   const respondSuggestion = (s, response) => {
@@ -729,7 +886,7 @@ function DeveloperPanel({ onLogout }) {
           <div class="breathe" style=${{width:'38px',height:'38px',borderRadius:'12px',background:'linear-gradient(135deg,var(--accent-1),var(--accent-2),var(--accent-3))',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'18px'}}>👑</div>
           <div>
             <div style=${{fontWeight:800, fontSize:'14px'}}>Painel do Desenvolvedor</div>
-            <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>${db_merged.length} igreja(s) cadastrada(s)</div>
+            <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>${visibleChurches.length} igreja(s) cadastrada(s)</div>
           </div>
         </div>
         <div style=${{display:'flex', alignItems:'center', gap:'10px'}}>
@@ -754,27 +911,41 @@ function DeveloperPanel({ onLogout }) {
 
       ${tab === 'igrejas' && html`
         <div style=${{display:'grid', gap:'10px'}}>
-          ${db_merged.length === 0 && html`<div class="glass fade-up" style=${{padding:'24px', borderRadius:'16px', textAlign:'center', color:'var(--text-dim)', fontSize:'13px'}}>Nenhuma igreja cadastrada ainda.</div>`}
-          ${db_merged.map((c,i) => html`
-            <div key=${c.id} class="glass fade-up" style=${{padding:'14px 16px', borderRadius:'14px', animationDelay:(i*0.03)+'s'}}>
+          ${!addOpen ? html`
+            <button onClick=${()=>setAddOpen(true)} class="glass fade-up" style=${{padding:'14px 18px', borderRadius:'16px', display:'flex', alignItems:'center', justifyContent:'center', gap:'8px', fontSize:'13px', fontWeight:700, color:'var(--text-hi)', border:'1.5px dashed var(--border-soft)'}}>➕ Adicionar Igreja</button>
+          ` : html`<${AddChurchForm} onAdd=${addChurchByDev} onCancel=${()=>setAddOpen(false)} />`}
+
+          ${removedCount > 0 && html`
+            <button onClick=${()=>setShowRemoved(v=>!v)} style=${{...btnGhost, justifySelf:'start'}}>${showRemoved ? '← Ver igrejas ativas' : '🗑️ Ver removidas ('+removedCount+')'}</button>
+          `}
+
+          ${visibleChurches.length === 0 && html`<div class="glass fade-up" style=${{padding:'24px', borderRadius:'16px', textAlign:'center', color:'var(--text-dim)', fontSize:'13px'}}>${showRemoved ? 'Nenhuma igreja removida.' : 'Nenhuma igreja cadastrada ainda.'}</div>`}
+          ${visibleChurches.map((c,i) => html`
+            <div key=${c.id} class="glass fade-up" style=${{padding:'14px 16px', borderRadius:'14px', animationDelay:(i*0.03)+'s', opacity: c.paused ? 0.7 : 1}}>
               <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center', gap:'12px', flexWrap:'wrap'}}>
                 <div>
-                  <div style=${{display:'flex', alignItems:'center', gap:'6px'}}>
+                  <div style=${{display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>
                     <span style=${{fontWeight:700, fontSize:'13.5px'}}>${c.name}</span>
                     ${c.__remote && html`<span style=${{fontSize:'9px', fontWeight:800, padding:'2px 7px', borderRadius:'999px', background:'color-mix(in srgb, var(--accent-1) 20%, transparent)', color:'var(--accent-1)'}}>☁️ outro aparelho</span>`}
+                    ${c.paused && html`<span style=${{fontSize:'9px', fontWeight:800, padding:'2px 7px', borderRadius:'999px', background:'color-mix(in srgb, var(--highlight) 22%, transparent)', color:'var(--highlight)'}}>⏸️ pausada</span>`}
                   </div>
                   <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>${c.city}${c.state ? ' - '+c.state : ''} • login: ${c.login}</div>
                   <div style=${{fontSize:'10px', color:'var(--text-dim)', marginTop:'2px'}}>Cadastrada em ${new Date(c.createdAt).toLocaleString('pt-BR')}</div>
                 </div>
-                <div style=${{display:'flex', gap:'6px'}}>
-                  ${!c.__remote && html`
-                    <button onClick=${()=>setExpandedId(expandedId===c.id ? null : c.id)} style=${btnGhost}>${expandedId===c.id ? 'Fechar' : 'Ver detalhes'}</button>
+                <div style=${{display:'flex', gap:'6px', flexWrap:'wrap'}}>
+                  ${c.removed ? html`
+                    <button onClick=${()=>restoreChurch(c)} style=${btnGhost}>↺ Restaurar</button>
+                  ` : html`
+                    ${!c.__remote && html`<button onClick=${()=>setExpandedId(expandedId===c.id ? null : c.id)} style=${btnGhost}>${expandedId===c.id ? 'Fechar' : 'Ver detalhes'}</button>`}
                     <button onClick=${()=>{ setResetId(resetId===c.id ? null : c.id); }} style=${btnGhost}>🔑 Redefinir Senha</button>
-                    <button onClick=${()=>removeChurch(c.id)} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>Remover</button>
+                    ${c.paused
+                      ? html`<button onClick=${()=>reactivateChurch(c)} style=${{...btnGhost, color:'var(--success-1)', borderColor:'color-mix(in srgb, var(--success-1) 32%, transparent)'}}>▶️ Reativar</button>`
+                      : html`<button onClick=${()=>pauseChurch(c)} style=${btnGhost}>⏸️ Pausar</button>`}
+                    <button onClick=${()=>removeChurch(c)} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🗑️ Remover</button>
                   `}
                 </div>
               </div>
-              ${resetId === c.id && !c.__remote && html`<${PasswordResetRow} church=${c} onReset=${(pass)=>resetChurchPassword(c.id, pass)} onCancel=${()=>setResetId(null)} />`}
+              ${resetId === c.id && !c.removed && html`<${PasswordResetRow} church=${c} onReset=${(pass)=>resetChurchPassword(c, pass)} onCancel=${()=>setResetId(null)} />`}
               ${expandedId === c.id && !c.__remote && html`<${ChurchDetailExpanded} church=${c} />`}
             </div>
           `)}
@@ -783,13 +954,13 @@ function DeveloperPanel({ onLogout }) {
 
       ${tab === 'log' && html`
         <div style=${{display:'grid', gap:'8px'}}>
-          ${log.length === 0 && html`<div class="glass fade-up" style=${{padding:'24px', borderRadius:'16px', textAlign:'center', color:'var(--text-dim)', fontSize:'13px'}}>Nenhuma atividade registrada ainda.</div>`}
-          ${log.map((l,i) => html`
+          ${activities.length === 0 && html`<div class="glass fade-up" style=${{padding:'24px', borderRadius:'16px', textAlign:'center', color:'var(--text-dim)', fontSize:'13px'}}>Nenhuma atividade registrada ainda.</div>`}
+          ${activities.map((l,i) => html`
             <div key=${l.id} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'12px', display:'flex', alignItems:'center', gap:'10px', animationDelay:(i*0.02)+'s'}}>
-              <span style=${{fontSize:'16px'}}>${l.type==='cadastro' ? '🆕' : l.type==='remocao' ? '🗑️' : '✏️'}</span>
+              <span style=${{fontSize:'16px'}}>${l.type==='cadastro' ? '🆕' : l.type==='remocao' ? '🗑️' : l.type==='restauracao' ? '↺' : l.type==='pausa' ? '⏸️' : l.type==='reativacao' ? '▶️' : l.type==='login' ? '🔓' : '✏️'}</span>
               <div style=${{flex:1}}>
                 <div style=${{fontSize:'12.5px', fontWeight:600}}>
-                  ${l.type==='cadastro' ? 'Nova igreja cadastrada: ' : l.type==='remocao' ? 'Igreja removida: ' : 'Atualização em '}${l.churchName}
+                  ${l.type==='cadastro' ? 'Nova igreja cadastrada: ' : l.type==='remocao' ? 'Igreja removida: ' : l.type==='restauracao' ? 'Igreja restaurada: ' : l.type==='pausa' ? 'Acesso pausado: ' : l.type==='reativacao' ? 'Acesso reativado: ' : l.type==='login' ? 'Login realizado: ' : 'Atualização em '}${l.churchName}
                 </div>
                 ${l.detail && html`<div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${l.detail}</div>`}
                 <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>${new Date(l.at).toLocaleString('pt-BR')}</div>
@@ -1167,6 +1338,30 @@ function ProjectButton({ churchId, media }) {
 
   return html`
     <button type="button" onClick=${handleClick} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Projetar em todas as telas">📽️ Projetar</button>
+  `;
+}
+
+function ImageProjectButton({ churchId, item }) {
+  if (!item || !item.dataUrl) return '';
+
+  const handleClick = () => {
+    try {
+      const enabled = loadEnabledScreens(churchId);
+      if (enabled.length === 0) {
+        alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.');
+        return;
+      }
+      // Manda pra TODAS as telas habilitadas de uma vez, já em tela cheia, na melhor qualidade.
+      enabled.forEach(scr => {
+        try { sendToScreenObj(scr, 'imagem', item); } catch (e) { alert('Erro ao projetar: ' + (e && e.message ? e.message : e)); }
+      });
+    } catch (e) {
+      alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
+    }
+  };
+
+  return html`
+    <button type="button" onClick=${handleClick} style=${{...btnPrimary, width:'auto', padding:'8px 14px'}} title="Destacar em tela cheia, em todas as telas">📽️ Projetar</button>
   `;
 }
 
@@ -1645,6 +1840,27 @@ function openMediaInNewTab(media) {
   }
 }
 
+function imageEmbedHtml(item) {
+  const safeTitle = (item.title || 'Anúncio').replace(/</g,'&lt;');
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+safeTitle+'</title><style>html,body{margin:0;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center;}img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;}#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;z-index:10;}</style></head><body><img src="'+item.dataUrl+'" alt="'+safeTitle+'" /><button id="fs-fallback" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();this.style.display=\'none\';">⛶ Tela Cheia</button><scr'+'ipt>try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen().then(()=>{var b=document.getElementById(\'fs-fallback\');if(b)b.style.display=\'none\';}).catch(()=>{});}catch(e){}<\/scr'+'ipt></body></html>';
+}
+
+function openImageInNewTab(item) {
+  try {
+    const win = window.open('', '_blank');
+    if (!win) { alert('Erro: o navegador bloqueou a abertura da nova aba. Vá nas configurações do navegador e permita pop-ups pra este site.'); return; }
+    win.document.open();
+    win.document.write(imageEmbedHtml(item));
+    win.document.close();
+    try {
+      const el = win.document.documentElement;
+      if (el && el.requestFullscreen) { el.requestFullscreen().catch(()=>{}); }
+    } catch(e) {}
+  } catch (e) {
+    alert('Erro ao tentar abrir a imagem: ' + (e && e.message ? e.message : String(e)));
+  }
+}
+
 function sendToScreenObj(scr, kind, payload) {
   try {
     const sig = screenSig(scr);
@@ -1677,6 +1893,15 @@ function sendToScreenObj(scr, kind, payload) {
         alert('Erro: esse item não tem vídeo nem link válido pra projetar.');
         return;
       }
+    } else if (kind === 'imagem') {
+      win.document.open();
+      win.document.write(imageEmbedHtml(payload || {}));
+      win.document.close();
+      // Mesma lógica do vídeo: pede tela cheia aqui, ainda dentro do clique original do usuário.
+      try {
+        const el = win.document.documentElement;
+        if (el && el.requestFullscreen) { el.requestFullscreen().catch(()=>{}); }
+      } catch(e) {}
     } else if (kind === 'texto') {
       win.document.open();
       win.document.write(blankWindowHtml('Transmissão', '<h1>'+(payload || '').replace(/</g,'&lt;')+'</h1>'));
@@ -3633,6 +3858,119 @@ function LiturgiaPadraoTool({ churchId, churchName }) {
   `;
 }
 
+/* ============ Anúncios (organizador de imagens pra projeção) ============ */
+// A comunicação só precisa subir a imagem aqui: o app já guarda na melhor qualidade possível
+// e projeta em tela cheia com um clique, sem precisar editar nada.
+function anunciosKey(churchId) { return 'gc_anuncios_' + churchId; }
+function loadAnuncios(churchId) {
+  try { const raw = localStorage.getItem(anunciosKey(churchId)); if (raw) return JSON.parse(raw); } catch(e) {}
+  return [];
+}
+function saveAnuncios(churchId, list) {
+  try { localStorage.setItem(anunciosKey(churchId), JSON.stringify(list)); } catch(e) {
+    alert('Não deu pra salvar essa imagem — pode ser que o espaço de armazenamento do navegador esteja cheio. Tente remover algum anúncio antigo ou usar uma imagem menor.');
+  }
+}
+
+// Lê o arquivo e devolve na melhor qualidade possível: se já for um arquivo leve, mantém do
+// jeito que foi enviado; se for muito grande, redimensiona (mantendo proporção) pra caber numa
+// tela cheia sem pesar demais no armazenamento do navegador.
+function readImageFileSmart(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Não consegui ler o arquivo.'));
+    reader.onload = () => {
+      const originalDataUrl = reader.result;
+      if (file.size <= 700 * 1024) { resolve(originalDataUrl); return; }
+      const img = new Image();
+      img.onerror = () => resolve(originalDataUrl);
+      img.onload = () => {
+        try {
+          const maxSide = 2000;
+          let { width, height } = img;
+          if (width > maxSide || height > maxSide) {
+            const scale = maxSide / Math.max(width, height);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.9));
+        } catch (e) { resolve(originalDataUrl); }
+      };
+      img.src = originalDataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function AnunciosTool({ churchId }) {
+  const [items, setItems] = useState(() => loadAnuncios(churchId));
+  const [loading, setLoading] = useState(false);
+  const fileRef = useRef(null);
+
+  const persist = (next) => { setItems(next); saveAnuncios(churchId, next); };
+
+  const handleFiles = async (fileList) => {
+    const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/'));
+    if (files.length === 0) return;
+    setLoading(true);
+    try {
+      const added = [];
+      for (const file of files) {
+        try {
+          const dataUrl = await readImageFileSmart(file);
+          added.push({ id:'an-'+Date.now()+Math.random().toString(36).slice(2,6), title: file.name.replace(/\.[^.]+$/,''), dataUrl, addedAt: new Date().toISOString() });
+        } catch (e) { /* pula esse arquivo se der erro */ }
+      }
+      if (added.length) persist([...added, ...items]);
+    } finally {
+      setLoading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const rename = (id, title) => persist(items.map(it => it.id === id ? { ...it, title } : it));
+  const remove = (id) => { if (confirm('Remover esse anúncio?')) persist(items.filter(it => it.id !== id)); };
+
+  return html`
+    <div style=${{display:'grid', gap:'14px'}}>
+      <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:0}}>📣 Anúncios</h3>
+      <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>A comunicação só precisa subir a imagem do anúncio aqui. O sistema já guarda na melhor qualidade e projeta em tela cheia com um clique.</div>
+
+      <label class="glass fade-up" style=${{padding:'20px', borderRadius:'16px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'8px', border:'1.5px dashed var(--border-soft)', cursor:'pointer', textAlign:'center'}}>
+        <div style=${{fontSize:'26px'}}>🖼️</div>
+        <div style=${{fontSize:'12.5px', fontWeight:700}}>${loading ? 'Enviando...' : 'Toque para escolher a(s) imagem(ns)'}</div>
+        <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>JPG, PNG ou WEBP — pode escolher mais de uma de uma vez</div>
+        <input ref=${fileRef} type="file" accept="image/*" multiple disabled=${loading} onChange=${e=>handleFiles(e.target.files)} style=${{display:'none'}} />
+      </label>
+
+      ${items.length === 0 && html`<div class="glass fade-up" style=${{padding:'22px', borderRadius:'16px', textAlign:'center', color:'var(--text-dim)', fontSize:'12.5px'}}>Nenhum anúncio cadastrado ainda.</div>`}
+
+      <div style=${{display:'grid', gap:'12px'}}>
+        ${items.map((it,i) => html`
+          <div key=${it.id} class="glass fade-up" style=${{padding:'14px', borderRadius:'16px', display:'grid', gap:'10px', animationDelay:(i*0.03)+'s'}}>
+            <div style=${{display:'flex', gap:'12px', alignItems:'flex-start'}}>
+              <img src=${it.dataUrl} style=${{width:'96px', height:'96px', objectFit:'cover', borderRadius:'12px', flexShrink:0, background:'#000'}} onClick=${()=>openImageInNewTab(it)} />
+              <div style=${{flex:1, minWidth:0, display:'grid', gap:'6px'}}>
+                <input value=${it.title} onChange=${e=>rename(it.id, e.target.value)} style=${{...inputStyle, padding:'7px 10px', fontSize:'12px', fontWeight:700}} placeholder="Título do anúncio" />
+                <div style=${{fontSize:'10px', color:'var(--text-dim)'}}>Adicionado em ${new Date(it.addedAt).toLocaleString('pt-BR')}</div>
+              </div>
+            </div>
+            <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end', flexWrap:'wrap'}}>
+              <button type="button" onClick=${()=>openImageInNewTab(it)} style=${btnGhost}>👁️ Pré-visualizar</button>
+              <${ImageProjectButton} churchId=${churchId} item=${it} />
+              <button type="button" onClick=${()=>remove(it.id)} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🗑️ Remover</button>
+            </div>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
 function GestaoView({ churchId, churchName }) {
   const [teams, setTeams] = useState(() => loadTeams(churchId));
   const [section, setSection] = useState(null);
@@ -3721,7 +4059,7 @@ function GestaoView({ churchId, churchName }) {
     resetQuickAdd();
   };
 
-  const SECTIONS = [['sonoplastia','🎚️ Sonoplastia'],['louvor','🎤 Louvor'],['midia','🎬 Mídia'],['editar','✏️ Editar Equipes'],['config','⚙️ Equipes & Funções'],['padrao','🔒 Liturgia Padrão']];
+  const SECTIONS = [['sonoplastia','🎚️ Sonoplastia'],['louvor','🎤 Louvor'],['midia','🎬 Mídia'],['anuncios','📣 Anúncios'],['editar','✏️ Editar Equipes'],['config','⚙️ Equipes & Funções'],['padrao','🔒 Liturgia Padrão']];
   const [editTeamKey, setEditTeamKey] = useState(null);
   const activeLouvorIdx = teams.louvorTeams.findIndex(lt => lt.id === activeLouvorId);
   const activeLouvorTeam = activeLouvorIdx >= 0 ? teams.louvorTeams[activeLouvorIdx] : null;
@@ -3890,6 +4228,8 @@ function GestaoView({ churchId, churchName }) {
           <${LiturgiaPadraoTool} churchId=${churchId} churchName=${churchName} />
         </div>
       `}
+
+      ${section === 'anuncios' && html`<${AnunciosTool} churchId=${churchId} />`}
 
     </div>
   `;
