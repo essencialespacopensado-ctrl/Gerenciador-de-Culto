@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.6';
+const APP_VERSION = '2026-09-21.7';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -3399,9 +3399,9 @@ function saveBgMusic(churchId, tracks) {
 function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
   const [tracks, setTracks] = useState(() => {
     const base = [
-      { name:'Fundo 1', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
-      { name:'Fundo 2', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
-      { name:'Fundo 3', mode:'none', fileName:'', videoId:null, playing:false, volume:60, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
+      { name:'Fundo 1', mode:'none', fileName:'', videoId:null, playing:false, volume:0, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
+      { name:'Fundo 2', mode:'none', fileName:'', videoId:null, playing:false, volume:0, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
+      { name:'Fundo 3', mode:'none', fileName:'', videoId:null, playing:false, volume:0, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
     ];
     // Prioriza o que estiver salvo na nuvem (funciona em qualquer aparelho); se não tiver, usa o
     // que ficou salvo só neste aparelho (localStorage) de antes dessa opção existir.
