@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.1';
+const APP_VERSION = '2026-09-21.2';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -202,6 +202,7 @@ async function fbAddChurch(church) {
       if (snap.exists() && !snap.data().removed) { loginTaken = true; return; }
       tx.set(ref, {
         churchId: church.id, name: church.name, city: church.city || '', state: church.state || '',
+        division: church.division || '', union: church.union || '',
         association: church.association || '', district: church.district || '',
         pastorName: church.pastorName || '', login: church.login,
         passwordHash: church.passwordHash || null,
@@ -347,6 +348,7 @@ function useSyncedChurches() {
           merged.push({
             id: rc.churchId || ('igreja-remote-' + rc.docId),
             name: rc.name, city: rc.city || '', state: rc.state || '',
+            division: rc.division || '', union: rc.union || '',
             association: rc.association || '', district: rc.district || '',
             pastorName: rc.pastorName || '', login: rc.login,
             passwordHash: rc.passwordHash || null,
@@ -377,11 +379,154 @@ function useSyncedChurches() {
   return local;
 }
 
+/* ============ ESTRUTURA ADMINISTRATIVA DA IGREJA ADVENTISTA (Divisão > União > Associação/Missão) ============
+   Levantada a partir de fontes oficiais (Enciclopédia Adventista - encyclopedia.adventist.org - e
+   sites oficiais das uniões) em setembro de 2026. A estrutura da igreja é reorganizada de tempos em
+   tempos (associações se dividem, mudam de nome), então esta lista pode ficar desatualizada — por
+   isso toda união e associação tem sempre a opção "Outra / não está na lista", que libera digitar
+   manualmente, pra nunca travar um cadastro por falta de dado aqui. */
+const BRAZIL_STATES = [
+  {uf:'AC',name:'Acre'},{uf:'AL',name:'Alagoas'},{uf:'AP',name:'Amapá'},{uf:'AM',name:'Amazonas'},
+  {uf:'BA',name:'Bahia'},{uf:'CE',name:'Ceará'},{uf:'DF',name:'Distrito Federal'},{uf:'ES',name:'Espírito Santo'},
+  {uf:'GO',name:'Goiás'},{uf:'MA',name:'Maranhão'},{uf:'MT',name:'Mato Grosso'},{uf:'MS',name:'Mato Grosso do Sul'},
+  {uf:'MG',name:'Minas Gerais'},{uf:'PA',name:'Pará'},{uf:'PB',name:'Paraíba'},{uf:'PR',name:'Paraná'},
+  {uf:'PE',name:'Pernambuco'},{uf:'PI',name:'Piauí'},{uf:'RJ',name:'Rio de Janeiro'},{uf:'RN',name:'Rio Grande do Norte'},
+  {uf:'RS',name:'Rio Grande do Sul'},{uf:'RO',name:'Rondônia'},{uf:'RR',name:'Roraima'},{uf:'SC',name:'Santa Catarina'},
+  {uf:'SP',name:'São Paulo'},{uf:'SE',name:'Sergipe'},{uf:'TO',name:'Tocantins'}
+];
+
+const SDA_DIVISIONS = [
+  { id:'dsa', name:'Divisão Sul-Americana (DSA)' },
+  { id:'outra', name:'Outra Divisão (fora da América do Sul)' }
+];
+
+// União: nome, sigla, estados que cobre (pra filtrar o seletor de Estado) e associações/missões.
+const SDA_UNIONS = {
+  dsa: [
+    { id:'ucb', name:'União Central Brasileira (UCB)', states:['SP'], associations:[
+      'Associação Paulistana','Associação Paulista Central','Associação Paulista Sudeste','Associação Paulista Sudoeste','Associação Paulista Sul'
+    ]},
+    { id:'ucob', name:'União Centro-Oeste Brasileira (UCOB)', states:['MT','MS','GO','DF','TO'], associations:[
+      'Associação Brasil Central','Associação Planalto Central','Associação Leste Mato-Grossense','Associação Sul Mato-Grossense','Missão do Tocantins','Missão Oeste Mato-Grossense'
+    ]},
+    { id:'uleb', name:'União Leste Brasileira (ULB)', states:['BA','SE'], associations:[
+      'Associação Bahia','Associação Bahia Central','Associação Bahia Norte','Associação Bahia Sul','Missão Bahia Sudoeste','Missão Bahia Extremo Sul','Missão Sergipe'
+    ]},
+    { id:'uneb', name:'União Nordeste Brasileira (UNEB)', states:['AL','PE','PB','RN','CE','PI'], associations:[
+      'Associação Cearense','Associação Pernambucana','Associação Pernambucana Central','Missão Alagoas','Missão Nordeste','Missão Piauiense'
+    ]},
+    { id:'unob', name:'União Noroeste Brasileira (UNOB)', states:['AM','RR','RO','AC'], associations:[
+      'Associação Central Amazonas','Associação Amazonas Roraima','Associação Sul de Rondônia','Associação Norte de Rondônia e Acre','Missão Leste Amazonas'
+    ]},
+    { id:'unb', name:'União Norte Brasileira (UNB)', states:['PA','AP','MA'], associations:[
+      'Associação Norte do Pará','Associação Sul do Pará','Missão Oeste Pará','Missão Pará-Amapá','Associação Maranhense','Missão Sul Maranhense','Missão Nordeste Maranhense'
+    ]},
+    { id:'useb', name:'União Sudeste Brasileira (USeB)', states:['RJ','MG','ES'], associations:[
+      'Associação Rio de Janeiro','Associação Rio Sul','Associação Rio Fluminense','Associação Mineira Central','Associação Mineira Sul','Associação Mineira Leste','Missão Mineira Norte','Missão Mineira Oeste','Associação Espírito-Santense','Associação Sul Espírito-Santense'
+    ]},
+    { id:'usb', name:'União Sul-Brasileira (USB)', states:['PR','SC','RS'], associations:[
+      'Associação Norte-Paranaense','Associação Central Paranaense','Associação Sul-Paranaense','Associação Catarinense','Associação Sul Rio-Grandense','Missão Norte Sul-Rio-Grandense'
+    ]},
+    { id:'ua', name:'União Argentina', states:[], associations:[] },
+    { id:'ub', name:'União Boliviana', states:[], associations:[] },
+    { id:'uch', name:'União Chilena', states:[], associations:[] },
+    { id:'ue', name:'União Equatoriana', states:[], associations:[] },
+    { id:'up', name:'União Paraguaia', states:[], associations:[] },
+    { id:'upn', name:'União Peruana do Norte', states:[], associations:[] },
+    { id:'ups', name:'União Peruana do Sul', states:[], associations:[] },
+    { id:'uu', name:'União Uruguaia', states:[], associations:[] }
+  ],
+  outra: []
+};
+
 const inputStyle = { padding:'11px 13px', borderRadius:'10px', border:'1px solid var(--border-soft)', background:'rgba(15,23,42,0.35)', color:'var(--text-hi)', fontSize:'13.5px', outline:'none', width:'100%' };
 const btnPrimary = { padding:'12px 18px', borderRadius:'14px', border:'none', background:'linear-gradient(150deg,var(--accent-1),var(--accent-2))', color:'#fff', fontWeight:800, fontSize:'13px', width:'100%', boxShadow:'0 6px 16px -6px rgba(0,0,0,0.5)', cursor:'pointer' };
 const btnGhost = { padding:'10px 14px', borderRadius:'14px', border:'none', background:'rgba(148,163,184,0.14)', color:'var(--text-mid)', fontWeight:700, fontSize:'12.5px', cursor:'pointer' };
 const errorBox = { padding:'10px 12px', borderRadius:'10px', background:'color-mix(in srgb, var(--danger) 14%, transparent)', border:'1px solid color-mix(in srgb, var(--danger) 32%, transparent)', color:'var(--danger)', fontSize:'12.5px' };
 const sectionLabelStyle = { fontSize:'10.5px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em', marginTop:'6px', marginBottom:'-2px' };
+
+// Seletor em cascata Divisão > União > Estado > Associação/Missão: cada escolha filtra a próxima
+// (elimina o que não pertence a ela), sempre com botões de seleção — nunca precisa digitar, exceto
+// quando a opção "Outra / não está na lista" é escolhida (a estrutura da igreja muda com o tempo,
+// então essa válvula de escape garante que o cadastro nunca fique travado por dado desatualizado).
+// initial* permite pré-carregar um valor já salvo (ex: editando uma igreja existente) sem tentar
+// "adivinhar" a que opção da lista ele corresponde — nesse caso cai em "Outra" com o texto já preenchido.
+function SdaHierarchyPicker({ onChange, initialDivision, initialUnion, initialState, initialAssociation }) {
+  const [divisionId, setDivisionId] = useState('dsa');
+  const [unionId, setUnionId] = useState(initialUnion ? '__outra__' : '');
+  const [unionOther, setUnionOther] = useState(initialUnion || '');
+  const [stateSel, setStateSel] = useState(initialState ? '__outro__' : '');
+  const [stateOther, setStateOther] = useState(initialState || '');
+  const [assocSel, setAssocSel] = useState(initialAssociation ? '__outra__' : '');
+  const [assocOther, setAssocOther] = useState(initialAssociation || '');
+
+  const emit = (patch) => {
+    const dId = patch.divisionId ?? divisionId;
+    const uId = patch.unionId ?? unionId;
+    const uOther = patch.unionOther ?? unionOther;
+    const sSel = patch.stateSel ?? stateSel;
+    const sOther = patch.stateOther ?? stateOther;
+    const aSel = patch.assocSel ?? assocSel;
+    const aOther = patch.assocOther ?? assocOther;
+    const uList = SDA_UNIONS[dId] || [];
+    const uObj = uList.find(u => u.id === uId);
+    onChange({
+      division: (SDA_DIVISIONS.find(d => d.id === dId) || {}).name || '',
+      union: uId === '__outra__' ? uOther.trim() : (uObj ? uObj.name : ''),
+      state: sSel === '__outro__' ? sOther.trim() : ((BRAZIL_STATES.find(s => s.uf === sSel) || {}).name || ''),
+      association: aSel === '__outra__' ? aOther.trim() : aSel
+    });
+  };
+
+  const handleDivision = (v) => { setDivisionId(v); setUnionId(''); setUnionOther(''); setStateSel(''); setStateOther(''); setAssocSel(''); setAssocOther(''); emit({ divisionId:v, unionId:'', unionOther:'', stateSel:'', stateOther:'', assocSel:'', assocOther:'' }); };
+  const handleUnion = (v) => { setUnionId(v); setStateSel(''); setStateOther(''); setAssocSel(''); setAssocOther(''); emit({ unionId:v, stateSel:'', stateOther:'', assocSel:'', assocOther:'' }); };
+  const handleUnionOther = (v) => { setUnionOther(v); emit({ unionOther:v }); };
+  const handleState = (v) => { setStateSel(v); setStateOther(''); emit({ stateSel:v, stateOther:'' }); };
+  const handleStateOther = (v) => { setStateOther(v); emit({ stateOther:v }); };
+  const handleAssoc = (v) => { setAssocSel(v); setAssocOther(''); emit({ assocSel:v, assocOther:'' }); };
+  const handleAssocOther = (v) => { setAssocOther(v); emit({ assocOther:v }); };
+
+  const unions = SDA_UNIONS[divisionId] || [];
+  const selectedUnion = unions.find(u => u.id === unionId);
+  const availableStates = (selectedUnion && selectedUnion.states.length > 0) ? BRAZIL_STATES.filter(s => selectedUnion.states.includes(s.uf)) : BRAZIL_STATES;
+  const availableAssocs = selectedUnion ? selectedUnion.associations : [];
+
+  return html`
+    <div style=${{display:'grid', gap:'8px'}}>
+      <select value=${divisionId} onChange=${e=>handleDivision(e.target.value)} style=${inputStyle}>
+        ${SDA_DIVISIONS.map(d => html`<option key=${d.id} value=${d.id}>${d.name}</option>`)}
+      </select>
+      <select value=${unionId} onChange=${e=>handleUnion(e.target.value)} style=${inputStyle}>
+        <option value="">Selecione a União...</option>
+        ${unions.map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}
+        <option value="__outra__">Outra / não está na lista</option>
+      </select>
+      ${unionId === '__outra__' && html`<input placeholder="Nome da União" value=${unionOther} onChange=${e=>handleUnionOther(e.target.value)} style=${inputStyle} />`}
+
+      <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
+        <div>
+          <select value=${stateSel} onChange=${e=>handleState(e.target.value)} disabled=${!unionId} style=${{...inputStyle, opacity: unionId ? 1 : 0.6}}>
+            <option value="">Estado...</option>
+            ${availableStates.map(s => html`<option key=${s.uf} value=${s.uf}>${s.name}</option>`)}
+            <option value="__outro__">Outro / fora do Brasil</option>
+          </select>
+          ${stateSel === '__outro__' && html`<input placeholder="Estado / país" value=${stateOther} onChange=${e=>handleStateOther(e.target.value)} style=${{...inputStyle, marginTop:'6px'}} />`}
+        </div>
+        <div>
+          <select value=${assocSel} onChange=${e=>handleAssoc(e.target.value)} disabled=${!unionId} style=${{...inputStyle, opacity: unionId ? 1 : 0.6}}>
+            <option value="">Associação/Missão...</option>
+            ${availableAssocs.map(a => html`<option key=${a} value=${a}>${a}</option>`)}
+            <option value="__outra__">Outra / não está na lista</option>
+          </select>
+          ${assocSel === '__outra__' && html`<input placeholder="Nome da associação/missão" value=${assocOther} onChange=${e=>handleAssocOther(e.target.value)} style=${{...inputStyle, marginTop:'6px'}} />`}
+        </div>
+      </div>
+      ${unionId && unionId !== '__outra__' && availableAssocs.length === 0 && html`
+        <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Ainda não tenho a lista de associações dessa união cadastrada aqui — escolha "Outra / não está na lista" e digite o nome.</div>
+      `}
+    </div>
+  `;
+}
 
 function Brand() {
   return html`
@@ -396,6 +541,8 @@ function Brand() {
 function LoginScreen({ onLogin }) {
   const [mode, setMode] = useState('login');
   const [selectedChurchLogin, setSelectedChurchLogin] = useState('');
+  const [selectedAssoc, setSelectedAssoc] = useState('');
+  const [selectedDistrict, setSelectedDistrict] = useState('');
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -404,10 +551,34 @@ function LoginScreen({ onLogin }) {
   const [checking, setChecking] = useState(false);
   const churches = useSyncedChurches();
 
+  // Filtro em cascata pra achar a igreja no login: Associação/Missão > Distrito > Igreja — cada
+  // escolha elimina o que não pertence a ela, sem precisar digitar nada.
+  const activeChurches = useMemo(() => churches.filter(c => !c.removed), [churches]);
+  const assocOptions = useMemo(() => {
+    const set = new Set(activeChurches.map(c => (c.association||'').trim() || 'Sem associação definida'));
+    return [...set].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  }, [activeChurches]);
+  const districtOptions = useMemo(() => {
+    if (!selectedAssoc) return [];
+    const set = new Set(activeChurches.filter(c => ((c.association||'').trim() || 'Sem associação definida') === selectedAssoc).map(c => (c.district||'').trim() || 'Sem distrito definido'));
+    return [...set].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  }, [activeChurches, selectedAssoc]);
+  const churchOptions = useMemo(() => {
+    if (!selectedAssoc || !selectedDistrict) return [];
+    return activeChurches
+      .filter(c => ((c.association||'').trim() || 'Sem associação definida') === selectedAssoc && ((c.district||'').trim() || 'Sem distrito definido') === selectedDistrict)
+      .sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+  }, [activeChurches, selectedAssoc, selectedDistrict]);
+  const handleAssocSelect = (v) => { setSelectedAssoc(v); setSelectedDistrict(''); setSelectedChurchLogin(''); setLogin(v === '__dev__' ? login : ''); };
+  const handleDistrictSelect = (v) => { setSelectedDistrict(v); setSelectedChurchLogin(''); setLogin(''); };
+  const handleChurchSelect = (v) => { setSelectedChurchLogin(v); setLogin(v); };
+
   const [name, setName] = useState('');
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
   const [address, setAddress] = useState('');
+  const [division, setDivision] = useState('');
+  const [union, setUnion] = useState('');
   const [association, setAssociation] = useState('');
   const [district, setDistrict] = useState('');
   const [isDistrictSeat, setIsDistrictSeat] = useState(false);
@@ -458,6 +629,7 @@ function LoginScreen({ onLogin }) {
     if (!newLogin.trim()) { setError('Escolha um login de acesso.'); return; }
     if (!newPassword.trim() || newPassword.length < 4) { setError('A senha deve ter no mínimo 4 caracteres.'); return; }
     if (!recoveryQuestion.trim() || !recoveryAnswer.trim()) { setError('Preencha a pergunta e a resposta de segurança — é por elas que você vai recuperar a senha se esquecer.'); return; }
+    if (!union.trim() || !association.trim()) { setError('Selecione a União e a Associação/Missão da sua igreja.'); return; }
 
     const newLoginLower = newLogin.trim().toLowerCase();
     const db = loadDB();
@@ -471,7 +643,8 @@ function LoginScreen({ onLogin }) {
     const recoveryAnswerLower = recoveryAnswer.trim().toLowerCase();
     const church = {
       id:'igreja-'+Date.now(), name:name.trim(), city:city.trim(), state:state.trim(),
-      address: address.trim(), association: association.trim(), district: district.trim(),
+      address: address.trim(), division: division.trim(), union: union.trim(),
+      association: association.trim(), district: district.trim(),
       isDistrictSeat, pastorName: pastorName.trim(), elderName: elderName.trim(),
       ministryLeaders: ministryLeaders.filter(r => r.ministry.trim() || r.leader.trim()),
       login:newLogin.trim(), password:newPassword, passwordHash: simpleHash(newPassword),
@@ -517,12 +690,24 @@ function LoginScreen({ onLogin }) {
 
           ${mode === 'login' ? html`
             <form onSubmit=${doLogin} style=${{display:'grid', gap:'10px'}}>
-              <select value=${selectedChurchLogin} onChange=${e=>{ setSelectedChurchLogin(e.target.value); setLogin(e.target.value === '__dev__' ? '' : e.target.value); }} style=${inputStyle}>
-                <option value="">Selecione sua igreja...</option>
-                ${churches.filter(c => !c.removed).map(c => html`<option key=${c.id} value=${c.login}>${c.name}${c.city ? ' — '+c.city : ''}</option>`)}
-                <option value="__dev__">Sou desenvolvedor</option>
+              <select value=${selectedAssoc} onChange=${e=>handleAssocSelect(e.target.value)} style=${inputStyle}>
+                <option value="">Associação/Missão...</option>
+                ${assocOptions.map(a => html`<option key=${a} value=${a}>${a}</option>`)}
+                <option value="__dev__">🔑 Acesso do Desenvolvedor</option>
               </select>
-              ${selectedChurchLogin === '__dev__' && html`
+              ${selectedAssoc && selectedAssoc !== '__dev__' && html`
+                <select value=${selectedDistrict} onChange=${e=>handleDistrictSelect(e.target.value)} style=${inputStyle}>
+                  <option value="">Distrito...</option>
+                  ${districtOptions.map(d => html`<option key=${d} value=${d}>${d}</option>`)}
+                </select>
+              `}
+              ${selectedDistrict && selectedAssoc !== '__dev__' && html`
+                <select value=${selectedChurchLogin} onChange=${e=>handleChurchSelect(e.target.value)} style=${inputStyle}>
+                  <option value="">Igreja...</option>
+                  ${churchOptions.map(c => html`<option key=${c.id} value=${c.login}>${c.name}${c.city ? ' — '+c.city : ''}</option>`)}
+                </select>
+              `}
+              ${selectedAssoc === '__dev__' && html`
                 <input placeholder="Usuário do desenvolvedor" value=${login} onChange=${e=>setLogin(e.target.value)} style=${inputStyle} />
               `}
               <div style=${{position:'relative'}}>
@@ -538,16 +723,12 @@ function LoginScreen({ onLogin }) {
               <div style=${sectionLabelStyle}>Identificação da Igreja</div>
               <input placeholder="Nome da igreja adventista" value=${name} onChange=${e=>setName(e.target.value)} style=${inputStyle} autoFocus />
               <input placeholder="Endereço completo" value=${address} onChange=${e=>setAddress(e.target.value)} style=${inputStyle} />
-              <div style=${{display:'grid', gridTemplateColumns:'1fr 90px', gap:'10px'}}>
-                <input placeholder="Cidade" value=${city} onChange=${e=>setCity(e.target.value)} style=${inputStyle} />
-                <input placeholder="UF" maxlength="2" value=${state} onChange=${e=>setState(e.target.value.toUpperCase())} style=${inputStyle} />
-              </div>
+              <input placeholder="Cidade" value=${city} onChange=${e=>setCity(e.target.value)} style=${inputStyle} />
 
               <div style=${sectionLabelStyle}>Organização Administrativa</div>
-              <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px'}}>
-                <input placeholder="Associação" value=${association} onChange=${e=>setAssociation(e.target.value)} style=${inputStyle} />
-                <input placeholder="Distrito" value=${district} onChange=${e=>setDistrict(e.target.value)} style=${inputStyle} />
-              </div>
+              <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginTop:'-4px'}}>Cada escolha abaixo filtra a próxima — selecione na ordem.</div>
+              <${SdaHierarchyPicker} onChange=${(v)=>{ setDivision(v.division); setUnion(v.union); setState(v.state); setAssociation(v.association); }} />
+              <input placeholder="Distrito (como sua associação organiza)" value=${district} onChange=${e=>setDistrict(e.target.value)} style=${inputStyle} />
               <label style=${{display:'flex', alignItems:'center', gap:'8px', fontSize:'12.5px', color:'var(--text-mid)', padding:'2px 2px'}}>
                 <input type="checkbox" checked=${isDistrictSeat} onChange=${e=>setIsDistrictSeat(e.target.checked)} style=${{width:'16px',height:'16px'}} />
                 Esta igreja é sede de distrito
@@ -696,6 +877,7 @@ function ChurchDetailExpanded({ church }) {
     <div class="fade-up" style=${{marginTop:'10px', padding:'14px', borderRadius:'12px', background:'rgba(2,6,23,0.3)', border:'1px solid var(--border-soft)', display:'grid', gap:'10px'}}>
       <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', fontSize:'11.5px'}}>
         <div><span style=${{color:'var(--text-dim)'}}>Endereço:</span> ${church.address || '—'}</div>
+        <div><span style=${{color:'var(--text-dim)'}}>União:</span> ${church.union || '—'}</div>
         <div><span style=${{color:'var(--text-dim)'}}>Associação:</span> ${church.association || '—'}</div>
         <div><span style=${{color:'var(--text-dim)'}}>Distrito:</span> ${church.district || '—'}${church.isDistrictSeat ? ' (Sede)' : ''}</div>
         <div><span style=${{color:'var(--text-dim)'}}>Pastor:</span> ${church.pastorName || '—'}</div>
@@ -756,6 +938,8 @@ function AddChurchForm({ onAdd, onCancel }) {
   const [name, setName] = useState('');
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
+  const [division, setDivision] = useState('');
+  const [union, setUnion] = useState('');
   const [association, setAssociation] = useState('');
   const [district, setDistrict] = useState('');
   const [pastorName, setPastorName] = useState('');
@@ -775,7 +959,7 @@ function AddChurchForm({ onAdd, onCancel }) {
     setChecking(true);
     // Quem decide de verdade é a transação do Firestore dentro de onAdd (fbAddChurch) — essa
     // checagem local é só pra dar um retorno rápido antes de tentar.
-    const err = await onAdd({ name: name.trim(), city: city.trim(), state: state.trim(), association: association.trim(), district: district.trim(), pastorName: pastorName.trim(), login: login.trim(), password });
+    const err = await onAdd({ name: name.trim(), city: city.trim(), state: state.trim(), division: division.trim(), union: union.trim(), association: association.trim(), district: district.trim(), pastorName: pastorName.trim(), login: login.trim(), password });
     setChecking(false);
     if (err) setError(err);
   };
@@ -788,14 +972,10 @@ function AddChurchForm({ onAdd, onCancel }) {
       </div>
       ${error && html`<div style=${errorBox}>${error}</div>`}
       <input placeholder="Nome da igreja" value=${name} onChange=${e=>setName(e.target.value)} style=${inputStyle} autoFocus />
-      <div style=${{display:'grid', gridTemplateColumns:'1fr 90px', gap:'10px'}}>
-        <input placeholder="Cidade" value=${city} onChange=${e=>setCity(e.target.value)} style=${inputStyle} />
-        <input placeholder="UF" maxlength="2" value=${state} onChange=${e=>setState(e.target.value.toUpperCase())} style=${inputStyle} />
-      </div>
-      <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px'}}>
-        <input placeholder="Associação" value=${association} onChange=${e=>setAssociation(e.target.value)} style=${inputStyle} />
-        <input placeholder="Distrito" value=${district} onChange=${e=>setDistrict(e.target.value)} style=${inputStyle} />
-      </div>
+      <input placeholder="Cidade" value=${city} onChange=${e=>setCity(e.target.value)} style=${inputStyle} />
+      <div style=${{fontSize:'10px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em'}}>Organização Administrativa</div>
+      <${SdaHierarchyPicker} onChange=${(v)=>{ setDivision(v.division); setUnion(v.union); setState(v.state); setAssociation(v.association); }} />
+      <input placeholder="Distrito" value=${district} onChange=${e=>setDistrict(e.target.value)} style=${inputStyle} />
       <input placeholder="Nome do pastor" value=${pastorName} onChange=${e=>setPastorName(e.target.value)} style=${inputStyle} />
       <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px'}}>
         <input placeholder="Login de acesso" value=${login} onChange=${e=>setLogin(e.target.value)} style=${inputStyle} />
@@ -854,6 +1034,7 @@ function DeveloperPanel({ onLogout }) {
       const local = localById.get(r.churchId);
       return {
         id: r.churchId, name: r.name, city: r.city, state: r.state, login: r.login,
+        division: r.division, union: r.union,
         association: r.association, district: r.district, pastorName: r.pastorName,
         paused: local ? !!local.paused : !!r.paused,
         removed: local ? !!local.removed : !!r.removed,
@@ -1056,6 +1237,7 @@ function DeveloperPanel({ onLogout }) {
     const now = new Date().toISOString();
     const church = {
       id: 'igreja-'+Date.now(), name: data.name, city: data.city, state: data.state,
+      division: data.division, union: data.union,
       association: data.association, district: data.district, pastorName: data.pastorName,
       login: data.login, password: data.password, passwordHash: simpleHash(data.password),
       recoveryQuestion: '', recoveryAnswer: '', recoveryAnswerHash: null,
@@ -4738,6 +4920,8 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
   const [city, setCity] = useState(church.city || '');
   const [state, setState] = useState(church.state || '');
   const [address, setAddress] = useState(church.address || '');
+  const [division, setDivision] = useState(church.division || '');
+  const [union, setUnion] = useState(church.union || '');
   const [association, setAssociation] = useState(church.association || '');
   const [district, setDistrict] = useState(church.district || '');
   const [isDistrictSeat, setIsDistrictSeat] = useState(!!church.isDistrictSeat);
@@ -4756,6 +4940,10 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
     const next = db.map(c => c.id === church.id ? updated : c);
     saveDB(next);
     pushLog(loadLog(), { type:'atualizacao', churchName: updated.name, churchId: church.id, detail: logDetail });
+    // Sincroniza com o banco compartilhado também (antes essa edição ficava só neste aparelho e
+    // não aparecia em outros dispositivos da mesma igreja nem no Painel do Desenvolvedor).
+    const docId = updated.fbDocId || updated.docId;
+    if (docId) fbUpdateChurchFields(docId, patch);
     onUpdateChurch(updated);
     return updated;
   };
@@ -4764,6 +4952,7 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
     e.preventDefault();
     persistChurch({
       name: name.trim(), city: city.trim(), state: state.trim(), address: address.trim(),
+      division: division.trim(), union: union.trim(),
       association: association.trim(), district: district.trim(), isDistrictSeat,
       pastorName: pastorName.trim(), elderName: elderName.trim(),
       ministryLeaders: ministryLeaders.filter(r => r.ministry.trim() || r.leader.trim()),
@@ -4837,16 +5026,11 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
           <div style=${sectionLabelStyle}>Identificação da Igreja</div>
           <input placeholder="Nome da igreja adventista" value=${name} onChange=${e=>setName(e.target.value)} style=${inputStyle} />
           <input placeholder="Endereço completo" value=${address} onChange=${e=>setAddress(e.target.value)} style=${inputStyle} />
-          <div style=${{display:'grid', gridTemplateColumns:'1fr 90px', gap:'10px'}}>
-            <input placeholder="Cidade" value=${city} onChange=${e=>setCity(e.target.value)} style=${inputStyle} />
-            <input placeholder="UF" maxlength="2" value=${state} onChange=${e=>setState(e.target.value.toUpperCase())} style=${inputStyle} />
-          </div>
+          <input placeholder="Cidade" value=${city} onChange=${e=>setCity(e.target.value)} style=${inputStyle} />
 
           <div style=${sectionLabelStyle}>Organização Administrativa</div>
-          <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px'}}>
-            <input placeholder="Associação" value=${association} onChange=${e=>setAssociation(e.target.value)} style=${inputStyle} />
-            <input placeholder="Distrito" value=${district} onChange=${e=>setDistrict(e.target.value)} style=${inputStyle} />
-          </div>
+          <${SdaHierarchyPicker} initialUnion=${union} initialState=${state} initialAssociation=${association} onChange=${(v)=>{ setDivision(v.division); setUnion(v.union); setState(v.state); setAssociation(v.association); }} />
+          <input placeholder="Distrito" value=${district} onChange=${e=>setDistrict(e.target.value)} style=${inputStyle} />
           <label style=${{display:'flex', alignItems:'center', gap:'8px', fontSize:'12.5px', color:'var(--text-mid)', padding:'2px 2px'}}>
             <input type="checkbox" checked=${isDistrictSeat} onChange=${e=>setIsDistrictSeat(e.target.checked)} style=${{width:'16px',height:'16px'}} />
             Esta igreja é sede de distrito
