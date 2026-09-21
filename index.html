@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-20.4';
+const APP_VERSION = '2026-09-20.5';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -450,7 +450,7 @@ function LoginScreen({ onLogin }) {
             <form onSubmit=${doLogin} style=${{display:'grid', gap:'10px'}}>
               <select value=${selectedChurchLogin} onChange=${e=>{ setSelectedChurchLogin(e.target.value); setLogin(e.target.value === '__dev__' ? '' : e.target.value); }} style=${inputStyle}>
                 <option value="">Selecione sua igreja...</option>
-                ${churches.map(c => html`<option key=${c.id} value=${c.login}>${c.name}${c.city ? ' — '+c.city : ''}</option>`)}
+                ${churches.filter(c => !c.removed).map(c => html`<option key=${c.id} value=${c.login}>${c.name}${c.city ? ' — '+c.city : ''}</option>`)}
                 <option value="__dev__">Sou desenvolvedor</option>
               </select>
               ${selectedChurchLogin === '__dev__' && html`
@@ -582,7 +582,7 @@ function ForgotPasswordModal({ onClose }) {
             <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Selecione sua igreja para ver sua pergunta de segurança.</div>
             <select value=${churchLogin} onChange=${e=>setChurchLogin(e.target.value)} style=${inputStyle} autoFocus>
               <option value="">Selecione sua igreja...</option>
-              ${churches.map(c => html`<option key=${c.id} value=${c.login}>${c.name}${c.city ? ' — '+c.city : ''}</option>`)}
+              ${churches.filter(c => !c.removed).map(c => html`<option key=${c.id} value=${c.login}>${c.name}${c.city ? ' — '+c.city : ''}</option>`)}
             </select>
             <button type="submit" style=${btnPrimary}>Continuar</button>
           </form>
