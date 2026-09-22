@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.10';
+const APP_VERSION = '2026-09-21.11';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1523,8 +1523,15 @@ const MEDIA_LIBRARY = [
   { title:'Grande é o Senhor', query:'grande e o senhor playback adventista' },
   { title:'Águas Purificadoras', query:'aguas purificadoras playback adventista' },
   { title:'Provai e Vede - Vídeo Oficial', query:'provai e vede adventista video oficial', dynamic:true, directUrl:'https://www.youtube.com/@provaievedeoficial', playlistId:'UUR5me469JF9P-ZkOG3TkPmg' },
-  { title:'Informativo Mundial das Missões', query:'informativo mundial das missoes adventista', dynamic:true, directUrl:'https://www.youtube.com/@daniellocutor', playlistId:'UUZrVZOwtnvVIdsZnDpVb7jw' },
-  { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video' },
+  // Trocado do canal @daniellocutor (vídeo às vezes vinha com o áudio original, não em português)
+  // pro canal oficial "Adventistas Brasil" (@adventistasbrasil, Divisão Sul-Americana), que também
+  // publica o Informativo Mundial das Missões em português. Como é o canal geral da igreja (não só
+  // desse programa), o upload mais recente pode não ser sempre o vídeo da semana — vale conferir
+  // na aba "Buscas Semanais" antes de projetar.
+  { title:'Informativo Mundial das Missões', query:'informativo mundial das missoes adventista', dynamic:true, directUrl:'https://www.youtube.com/@adventistasbrasil', playlistId:'UUJAO3KgZdEhCqwpkZyAYY6A' },
+  // Antes sem canal nenhum configurado (por isso "Projetar"/"Play" abriam uma busca em vez do
+  // vídeo). Agora aponta pro canal oficial do programa na TV Novo Tempo.
+  { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video', dynamic:true, directUrl:'https://www.youtube.com/@VidaeSaudeNT', playlistId:'UUpOKqTChGaGw-Oj53kk4jsg' },
   { title:'Vinheta de Anúncios da Igreja', query:'vinheta comunicados igreja adventista' },
   { title:'Deixai Vir a Mim os Pequeninos', query:'deixai vir a mim os pequeninos adventista' },
 ];
@@ -1861,7 +1868,7 @@ function ChurchHeader({ church, tab, setTab, onLogout }) {
   `;
 }
 
-function ProjectButton({ churchId, media }) {
+function ProjectButton({ churchId, media, itemKey }) {
   if (!media || !media.title) return '';
 
   const send = (scr) => {
@@ -1879,19 +1886,23 @@ function ProjectButton({ churchId, media }) {
         alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.');
         return;
       }
-      // Manda pra TODAS as telas habilitadas de uma vez, já em tela cheia e reproduzindo
-      enabled.forEach(scr => send(scr));
+      // Manda pra tela escolhida e salva pra esse item (🖥️ ao lado) — ou, sem preferência salva,
+      // pra todas as telas habilitadas de uma vez, já em tela cheia e reproduzindo.
+      pickTargetScreens(churchId, itemKey, enabled).forEach(scr => send(scr));
     } catch (e) {
       alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
     }
   };
 
   return html`
-    <button type="button" onClick=${handleClick} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Projetar em todas as telas">📽️ Projetar</button>
+    <div style=${{display:'flex', alignItems:'center', gap:'4px'}}>
+      <button type="button" onClick=${handleClick} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Projetar">📽️ Projetar</button>
+      ${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`}
+    </div>
   `;
 }
 
-function ImageProjectButton({ churchId, item }) {
+function ImageProjectButton({ churchId, item, itemKey }) {
   if (!item || !item.dataUrl) return '';
 
   const handleClick = () => {
@@ -1901,8 +1912,9 @@ function ImageProjectButton({ churchId, item }) {
         alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.');
         return;
       }
-      // Manda pra TODAS as telas habilitadas de uma vez, já em tela cheia, na melhor qualidade.
-      enabled.forEach(scr => {
+      // Manda pra tela escolhida e salva pra esse item (🖥️ ao lado) — ou, sem preferência salva,
+      // pra todas as telas habilitadas de uma vez, já em tela cheia, na melhor qualidade.
+      pickTargetScreens(churchId, itemKey, enabled).forEach(scr => {
         try { sendToScreenObj(scr, 'imagem', item); } catch (e) { alert('Erro ao projetar: ' + (e && e.message ? e.message : e)); }
       });
     } catch (e) {
@@ -1911,7 +1923,10 @@ function ImageProjectButton({ churchId, item }) {
   };
 
   return html`
-    <button type="button" onClick=${handleClick} style=${{...btnPrimary, width:'auto', padding:'8px 14px'}} title="Destacar em tela cheia, em todas as telas">📽️ Projetar</button>
+    <div style=${{display:'flex', alignItems:'center', gap:'4px'}}>
+      <button type="button" onClick=${handleClick} style=${{...btnPrimary, width:'auto', padding:'8px 14px'}} title="Destacar em tela cheia">📽️ Projetar</button>
+      ${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`}
+    </div>
   `;
 }
 
@@ -1970,7 +1985,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
               ? html`<${MediaSearchField} media=${media} onChange=${(m)=>{ setMedia(m); onEdit({...act, media: m || null}); }} searchKey=${act.id} />`
               : html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>🎬 ${media.title}</div>`}
           </div>
-          ${media && media.title && html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${ProjectButton} churchId=${churchId} media=${media} /></div>`}
+          ${media && media.title && html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${ProjectButton} churchId=${churchId} media=${media} itemKey=${act.id} /></div>`}
         </div>
       `}
     </div>
@@ -2399,6 +2414,59 @@ function screenSig(s) { return s.width+'x'+s.height+'@'+s.left+','+s.top; }
 function getProjectorScreen(churchId) {
   const list = loadEnabledScreens(churchId);
   return list.find(s => s.isProjector) || (list.length === 1 ? list[0] : null);
+}
+
+// Guarda, por item (uma atividade, um anúncio, um vídeo da semana), pra qual tela ele deve ir
+// quando a pessoa aperta "Projetar" — em vez de mandar sempre pra todas as telas habilitadas.
+// Fica salvo neste aparelho (cada operador escolhe suas próprias telas).
+function screenPrefKey(churchId, itemKey) { return 'gc_tela_pref_' + churchId + '_' + itemKey; }
+function loadScreenPref(churchId, itemKey) {
+  if (!itemKey) return '';
+  try { return localStorage.getItem(screenPrefKey(churchId, itemKey)) || ''; } catch(e) { return ''; }
+}
+function saveScreenPref(churchId, itemKey, sig) {
+  if (!itemKey) return;
+  try {
+    if (sig) localStorage.setItem(screenPrefKey(churchId, itemKey), sig);
+    else localStorage.removeItem(screenPrefKey(churchId, itemKey));
+  } catch(e) {}
+}
+// Escolhe pra qual(is) tela(s) mandar: se tiver uma preferência salva pra esse item e a tela ainda
+// existir entre as habilitadas, manda só pra ela; senão (sem preferência, ou a tela salva não existe
+// mais), manda pra todas as habilitadas — o comportamento de sempre.
+function pickTargetScreens(churchId, itemKey, enabled) {
+  const sig = loadScreenPref(churchId, itemKey);
+  if (!sig) return enabled;
+  const chosen = enabled.filter(s => screenSig(s) === sig);
+  return chosen.length > 0 ? chosen : enabled;
+}
+
+// Botãozinho "🖥️" que abre uma lista das telas habilitadas pra escolher (e salvar) qual delas deve
+// receber esse item específico quando for projetado. Só aparece quando dá pra escolher (2+ telas
+// habilitadas) — com 0 ou 1 tela não há o que escolher.
+function ScreenPickerButton({ churchId, itemKey }) {
+  const [open, setOpen] = useState(false);
+  const [screens, setScreens] = useState(() => loadEnabledScreens(churchId));
+  const [pref, setPref] = useState(() => loadScreenPref(churchId, itemKey));
+  const toggle = () => { if (!open) setScreens(loadEnabledScreens(churchId)); setOpen(v=>!v); };
+  if (screens.length < 2) return '';
+  const choose = (sig) => { saveScreenPref(churchId, itemKey, sig); setPref(sig); setOpen(false); };
+  const current = screens.find(s => screenSig(s) === pref);
+  return html`
+    <div style=${{position:'relative'}}>
+      <button type="button" onClick=${toggle} title="Escolher em qual tela projetar" style=${{...btnGhost, padding:'6px 8px', fontSize:'10.5px', whiteSpace:'nowrap'}}>
+        🖥️${current ? ' '+current.label : ''}
+      </button>
+      ${open && html`
+        <div class="glass fade-up" style=${{position:'absolute', top:'calc(100% + 4px)', right:0, zIndex:200, borderRadius:'10px', padding:'5px', display:'grid', gap:'3px', minWidth:'190px', boxShadow:'0 12px 26px -8px rgba(0,0,0,0.5)'}}>
+          <button type="button" onClick=${()=>choose('')} style=${{textAlign:'left', padding:'6px 8px', borderRadius:'7px', border:'none', background: pref==='' ? 'rgba(99,102,241,0.18)' : 'transparent', fontSize:'11px', color:'var(--text-hi)'}}>📡 Todas as telas habilitadas</button>
+          ${screens.map(s => html`
+            <button key=${screenSig(s)} type="button" onClick=${()=>choose(screenSig(s))} style=${{textAlign:'left', padding:'6px 8px', borderRadius:'7px', border:'none', background: pref===screenSig(s) ? 'rgba(99,102,241,0.18)' : 'transparent', fontSize:'11px', color:'var(--text-hi)'}}>🖥️ ${s.label}${s.isProjector ? ' (projetor)' : ''}</button>
+          `)}
+        </div>
+      `}
+    </div>
+  `;
 }
 
 function videoEmbedHtml(media) {
@@ -3018,7 +3086,7 @@ function ColetaneasCategoryGrid({ churchId, category }) {
                 <div style=${{display:'flex', flexDirection:'column', gap:'5px'}}>
                   <div style=${{display:'flex', gap:'6px'}}>
                     <a href=${media.url} target="_blank" rel="noopener" style=${{fontSize:'10.5px', fontWeight:700, color:'#fff', textDecoration:'none', background:'rgba(255,255,255,0.25)', padding:'4px 8px', borderRadius:'7px'}}>▶️ Abrir</a>
-                    <${ProjectButton} churchId=${churchId} media=${media} />
+                    <${ProjectButton} churchId=${churchId} media=${media} itemKey=${'colet-'+c.id} />
                   </div>
                   <div style=${{display:'flex', gap:'6px'}}>
                     <button onClick=${()=>setLinkingId(c.id)} style=${{fontSize:'10px', fontWeight:700, color:'#fff', background:'rgba(0,0,0,0.2)', border:'none', padding:'3px 7px', borderRadius:'7px'}}>🔗 Trocar vídeo</button>
@@ -3234,8 +3302,8 @@ function YoutubeQuickSearch({ churchId }) {
 function BuscasSemanaisView({ churchId }) {
   const items = [
     { key:'provai', title:'Provai e Vede - Vídeo Oficial', sub:'Canal oficial: @provaievedeoficial' },
-    { key:'informativo', title:'Informativo Mundial das Missões', sub:'Canal: Daniel Gonçalves (@daniellocutor)' },
-    { key:'saude', title:'Momento Vida e Saúde', sub:'Busca no YouTube (sem canal único confirmado)' },
+    { key:'informativo', title:'Informativo Mundial das Missões', sub:'Canal: Adventistas Brasil (@adventistasbrasil) — confira se é o vídeo certo da semana antes de projetar' },
+    { key:'saude', title:'Momento Vida e Saúde', sub:'Canal oficial: Vida e Saúde NT (@VidaeSaudeNT)' },
   ];
   const mediaFor = (key) => {
     const lib = MEDIA_LIBRARY.find(m => m.title === (key==='provai' ? 'Provai e Vede - Vídeo Oficial' : key==='informativo' ? 'Informativo Mundial das Missões' : 'Momento Vida e Saúde'));
@@ -3259,7 +3327,7 @@ function BuscasSemanaisView({ churchId }) {
               ${media && html`
                 <div style=${{display:'flex', gap:'8px', flexWrap:'wrap', alignItems:'center'}}>
                   <button type="button" onClick=${()=>openMediaInNewTab(media)} style=${{...btnPrimary, width:'auto', padding:'9px 16px'}}>▶ Play</button>
-                  <${ProjectButton} churchId=${churchId} media=${media} />
+                  <${ProjectButton} churchId=${churchId} media=${media} itemKey=${'buscas-'+it.key} />
                   <a href=${media.url} target="_blank" rel="noopener" style=${{...btnGhost, padding:'9px 14px', fontSize:'11px', textDecoration:'none'}}>🔗 Abrir Canal</a>
                 </div>
               `}
@@ -3877,7 +3945,7 @@ function CultoLiveMode({ activities, sections, churchId, onAdvance, onClose, onO
         ${current.media && current.media.title && html`
           <div style=${{display:'flex', flexDirection:'column', alignItems:'center', gap:'8px', marginTop:'4px'}}>
             <div style=${{fontSize:'12.5px', color:'var(--text-mid)'}}>🎬 ${current.media.title}</div>
-            <${ProjectButton} churchId=${churchId} media=${current.media} />
+            <${ProjectButton} churchId=${churchId} media=${current.media} itemKey=${current.id} />
           </div>
         `}
 
@@ -4708,7 +4776,7 @@ function AnunciosTool({ churchId }) {
             </div>
             <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end', flexWrap:'wrap'}}>
               <button type="button" onClick=${()=>openImageInNewTab(it)} style=${btnGhost}>👁️ Pré-visualizar</button>
-              <${ImageProjectButton} churchId=${churchId} item=${it} />
+              <${ImageProjectButton} churchId=${churchId} item=${it} itemKey=${'img-'+it.id} />
               <button type="button" onClick=${()=>remove(it.id)} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🗑️ Remover</button>
             </div>
           </div>
