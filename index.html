@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.14';
+const APP_VERSION = '2026-09-21.15';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1523,11 +1523,11 @@ const MEDIA_LIBRARY = [
   { title:'Grande é o Senhor', query:'grande e o senhor playback adventista' },
   { title:'Águas Purificadoras', query:'aguas purificadoras playback adventista' },
   { title:'Provai e Vede - Vídeo Oficial', query:'provai e vede adventista video oficial', dynamic:true, directUrl:'https://www.youtube.com/@provaievedeoficial', playlistId:'UUR5me469JF9P-ZkOG3TkPmg' },
-  // Canal confirmado pelo Paulo: Daniel Locutor. Se algum vídeo específico vier com o áudio num
-  // idioma diferente do português, normalmente é porque aquele vídeo tem mais de uma faixa de áudio
-  // e o YouTube carregou a faixa "original" por padrão — o player mostra os controles (⚙️ engrenagem
-  // no canto do vídeo), então dá pra trocar a faixa de áudio ali na hora, se precisar.
-  { title:'Informativo Mundial das Missões', query:'informativo mundial das missoes adventista', dynamic:true, directUrl:'https://www.youtube.com/@daniellocutor', playlistId:'UUZrVZOwtnvVIdsZnDpVb7jw' },
+  // O canal @daniellocutor (Daniel Gonçalves) faz locução/dublagem pra vários projetos, não só esse —
+  // por isso o "último vídeo do canal" às vezes vinha em outro idioma (era de outro projeto dele).
+  // Corrigido pra usar a PLAYLIST oficial da Adventistas Brasil dedicada só a esse programa (2026),
+  // sempre em português e com o episódio mais novo aparecendo primeiro.
+  { title:'Informativo Mundial das Missões', query:'informativo mundial das missoes adventista', dynamic:true, directUrl:'https://www.youtube.com/playlist?list=PLtT7fGpN_s4LFJT9TOe88jv4duR7ANaVc', playlistId:'PLtT7fGpN_s4LFJT9TOe88jv4duR7ANaVc' },
   // Canal confirmado pelo Paulo: Quero Vida e Saúde (@querovidaesaude).
   { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video', dynamic:true, directUrl:'https://www.youtube.com/@querovidaesaude', playlistId:'UUmUYgKrrfFg4O1izdSjkLfg' },
   { title:'Vinheta de Anúncios da Igreja', query:'vinheta comunicados igreja adventista' },
@@ -3376,7 +3376,7 @@ function YoutubeQuickSearch({ churchId }) {
 function BuscasSemanaisView({ churchId }) {
   const items = [
     { key:'provai', title:'Provai e Vede - Vídeo Oficial', sub:'Canal oficial: @provaievedeoficial' },
-    { key:'informativo', title:'Informativo Mundial das Missões', sub:'Canal: Daniel Locutor (@daniellocutor)' },
+    { key:'informativo', title:'Informativo Mundial das Missões', sub:'Playlist oficial: Adventistas Brasil (2026)' },
     { key:'saude', title:'Momento Vida e Saúde', sub:'Canal oficial: Quero Vida e Saúde (@querovidaesaude)' },
   ];
   const mediaFor = (key) => {
