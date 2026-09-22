@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.17';
+const APP_VERSION = '2026-09-22.18';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -3074,6 +3074,93 @@ const COLETANEAS_CELEBRASP = [
 const COLETANEAS_COLORS = ['#1d4ed8','#0f766e','#b91c1c','#7c2d12','#6d28d9','#166534','#0369a1','#a16207','#4c1d95','#0e7490'];
 const COLETANEAS_CATEGORIES = ['CDs Oficiais/Ano', 'Adoradores', 'Cantores', 'Celebra SP', 'Diversas'];
 
+// CDs mais recentes (2020 em diante), que ainda não estavam na lista.
+const COLETANEAS_SEED_RECENTES = [
+  {title:'Meu Lugar no Mundo', year:'2026'},{title:'Maranata', year:'2024-2025'},
+  {title:'Eu Vou', year:'2022-2023'},{title:'Chegou a Hora', year:'2021'},{title:'Tudo por Ele', year:'2020'},
+].map((c,i) => ({ id:'seed-rec-'+i, category:'CDs Oficiais/Ano', title:c.title, year:c.year, custom:false }));
+
+// Faixas reais de cada coletânea — já vem pronto, sem precisar montar na mão. Cada igreja ainda pode
+// editar, adicionar ou remover à vontade (o que ela mexer fica salvo separado e não perde esse ponto de
+// partida). Preenchido até 2012; os anos mais antigos (2011 pra trás) ainda ficam pra igreja montar.
+const COLETANEA_TRACKS_SEED = {
+  'seed-rec-0': [ // Meu Lugar no Mundo (2026)
+    {title:'Meu Lugar no Mundo', duration:'3:39'},
+    {title:'Hoje é o Tempo', duration:'4:01'},
+    {title:'O Drama da Paixão', duration:'3:48'},
+  ],
+  'seed-rec-1': [ // Maranata (2024-2025)
+    {title:'Maranata', duration:'4:17'},
+  ],
+  'seed-rec-2': [ // Eu Vou (2022-2023)
+    {title:'Eu Vou', duration:'3:39'},
+    {title:'O Amor Vive', duration:'4:32'},
+    {title:'Sobreviver', duration:'4:45'},
+  ],
+  'seed-rec-3': [ // Chegou a Hora (2021)
+    {title:'Chegou a Hora', duration:'4:32'},
+    {title:'Restaurados em Cristo', duration:'4:30'},
+    {title:'Fiéis até o Fim', duration:'3:41'},
+  ],
+  'seed-rec-4': [ // Tudo por Ele (2020)
+    {title:'Tudo por Ele', duration:'4:52'},
+    {title:'Maranata', duration:'5:59'},
+    {title:'Lugar Secreto', duration:'4:36'},
+    {title:'Medley da Fé', duration:'9:06'},
+    {title:'Rumo ao Lar', duration:'3:58'},
+    {title:'Volta Filho', duration:'3:46'},
+    {title:'Ousado Amor', duration:'5:20'},
+  ],
+  'seed-0': [ // Somos Tuas Mãos (2019)
+    {title:'Por Todo Mundo', duration:'4:23'},{title:'Meu Farol', duration:'3:49'},{title:'Saudade', duration:'3:47'},
+    {title:'Fui Chamado por Cristo', duration:'3:19'},{title:'Vem Servir', duration:'3:50'},{title:'Somos Tuas Mãos', duration:'4:09'},
+    {title:'Acredito', duration:'4:26'},{title:'Vencerei', duration:'3:44'},{title:'Chamados', duration:'3:29'},
+    {title:'Mensagem da Cruz', duration:'4:35'},{title:'Vitória em Cristo', duration:'3:47'},{title:'A Melhor Aventura', duration:'4:15'},
+  ],
+  'seed-1': [ // Fé e Ação (2018)
+    {title:'Fé e Ação', duration:'5:03'},{title:'Acredito', duration:'4:26'},{title:'Canção dos Remidos', duration:'4:16'},
+    {title:'Cristo em Mim', duration:'3:45'},{title:'Mensagem da Cruz', duration:'4:35'},{title:'Meu Farol', duration:'3:49'},
+    {title:'Nisto Cremos', duration:'4:47'},{title:'Nunca Mais as Lágrimas', duration:'4:04'},{title:'O Coração do Louvor', duration:'5:30'},
+    {title:'Para Sempre Aleluia', duration:'5:00'},{title:'Saudade', duration:'3:47'},
+  ],
+  'seed-2': [ // Eu Creio (2017)
+    {title:'Prefixo de Louvor', duration:'1:26'},{title:'Eu Creio', duration:'4:36'},{title:'Consagração', duration:'2:23'},
+    {title:'Último Convite', duration:'5:47'},{title:'Minha Fortaleza', duration:'3:32'},{title:'Orando', duration:'4:46'},
+    {title:'Doce Paz', duration:'4:17'},{title:'Ouço Sua Voz', duration:'3:03'},{title:'Resgate do Amor', duration:'4:08'},
+  ],
+  'seed-3': [ // Mais que Paixão (2016)
+    {title:'Mais que Paixão', duration:'3:15'},{title:'Ainda Há Tempo', duration:'4:12'},{title:'Aleluia! Cantai Ao Senhor', duration:'4:13'},
+    {title:'Deus é Nosso Refúgio', duration:'2:28'},{title:'Eu Quero Ver', duration:'3:51'},{title:'Jesus Cristo Mudou Meu Viver', duration:'2:39'},
+    {title:'Não Desista', duration:'5:14'},{title:'Não Tente Entender', duration:'4:15'},{title:'Preciosa Luz', duration:'3:51'},
+    {title:'Tenho Paz', duration:'4:30'},
+  ],
+  'seed-4': [ // Eu Sou a Mensagem (2015)
+    {title:'Em Sua Presença', duration:'4:31'},{title:'A Bíblia É', duration:'2:59'},
+    {title:'Medley - Só em Jesus, A Minha Fé e o Meu Amor', duration:'5:14'},{title:'Eu Sou a Mensagem', duration:'3:44'},
+    {title:'Dez Mil Razões', duration:'4:59'},{title:'Pressa', duration:'4:28'},{title:'Ele Está Voltando', duration:'4:05'},
+    {title:'Coração Aberto', duration:'2:26'},{title:'O Sangue', duration:'4:55'},{title:'Hoje É Dia de Louvar', duration:'3:11'},
+    {title:'De Dois em Dois', duration:'3:21'},{title:'Coração Missionário', duration:'3:23'},
+  ],
+  'seed-5': [ // A Única Esperança (2014)
+    {title:'Prefixo de Louvor', duration:'0:59'},{title:'A Única Esperança', duration:'4:00'},{title:'Meu Deus', duration:'3:49'},
+    {title:'Doce Esperança', duration:'4:14'},{title:'Toques', duration:'4:04'},{title:'É Prazer Servir a Cristo', duration:'2:42'},
+    {title:'Nas Tuas Mãos', duration:'3:14'},{title:'Caminho de Esperança', duration:'3:16'},{title:'Não Há Alguém', duration:'4:09'},
+    {title:'Missão Esperança', duration:'3:23'},{title:'Vou Me Entregar', duration:'4:12'},
+  ],
+  'seed-6': [ // Gente como Jesus (2013)
+    {title:'Som de Chuva', duration:'4:07'},{title:'Eu Sou Calebe', duration:'4:54'},{title:'Fortes', duration:'4:06'},
+    {title:'Vem Espírito Santo', duration:'3:57'},{title:'A Espera do Melhor', duration:'3:09'},{title:'Estamos Juntos', duration:'4:36'},
+    {title:'Estou Aqui para Adorar', duration:'3:46'},{title:'Maravilhas', duration:'4:16'},{title:'Discípulo de Esperança', duration:'3:09'},
+    {title:'Tal Qual Estou', duration:'2:40'},
+  ],
+  'seed-7': [ // A Grande Esperança (2012)
+    {title:'Somos Teus', duration:'6:12'},{title:'Meu Tudo', duration:'5:04'},{title:'Eu Vou para o Céu', duration:'3:56'},
+    {title:'Renascer', duration:'4:07'},{title:'A Grande Esperança', duration:'3:13'},{title:'Quero Recomeçar', duration:'4:44'},
+    {title:'Esperança e Poder', duration:'2:52'},{title:'Restaura', duration:'4:02'},{title:'O Poder para Vencer', duration:'3:58'},
+    {title:'Esperança', duration:'4:01'},{title:'Que Prazer é Ser de Cristo', duration:'3:06'},{title:'Santo És Senhor', duration:'3:03'},
+  ],
+};
+
 function loadColetaneasCustom(churchId) {
   try { const raw = localStorage.getItem('gc_coletaneas_custom_'+churchId); if (raw) return JSON.parse(raw); } catch(e) {}
   return [];
@@ -3097,6 +3184,15 @@ function loadColetaneaTracksAll(churchId) {
   return {};
 }
 function saveColetaneaTracksAll(churchId, map) { try { localStorage.setItem(coletaneaTracksKey(churchId), JSON.stringify(map)); } catch(e) {} }
+// Conta faixas pra mostrar no card — usa o que a igreja já salvou, ou, se ainda não mexeu, o que já vem
+// pronto (COLETANEA_TRACKS_SEED), pra não parecer "vazio" numa coletânea que já tem música cadastrada.
+function computeTracksCounts(churchId) {
+  const map = loadColetaneaTracksAll(churchId);
+  const counts = {};
+  const ids = new Set([...Object.keys(map), ...Object.keys(COLETANEA_TRACKS_SEED)]);
+  ids.forEach(id => { counts[id] = (map[id] && map[id].length) || (COLETANEA_TRACKS_SEED[id] && COLETANEA_TRACKS_SEED[id].length) || 0; });
+  return counts;
+}
 
 // Quebra a letra em estrofes (parágrafos separados por linha em branco), pra poder projetar uma de
 // cada vez — igual a como qualquer sonoplastia de culto avança a letra aos poucos, em vez de jogar a
@@ -3199,7 +3295,8 @@ function ColetaneaTrackRow({ churchId, coletaneaId, track, onChange, onRemove })
 // as músicas do CD do jeito que for tocar (não precisa ser o CD inteiro, só o que interessa).
 function ColetaneaTracksPanel({ churchId, coletanea, onClose }) {
   const [allTracks, setAllTracks] = useState(() => loadColetaneaTracksAll(churchId));
-  const tracks = allTracks[coletanea.id] || [];
+  const seed = COLETANEA_TRACKS_SEED[coletanea.id];
+  const tracks = allTracks[coletanea.id] || (seed ? seed.map((t,i) => ({ id:'seed-trk-'+i, title:t.title, duration:t.duration, media:null, lyrics:'' })) : []);
 
   const persist = (next) => {
     setAllTracks(map => {
@@ -3256,16 +3353,12 @@ function ColetaneasCategoryGrid({ churchId, category }) {
   const [links, setLinks] = useState(() => loadColetaneasLinks(churchId));
   const [linkingId, setLinkingId] = useState(null);
   const [tracksOpenId, setTracksOpenId] = useState(null);
-  const [tracksCounts, setTracksCounts] = useState(() => {
-    const map = loadColetaneaTracksAll(churchId);
-    const counts = {}; Object.keys(map).forEach(k => counts[k] = (map[k]||[]).length);
-    return counts;
-  });
+  const [tracksCounts, setTracksCounts] = useState(() => computeTracksCounts(churchId));
 
   useEffect(() => saveColetaneasCustom(churchId, custom), [custom, churchId]);
   useEffect(() => saveColetaneasLinks(churchId, links), [links, churchId]);
 
-  const all = [...COLETANEAS_SEED, ...COLETANEAS_ADORADORES, ...COLETANEAS_CANTORES, ...COLETANEAS_CELEBRASP, ...custom];
+  const all = [...COLETANEAS_SEED_RECENTES, ...COLETANEAS_SEED, ...COLETANEAS_ADORADORES, ...COLETANEAS_CANTORES, ...COLETANEAS_CELEBRASP, ...custom];
   const isTodas = category === 'Todas';
   const shown = isTodas ? all : all.filter(c => c.category === category);
 
@@ -3342,9 +3435,7 @@ function ColetaneasCategoryGrid({ churchId, category }) {
             coletanea=${all.find(c => c.id === tracksOpenId)}
             onClose=${()=>{
               setTracksOpenId(null);
-              const map = loadColetaneaTracksAll(churchId);
-              const counts = {}; Object.keys(map).forEach(k => counts[k] = (map[k]||[]).length);
-              setTracksCounts(counts);
+              setTracksCounts(computeTracksCounts(churchId));
             }}
           />
         </div>
