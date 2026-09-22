@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.21';
+const APP_VERSION = '2026-09-22.22';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -4445,7 +4445,14 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch }) {
   };
   const resetToDefault = () => {
     if (!savedDefault || !savedDefault.versions || savedDefault.versions.length === 0) {
-      alert('Ainda não existe uma liturgia padrão definida. Vá na aba Gestão > Liturgia Padrão para criar uma primeiro.');
+      // Ainda não existe um padrão salvo — em vez de mandar a pessoa ir configurar em outra aba,
+      // já oferece criar o padrão agora, com a liturgia atual, e explica em uma frase o que fazer
+      // se quiser trocar isso depois.
+      if (window.confirm('Você ainda não tem uma Liturgia Padrão salva, então não tem o que restaurar. Quer usar a liturgia de AGORA como o padrão? (dá pra trocar depois em Gestão > 🔒 Liturgia Padrão)')) {
+        saveDefaultLiturgyVersion(churchId, activities.map(a => ({...a})), null);
+        pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia padrão criada a partir da liturgia atual' });
+        alert('Pronto! Essa liturgia agora é o seu padrão. Da próxima vez que clicar em "Restaurar Padrão", tudo que não estiver trancado (🔒) volta pra esse ponto.');
+      }
       return;
     }
     if (!window.confirm('Isso vai remover tudo que NÃO está trancado (🔒) e colocar no lugar o modelo padrão. O que estiver trancado continua do jeito que está. Continuar?')) return;
