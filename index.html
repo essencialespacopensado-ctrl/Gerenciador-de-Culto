@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.15';
+const APP_VERSION = '2026-09-21.16';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2536,11 +2536,13 @@ function openImageInNewTab(item) {
 function projectionShellHtml() {
   return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Projeção</title><style>'
     + 'html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#fff;font-family:-apple-system,sans-serif;}'
-    + '#gc-stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;}'
-    + '#gc-stage iframe{position:fixed;inset:0;width:100%;height:100%;border:none;}'
+    + '#gc-stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:1;}'
+    + '#gc-stage iframe{position:fixed;inset:0;width:100%;height:100%;border:none;z-index:1;}'
     + '#gc-stage img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;}'
     + '#gc-stage h1{font-size:5vw;text-align:center;padding:0 4vw;}'
-    + '#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;z-index:10;}'
+    // z-index bem alto e "!important" pra garantir que esse botão sempre fique VISÍVEL por cima do
+    // vídeo do YouTube (em alguns casos o iframe do vídeo ficava cobrindo o botão por completo).
+    + '#fs-fallback{position:fixed !important;bottom:20px !important;right:20px !important;padding:12px 18px !important;border-radius:10px !important;background:#4f46e5 !important;color:#fff !important;border:2px solid #fff !important;font-size:15px !important;font-weight:600 !important;cursor:pointer !important;z-index:2147483647 !important;box-shadow:0 4px 14px rgba(0,0,0,0.5) !important;}'
     + '</style></head><body>'
     + '<div id="gc-stage"></div>'
     + '<button id="fs-fallback">⛶ Tela Cheia</button>'
@@ -2634,12 +2636,20 @@ async function sendToScreenObj(scr, kind, payload) {
       // certa, automaticamente — sem precisar de nenhum clique dentro da janela projetada. Sem essa
       // API (outro navegador, ou permissão de telas ainda não concedida), cai no botão "Tela Cheia"
       // que aparece dentro da janela como alternativa manual.
-      try {
-        const el = win.document.documentElement;
-        if (el && el.requestFullscreen) {
-          (fsScreen ? el.requestFullscreen({ screen: fsScreen }) : el.requestFullscreen()).catch(()=>{});
-        }
-      } catch(e) {}
+      const tryFs = () => {
+        try {
+          const el = win.document.documentElement;
+          if (el && el.requestFullscreen && !win.document.fullscreenElement) {
+            (fsScreen ? el.requestFullscreen({ screen: fsScreen }) : el.requestFullscreen()).catch(()=>{});
+          }
+        } catch(e) {}
+      };
+      tryFs();
+      // Tenta de novo quando a janela terminar de carregar — em alguns casos o pedido de tela cheia
+      // só é aceito pelo navegador depois desse evento (é o padrão que o próprio Chrome recomenda
+      // pra esse cenário de "tela cheia numa tela específica").
+      try { win.addEventListener('load', tryFs, { once: true }); } catch(e) {}
+      try { setTimeout(tryFs, 300); } catch(e) {}
     }
 
     const msg = kind === 'media'
