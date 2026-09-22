@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.22';
+const APP_VERSION = '2026-09-22.23';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -4358,6 +4358,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch }) {
   const [adding, setAdding] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [finalizeOpen, setFinalizeOpen] = useState(false);
+  const [makeDefaultGate, setMakeDefaultGate] = useState(false);
 
   useEffect(() => saveActivities(churchId, activities), [activities, churchId]);
 
@@ -4459,6 +4460,15 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch }) {
     applyVersion(savedDefault.versions[0]);
   };
 
+  // Salva a liturgia de AGORA (como está na tela) como o novo modelo padrão — direto por aqui,
+  // sem precisar ir em Gestão. Continua protegido por senha, igual ao fluxo de lá.
+  const makeCurrentDefault = (password) => {
+    saveDefaultLiturgyVersion(churchId, activities.map(a => ({...a})), password);
+    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia padrão atualizada a partir da liturgia atual' });
+    setMakeDefaultGate(false);
+    alert('Pronto! A liturgia de agora foi salva como o novo padrão. Toda vez que clicar em "Restaurar Padrão", tudo que não estiver trancado (🔒) volta pra esse ponto.');
+  };
+
   const buildFinalizeSummary = () => {
     const church = loadDB().find(c => c.id === churchId) || {};
     const teams = loadTeams(churchId);
@@ -4523,11 +4533,13 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch }) {
       </div>
 
       <button onClick=${()=>setAssistantOpen(true)} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1.5px dashed var(--accent-1)', color:'var(--accent-1)', fontWeight:700}}>🤖 Assistente de Liturgia (colar texto)</button>
-      <div style=${{display:'grid', gridTemplateColumns:'1fr auto', gap:'8px', marginBottom:'8px'}}>
-        <button onClick=${()=>setAdding(v=>!v)} style=${{...btnGhost, border:'1.5px dashed var(--border-soft)', padding:'12px'}}>➕ Acrescentar Atividade</button>
+      <button onClick=${()=>setAdding(v=>!v)} style=${{...btnGhost, width:'100%', border:'1.5px dashed var(--border-soft)', padding:'12px', marginBottom:'8px'}}>➕ Acrescentar Atividade</button>
+      <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'8px'}}>
         <button onClick=${resetToDefault} style=${{...btnGhost, padding:'12px'}}>🔄 Restaurar Padrão</button>
+        <button onClick=${()=>setMakeDefaultGate(true)} style=${{...btnGhost, padding:'12px'}}>💾${savedDefault && savedDefault.password ? '🔒' : ''} Tornar Padrão</button>
       </div>
-      <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginBottom:'8px'}}>Pra criar ou editar a liturgia padrão, vá na aba Gestão > 🔒 Liturgia Padrão.</div>
+      <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginBottom:'8px'}}>"Tornar Padrão" salva a liturgia de agora como o novo modelo. "Restaurar Padrão" volta tudo (menos o trancado 🔒) pro último modelo salvo. Pra apagar a senha ou ver versões antigas, vá em Gestão > 🔒 Liturgia Padrão.</div>
+      ${makeDefaultGate && html`<${DefaultLiturgyPasswordGate} hasPassword=${!!(savedDefault && savedDefault.password)} onUnlock=${makeCurrentDefault} onClose=${()=>setMakeDefaultGate(false)} />`}
       <button onClick=${openFinalize} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1px solid var(--success-1)', color:'var(--success-1)'}}>✅ Finalizar Culto</button>
       <button onClick=${zerarProgramacao} style=${{...btnGhost, width:'100%', marginBottom:'16px', padding:'12px', border:'1px solid var(--danger)', color:'var(--danger)'}}>🧹 Zerar Programação (mantém fixadas 🔒)</button>
 
