@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.12';
+const APP_VERSION = '2026-09-21.13';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1528,9 +1528,8 @@ const MEDIA_LIBRARY = [
   // e o YouTube carregou a faixa "original" por padrão — o player mostra os controles (⚙️ engrenagem
   // no canto do vídeo), então dá pra trocar a faixa de áudio ali na hora, se precisar.
   { title:'Informativo Mundial das Missões', query:'informativo mundial das missoes adventista', dynamic:true, directUrl:'https://www.youtube.com/@daniellocutor', playlistId:'UUZrVZOwtnvVIdsZnDpVb7jw' },
-  // Antes sem canal nenhum configurado (por isso "Projetar"/"Play" abriam uma busca em vez do
-  // vídeo). Agora aponta pro canal oficial do programa na TV Novo Tempo.
-  { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video', dynamic:true, directUrl:'https://www.youtube.com/@VidaeSaudeNT', playlistId:'UUpOKqTChGaGw-Oj53kk4jsg' },
+  // Canal confirmado pelo Paulo: Quero Vida e Saúde (@querovidaesaude).
+  { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video', dynamic:true, directUrl:'https://www.youtube.com/@querovidaesaude', playlistId:'UUmUYgKrrfFg4O1izdSjkLfg' },
   { title:'Vinheta de Anúncios da Igreja', query:'vinheta comunicados igreja adventista' },
   { title:'Deixai Vir a Mim os Pequeninos', query:'deixai vir a mim os pequeninos adventista' },
 ];
@@ -3361,7 +3360,7 @@ function BuscasSemanaisView({ churchId }) {
   const items = [
     { key:'provai', title:'Provai e Vede - Vídeo Oficial', sub:'Canal oficial: @provaievedeoficial' },
     { key:'informativo', title:'Informativo Mundial das Missões', sub:'Canal: Daniel Locutor (@daniellocutor)' },
-    { key:'saude', title:'Momento Vida e Saúde', sub:'Canal oficial: Vida e Saúde NT (@VidaeSaudeNT)' },
+    { key:'saude', title:'Momento Vida e Saúde', sub:'Canal oficial: Quero Vida e Saúde (@querovidaesaude)' },
   ];
   const mediaFor = (key) => {
     const lib = MEDIA_LIBRARY.find(m => m.title === (key==='provai' ? 'Provai e Vede - Vídeo Oficial' : key==='informativo' ? 'Informativo Mundial das Missões' : 'Momento Vida e Saúde'));
