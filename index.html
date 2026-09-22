@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.23';
+const APP_VERSION = '2026-09-22.24';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -4400,10 +4400,12 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch }) {
   const remove = (id) => setActivities(list => list.filter(a => a.id !== id));
   const edit = (updated) => setActivities(list => list.map(a => a.id === updated.id ? updated : a));
   const toggleFix = (id) => setActivities(list => list.map(a => a.id===id ? {...a, fixed: !a.fixed} : a));
+  // Zera de verdade: remove (apaga) toda atividade que NÃO está trancada, como se fosse começar
+  // a liturgia do zero. O que está trancado (🔒) continua exatamente como está.
   const zerarProgramacao = () => {
-    if (!window.confirm('Isso vai apagar o responsável, horário e marcação de concluído de todas as atividades NÃO fixadas (🔒). As fixadas continuam intactas. Continuar?')) return;
-    setActivities(list => list.map(a => a.fixed ? a : { ...a, responsible:'A definir', time:'--:--', done:false }));
-    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada (atividades fixadas preservadas)' });
+    if (!window.confirm('Isso vai APAGAR todas as atividades que NÃO estão trancadas (🔒), como se você fosse começar uma liturgia do zero. As trancadas continuam. Depois, se quiser, use "Restaurar Padrão" pra voltar pra última liturgia salva. Continuar?')) return;
+    setActivities(list => list.filter(a => a.fixed));
+    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada (atividades destrancadas apagadas; fixadas preservadas)' });
   };
   const addAt = (act, refId, position) => {
     setActivities(list => {
