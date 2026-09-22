@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.24';
+const APP_VERSION = '2026-09-22.25';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1723,6 +1723,7 @@ const NAV_ITEMS = [
   { tab:'presenca', icon:'✅', label:'Presença', group:'Culto', c1:'#6d28d9', c2:'#4c1d95' },
   { tab:'liturgia', icon:'📋', label:'Liturgia', group:'Culto', c1:'#7c3aed', c2:'#5b21b6' },
   { tab:'telas', icon:'📺', label:'Telas', group:'Culto', c1:'#8b5cf6', c2:'#6d28d9' },
+  { tab:'mensagem', icon:'🎤', label:'Mensagem', group:'Culto', c1:'#9333ea', c2:'#6d28d9' },
   { tab:'musicas', icon:'🎶', label:'Músicas', group:'Músicas', c1:'#2563eb', c2:'#1e3a8a' },
   { tab:'buscas', icon:'🔎', label:'Buscas', group:'Organização', c1:'#0f766e', c2:'#134e4a' },
   { tab:'gestao', icon:'👥', label:'Gestão', group:'Organização', c1:'#0891b2', c2:'#155e75' },
@@ -1923,6 +1924,32 @@ function ImageProjectButton({ churchId, item, itemKey }) {
   return html`
     <div style=${{display:'flex', alignItems:'center', gap:'4px'}}>
       <button type="button" onClick=${handleClick} style=${{...btnPrimary, width:'auto', padding:'8px 14px'}} title="Destacar em tela cheia">📽️ Projetar</button>
+      ${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`}
+    </div>
+  `;
+}
+
+function LocalVideoProjectButton({ churchId, item, itemKey }) {
+  if (!item || !item.url) return '';
+
+  const handleClick = () => {
+    try {
+      const enabled = loadEnabledScreens(churchId);
+      if (enabled.length === 0) {
+        alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.');
+        return;
+      }
+      pickTargetScreens(churchId, itemKey, enabled).forEach(scr => {
+        try { sendToScreenObj(scr, 'localvideo', item); } catch (e) { alert('Erro ao projetar: ' + (e && e.message ? e.message : e)); }
+      });
+    } catch (e) {
+      alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
+    }
+  };
+
+  return html`
+    <div style=${{display:'flex', alignItems:'center', gap:'4px'}}>
+      <button type="button" onClick=${handleClick} style=${{...btnPrimary, width:'auto', padding:'8px 14px'}} title="Projetar em tela cheia">📽️ Projetar</button>
       ${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`}
     </div>
   `;
@@ -2541,6 +2568,7 @@ function projectionShellHtml() {
     + '#gc-stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:1;}'
     + '#gc-stage iframe{position:fixed;inset:0;width:100%;height:100%;border:none;z-index:1;}'
     + '#gc-stage img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;}'
+    + '#gc-stage video{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;}'
     + '#gc-stage h1{font-size:5vw;text-align:center;padding:0 4vw;}'
     // z-index bem alto e "!important" pra garantir que esse botão sempre fique VISÍVEL por cima do
     // vídeo do YouTube (em alguns casos o iframe do vídeo ficava cobrindo o botão por completo).
@@ -2562,6 +2590,10 @@ function projectionShellHtml() {
       + 'function renderBlank(){stage.innerHTML="";}'
       + 'function renderText(text){stage.innerHTML="";var h=document.createElement("h1");h.textContent=text||"";h.style.whiteSpace="pre-line";h.style.lineHeight="1.35";h.style.fontSize="clamp(28px, 4.6vw, 74px)";stage.appendChild(h);}'
       + 'function renderImage(item){stage.innerHTML="";var img=document.createElement("img");img.src=(item&&item.dataUrl)||"";img.alt=(item&&item.title)||"";stage.appendChild(img);}'
+      // Vídeo local (arquivo carregado do pendrive na aba Mensagem) — o item.url é um blob: URL criado
+      // na janela principal; blob: URLs do mesmo site funcionam em qualquer janela/aba, então dá pra
+      // tocar aqui sem precisar subir o arquivo pra lugar nenhum.
+      + 'function renderLocalVideo(item){stage.innerHTML="";fading=false;ytPlayer=null;var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;stage.appendChild(v);v.play().catch(function(){});}'
       + 'function bindYt(){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onStateChange:function(e){if(e.data===0)fadeOutEnd();}}});}catch(e){}}}'
       + 'function fadeOutEnd(){'
         + 'if(fading||!ytPlayer)return;fading=true;'
@@ -2589,6 +2621,7 @@ function projectionShellHtml() {
         + 'var d=ev.data;if(!d||typeof d!=="object")return;'
         + 'if(d.gcType==="media")renderVideo(d.media);'
         + 'else if(d.gcType==="imagem")renderImage(d.item);'
+        + 'else if(d.gcType==="localvideo")renderLocalVideo(d.item);'
         + 'else if(d.gcType==="texto")renderText(d.text);'
         + 'else if(d.gcType==="blank")renderBlank();'
         + 'tryFullscreen();'
@@ -2657,6 +2690,7 @@ async function sendToScreenObj(scr, kind, payload) {
     const msg = kind === 'media'
       ? { gcType:'media', media: (payload && typeof payload === 'object') ? payload : { url: payload } }
       : kind === 'imagem' ? { gcType:'imagem', item: payload || {} }
+      : kind === 'localvideo' ? { gcType:'localvideo', item: payload || {} }
       : kind === 'texto' ? { gcType:'texto', text: payload || '' }
       : { gcType:'blank' };
     const post = () => { try { win.postMessage(msg, '*'); } catch(e) {} };
@@ -3843,6 +3877,115 @@ function TelasView({ churchId }) {
           </div>
         `}
       `}
+    </div>
+  `;
+}
+
+// Aba "Mensagem": lugar pra carregar do pendrive, na hora da pregação, as fotos e vídeos que vão
+// ser usados e projetar em tela cheia com um toque. De propósito NÃO fica salvo entre recarregamentos
+// (fotos/vídeos de pendrive mudam toda semana e vídeo não cabe no armazenamento do navegador) — é
+// pensado pra: chegou a hora da mensagem, conecta o pendrive, carrega os arquivos, usa, e pronto.
+function MensagemView({ churchId }) {
+  const [items, setItems] = useState([]);
+  const [processing, setProcessing] = useState(false);
+  const fileRef = useRef(null);
+
+  const handleFiles = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setProcessing(true);
+    try {
+      const added = [];
+      for (const file of files) {
+        try {
+          if (file.type.startsWith('image/')) {
+            const dataUrl = await readImageFileSmart(file);
+            added.push({ id:'msg-'+Date.now()+Math.random().toString(36).slice(2,6), type:'imagem', title: file.name.replace(/\.[^.]+$/,''), dataUrl });
+          } else if (file.type.startsWith('video/')) {
+            const url = URL.createObjectURL(file);
+            added.push({ id:'msg-'+Date.now()+Math.random().toString(36).slice(2,6), type:'video', title: file.name.replace(/\.[^.]+$/,''), url, file });
+          } else if (/\.(ppt|pptx)$/i.test(file.name)) {
+            added.push({ id:'msg-'+Date.now()+Math.random().toString(36).slice(2,6), type:'aviso_ppt', title: file.name });
+          }
+        } catch (e) { /* pula esse arquivo se der erro */ }
+      }
+      if (added.length) setItems(list => [...list, ...added]);
+    } finally {
+      setProcessing(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const remove = (id) => {
+    setItems(list => {
+      const it = list.find(i => i.id === id);
+      if (it && it.url) { try { URL.revokeObjectURL(it.url); } catch (e) {} }
+      return list.filter(i => i.id !== id);
+    });
+  };
+  const clearAll = () => {
+    if (!confirm('Limpar todos os arquivos carregados desta sessão? Isso não apaga nada do pendrive/computador, só tira daqui.')) return;
+    items.forEach(it => { if (it.url) { try { URL.revokeObjectURL(it.url); } catch (e) {} } });
+    setItems([]);
+  };
+
+  return html`
+    <div style=${{maxWidth:'760px', margin:'0 auto', padding:'20px 16px 60px', display:'grid', gap:'14px'}}>
+      <div class="glass fade-up" style=${{padding:'14px 16px', borderRadius:'14px'}}>
+        <div style=${{fontWeight:800, fontSize:'13px', color:'var(--text-hi)', marginBottom:'4px'}}>🎤 Projeção da Mensagem</div>
+        <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Conecte o pendrive, escolha as fotos e vídeos da pregação e projete em tela cheia com um toque. Os arquivos ficam só nesta sessão do navegador — ao fechar ou recarregar a página, é preciso carregar de novo (é assim de propósito, pra sempre usar o pendrive certo do dia).</div>
+      </div>
+
+      <div class="glass fade-up" style=${{padding:'12px 14px', borderRadius:'12px', fontSize:'11px', color:'var(--text-dim)'}}>
+        <b style=${{color:'var(--text-mid)'}}>PowerPoint:</b> exporte os slides como imagens antes de carregar aqui — no PowerPoint vá em <b>Arquivo → Exportar → Mudar o Tipo de Arquivo → Imagem JPEG</b> e escolha "Todos os Slides". Depois é só carregar essas imagens aqui embaixo, na ordem, do mesmo jeito que fotos. Isso garante que cada slide apareça em tela exatamente igual ao que você preparou.
+      </div>
+
+      <label class="glass fade-up" style=${{padding:'20px', borderRadius:'16px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'8px', border:'1.5px dashed var(--border-soft)', cursor:'pointer', textAlign:'center'}}>
+        <div style=${{fontSize:'26px'}}>📁</div>
+        <div style=${{fontSize:'12.5px', fontWeight:700}}>${processing ? 'Processando...' : 'Toque para escolher fotos e vídeos do pendrive'}</div>
+        <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>JPG, PNG, WEBP, MP4, MOV — pode escolher vários de uma vez</div>
+        <input ref=${fileRef} type="file" accept="image/*,video/*,.ppt,.pptx" multiple disabled=${processing} onChange=${e=>handleFiles(e.target.files)} style=${{display:'none'}} />
+      </label>
+
+      ${items.length > 0 && html`
+        <button type="button" onClick=${clearAll} style=${{...btnGhost, width:'100%', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🧹 Limpar Tudo</button>
+      `}
+
+      ${items.length === 0 && !processing && html`<div class="glass fade-up" style=${{padding:'22px', borderRadius:'16px', textAlign:'center', color:'var(--text-dim)', fontSize:'12.5px'}}>Nenhum arquivo carregado ainda nesta sessão.</div>`}
+
+      <div style=${{display:'grid', gap:'12px'}}>
+        ${items.map((it,i) => html`
+          <div key=${it.id} class="glass fade-up" style=${{padding:'14px', borderRadius:'16px', display:'grid', gap:'10px', animationDelay:(i*0.03)+'s'}}>
+            ${it.type === 'aviso_ppt' ? html`
+              <div style=${{display:'flex', gap:'10px', alignItems:'center'}}>
+                <div style=${{fontSize:'28px'}}>📊</div>
+                <div>
+                  <div style=${{fontWeight:700, fontSize:'12.5px'}}>${it.title}</div>
+                  <div style=${{fontSize:'10.5px', color:'var(--highlight)'}}>Esse arquivo .pptx sozinho não dá pra projetar direto — exporte os slides como imagem JPG (veja a dica ali em cima) e carregue as imagens aqui.</div>
+                </div>
+              </div>
+              <div style=${{display:'flex', justifyContent:'flex-end'}}>
+                <button type="button" onClick=${()=>remove(it.id)} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🗑️ Remover</button>
+              </div>
+            ` : html`
+              <div style=${{display:'flex', gap:'12px', alignItems:'flex-start'}}>
+                ${it.type === 'imagem'
+                  ? html`<img src=${it.dataUrl} style=${{width:'96px', height:'96px', objectFit:'cover', borderRadius:'12px', flexShrink:0, background:'#000'}} />`
+                  : html`<video src=${it.url} muted style=${{width:'96px', height:'96px', objectFit:'cover', borderRadius:'12px', flexShrink:0, background:'#000'}} />`}
+                <div style=${{flex:1, minWidth:0}}>
+                  <div style=${{fontWeight:700, fontSize:'12.5px'}}>${it.type === 'video' ? '🎬 ' : '🖼️ '}${it.title}</div>
+                </div>
+              </div>
+              <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end', flexWrap:'wrap'}}>
+                ${it.type === 'imagem'
+                  ? html`<${ImageProjectButton} churchId=${churchId} item=${it} itemKey=${'msg-'+it.id} />`
+                  : html`<${LocalVideoProjectButton} churchId=${churchId} item=${it} itemKey=${'msg-'+it.id} />`}
+                <button type="button" onClick=${()=>remove(it.id)} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🗑️ Remover</button>
+              </div>
+            `}
+          </div>
+        `)}
+      </div>
     </div>
   `;
 }
@@ -5927,6 +6070,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'musicas' ? html`<${MusicasView} key="musicas" churchId=${church.id} />` : ''}
       ${tab === 'gestao' ? html`<${GestaoView} key="gestao" churchId=${church.id} churchName=${church.name} />` : ''}
       ${tab === 'telas' ? html`<${TelasView} key="telas" churchId=${church.id} />` : ''}
+      ${tab === 'mensagem' ? html`<${MensagemView} key="mensagem" churchId=${church.id} />` : ''}
       ${tab === 'buscas' ? html`<${BuscasSemanaisView} key="buscas" churchId=${church.id} />` : ''}
       ${tab === 'ferramentas' ? html`<${FerramentasView} key="ferramentas" churchName=${church.name} churchId=${church.id} />` : ''}
       ${tab === 'sugestoes' ? html`<${SugestoesView} key="sugestoes" church=${church} />` : ''}
