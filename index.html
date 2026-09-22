@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.13';
+const APP_VERSION = '2026-09-21.14';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2596,13 +2596,25 @@ function projectionShellHtml() {
     + '</body></html>';
 }
 
-function sendToScreenObj(scr, kind, payload) {
+async function sendToScreenObj(scr, kind, payload) {
   try {
     const sig = screenSig(scr);
     const features = 'left='+scr.left+',top='+scr.top+',width='+scr.width+',height='+scr.height;
     let win = projectionWindows[sig];
     let isNewWindow = false;
+
+    // Se o navegador suportar (Chrome/Edge), pega o "objeto de tela" detalhado ANTES de abrir a
+    // janela — é ele que permite pedir tela cheia numa tela específica (mesmo a de projeção, sem
+    // mouse/teclado) direto pelo clique do usuário aqui no app principal, sem precisar de nenhum
+    // clique dentro da janela projetada. Isso é o que resolve o "não vai pra tela cheia sozinho".
+    let fsScreen = null;
     if (!win || win.closed) {
+      try {
+        if ('getScreenDetails' in window) {
+          const details = await window.getScreenDetails();
+          fsScreen = details.screens.find(s => s.left===scr.left && s.top===scr.top && s.width===scr.width && s.height===scr.height) || null;
+        }
+      } catch(e) {}
       win = window.open('', 'gc_screen_'+sig, features);
       projectionWindows[sig] = win;
       isNewWindow = true;
@@ -2617,11 +2629,16 @@ function sendToScreenObj(scr, kind, payload) {
       win.document.open();
       win.document.write(projectionShellHtml());
       win.document.close();
-      // Pede tela cheia aqui mesmo, ainda dentro do clique do usuário (é isso que o navegador exige
-      // pra permitir tela cheia automática) — sai mais confiável do que só o script de dentro da janela.
+      // Pede tela cheia aqui mesmo, ainda dentro do clique do usuário. Quando o navegador suporta a
+      // API de múltiplas telas (fsScreen preenchido), a tela cheia é pedida JÁ na tela de destino
+      // certa, automaticamente — sem precisar de nenhum clique dentro da janela projetada. Sem essa
+      // API (outro navegador, ou permissão de telas ainda não concedida), cai no botão "Tela Cheia"
+      // que aparece dentro da janela como alternativa manual.
       try {
         const el = win.document.documentElement;
-        if (el && el.requestFullscreen) { el.requestFullscreen().catch(()=>{}); }
+        if (el && el.requestFullscreen) {
+          (fsScreen ? el.requestFullscreen({ screen: fsScreen }) : el.requestFullscreen()).catch(()=>{});
+        }
       } catch(e) {}
     }
 
