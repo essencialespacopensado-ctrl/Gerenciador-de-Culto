@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.9';
+const APP_VERSION = '2026-09-21.10';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2357,6 +2357,29 @@ function projectionAutoScript(withPlayer) {
     + '<\/scr'+'ipt>';
 }
 
+// Quando o vídeo projetado chega ao fim (evento ENDED da API do YouTube), desce o volume aos
+// poucos em vez de cortar seco ou ficar preso no último quadro tocando alto. Só entra em ação no
+// fim natural do vídeo — não interfere em nada enquanto ele está tocando normalmente.
+function videoFadeOutScript() {
+  return '<scr'+'ipt src="https://www.youtube.com/iframe_api"><\/scr'+'ipt>'
+    + '<scr'+'ipt>'
+    + 'var gcYtPlayer=null,gcFading=false;'
+    + 'function gcFadeOutEnd(){'
+      + 'if(gcFading||!gcYtPlayer)return;gcFading=true;'
+      + 'var startVol=100;try{startVol=gcYtPlayer.getVolume();}catch(e){}'
+      + 'var steps=16,n=0;'
+      + 'var iv=setInterval(function(){'
+        + 'n++;var v=Math.max(0,Math.round(startVol*(1-n/steps)));'
+        + 'try{gcYtPlayer.setVolume(v);}catch(e){}'
+        + 'if(n>=steps){clearInterval(iv);try{gcYtPlayer.pauseVideo();}catch(e){}}'
+      + '},110);'
+    + '}'
+    + 'function onYouTubeIframeAPIReady(){'
+      + 'try{gcYtPlayer=new YT.Player("gc-player",{events:{onStateChange:function(e){if(e.data===0)gcFadeOutEnd();}}});}catch(e){}'
+    + '}'
+    + '<\/scr'+'ipt>';
+}
+
 function blankWindowHtml(title, bodyHtml) {
   return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+title+'</title><style>html,body{margin:0;height:100%;background:#000;color:#fff;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;overflow:hidden;}h1{font-size:5vw;text-align:center;padding:0 4vw;}#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;}</style></head><body>'+bodyHtml+'<button id="fs-fallback" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();this.style.display=\'none\';">⛶ Tela Cheia</button>'+projectionAutoScript(false)+'</body></html>';
 }
@@ -2391,7 +2414,7 @@ function videoEmbedHtml(media) {
     ? 'https://www.youtube-nocookie.com/embed/videoseries?list='+media.playlistId+'&'+params
     : null;
   if (!src) return null;
-  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Projeção</title><style>html,body{margin:0;height:100%;background:#000;overflow:hidden;}iframe{position:fixed;inset:0;width:100%;height:100%;border:none;}#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;z-index:10;}</style></head><body><iframe id="gc-player" src="'+src+'" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe><button id="fs-fallback" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();this.style.display=\'none\';">⛶ Tela Cheia</button>'+projectionAutoScript(true)+'</body></html>';
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Projeção</title><style>html,body{margin:0;height:100%;background:#000;overflow:hidden;}iframe{position:fixed;inset:0;width:100%;height:100%;border:none;}#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;z-index:10;}</style></head><body><iframe id="gc-player" src="'+src+'" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe><button id="fs-fallback" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();this.style.display=\'none\';">⛶ Tela Cheia</button>'+videoFadeOutScript()+projectionAutoScript(true)+'</body></html>';
 }
 
 function openMediaInNewTab(media) {
@@ -3540,9 +3563,54 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
     window.open(youtubeSearchUrl(text), '_blank', 'noopener');
   };
 
+  // Ajusta o volume "de verdade" (arquivo ou player do YouTube) sem passar pelo estado — usado
+  // pelo fade, que precisa mudar o volume várias vezes por segundo sem disparar um monte de
+  // re-render nem salvar cada passo intermediário como se fosse o volume escolhido pela pessoa.
+  const applyLiveVolume = (i, v) => {
+    const t = tracks[i];
+    if (!t) return;
+    const vol = Math.max(0, Math.min(100, v));
+    if (t.mode === 'file') {
+      const el = audioRefs[i].current;
+      if (el) el.volume = vol / 100;
+    } else if (t.mode === 'youtube') {
+      const frame = iframeRefs[i].current;
+      if (frame && frame.contentWindow) ytPostCommand(frame.contentWindow, 'setVolume', [vol]);
+    }
+  };
+
+  // Desce o volume de uma faixa que já estava tocando até zero e só então pausa — em vez de cortar
+  // o áudio seco quando outra faixa toma a prioridade. No fim, devolve o volume real pro valor
+  // configurado (a faixa fica pausada, mas pronta pra voltar no volume de sempre da próxima vez).
+  const fadeOutAndPause = (i) => {
+    const t = tracks[i];
+    if (!t || !t.playing) return;
+    const startVol = t.volume;
+    const finish = () => {
+      const cur = tracks[i];
+      if (cur && cur.mode === 'file') { const el = audioRefs[i].current; if (el) el.pause(); }
+      else if (cur && cur.mode === 'youtube') { const frame = iframeRefs[i].current; if (frame && frame.contentWindow) ytPostCommand(frame.contentWindow, 'pauseVideo'); }
+      applyLiveVolume(i, startVol);
+      updateTrack(i, { playing:false });
+    };
+    if (startVol <= 0) { finish(); return; }
+    const steps = 12, stepMs = 90;
+    let n = 0;
+    const iv = setInterval(() => {
+      n++;
+      applyLiveVolume(i, Math.round(startVol * (1 - n/steps)));
+      if (n >= steps) { clearInterval(iv); finish(); }
+    }, stepMs);
+  };
+
+  // Dá prioridade pro áudio que está começando agora: qualquer outra faixa que já esteja tocando
+  // recebe um fade e para, em vez de tocar em cima uma da outra.
+  const duckOthers = (i) => { tracks.forEach((other, idx) => { if (idx !== i && other.playing) fadeOutAndPause(idx); }); };
+
   const pickVideoResult = (i, video) => {
     const audioEl = audioRefs[i].current;
     if (audioEl) { audioEl.pause(); audioEl.removeAttribute('src'); audioEl.load(); }
+    duckOthers(i);
     updateTrack(i, { mode:'youtube', videoId: video.videoId, fileName:'', playing:true, link:'', search:'', results:null, suggestOpen:false });
   };
 
@@ -3551,6 +3619,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
   const onFileChosen = (i, e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
+    duckOthers(i);
     updateTrack(i, { mode:'file', videoId:null });
     const url = URL.createObjectURL(file);
     const el = audioRefs[i].current;
@@ -3569,6 +3638,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
     if (!id) { alert('Não consegui reconhecer esse link do YouTube. Copie o link da barra de endereço do vídeo (não da busca).'); return; }
     const audioEl = audioRefs[i].current;
     if (audioEl) { audioEl.pause(); audioEl.removeAttribute('src'); audioEl.load(); }
+    duckOthers(i);
     updateTrack(i, { mode:'youtube', videoId:id, fileName:'', playing:true, link:'' });
   };
 
@@ -3577,13 +3647,13 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
     if (t.mode === 'file') {
       const el = audioRefs[i].current;
       if (!el || !el.src) { alert('Carregue um arquivo de áudio primeiro.'); return; }
-      if (el.paused) { el.play().catch(()=>{}); updateTrack(i, { playing:true }); }
+      if (el.paused) { duckOthers(i); el.play().catch(()=>{}); updateTrack(i, { playing:true }); }
       else { el.pause(); updateTrack(i, { playing:false }); }
     } else if (t.mode === 'youtube') {
       const frame = iframeRefs[i].current;
       if (!frame) { alert('Cole um link do YouTube primeiro.'); return; }
       if (t.playing) { ytPostCommand(frame.contentWindow, 'pauseVideo'); updateTrack(i, { playing:false }); }
-      else { ytPostCommand(frame.contentWindow, 'playVideo'); updateTrack(i, { playing:true }); }
+      else { duckOthers(i); ytPostCommand(frame.contentWindow, 'playVideo'); updateTrack(i, { playing:true }); }
     } else {
       alert('Carregue um arquivo de áudio ou cole um link do YouTube primeiro.');
     }
@@ -3730,6 +3800,30 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
           </div>
         </div>
       `)}
+    </div>
+  `;
+}
+
+// Mixer flutuante, visível em qualquer aba (não só na Liturgia) — fica montado uma única vez no
+// painel da igreja inteiro, então o áudio continua tocando normalmente mesmo trocando de aba.
+// Um botãozinho fixo no canto abre/fecha o painel completo por cima da tela atual.
+function GlobalMixerWidget({ churchId, church, onUpdateChurch }) {
+  const [open, setOpen] = useState(false);
+  const isMobile = useIsMobile();
+  return html`
+    <div style=${{position:'fixed', right: isMobile ? '12px' : '20px', bottom: 'calc(14px + env(safe-area-inset-bottom,0px))', zIndex:150, display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'10px'}}>
+      ${open && html`
+        <div class="glass fade-up" style=${{width: isMobile ? 'min(92vw, 380px)' : '420px', maxHeight:'min(70vh, 560px)', overflowY:'auto', padding:'14px', borderRadius:'18px', boxShadow:'0 20px 50px -14px rgba(0,0,0,0.55)'}}>
+          <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px'}}>
+            <div style=${{fontSize:'11px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em'}}>🎚️ Fundos Musicais</div>
+            <button onClick=${()=>setOpen(false)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'16px', padding:'2px 6px'}}>✕</button>
+          </div>
+          <${BackgroundAudioMixer} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} />
+        </div>
+      `}
+      <button onClick=${()=>setOpen(v=>!v)} title="Mixer de volume" style=${{width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color:'#fff', background:'linear-gradient(150deg,var(--accent-1),var(--accent-2))', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
+        ${open ? '✕' : '🎚️'}
+      </button>
     </div>
   `;
 }
@@ -3954,8 +4048,10 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch }) {
       </button>
       ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
 
-      <div style=${{fontSize:'10.5px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:'6px'}}>🎚️ Fundos Musicais</div>
-      <${BackgroundAudioMixer} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} />
+      <div class="glass fade-up" style=${{padding:'12px 14px', borderRadius:'14px', marginBottom:'20px', display:'flex', alignItems:'center', gap:'10px', fontSize:'11.5px', color:'var(--text-mid)'}}>
+        <span style=${{fontSize:'18px'}}>🎚️</span>
+        <span>Os fundos musicais agora têm um mixer flutuante — aparece em qualquer aba, no botão do canto da tela. O áudio continua tocando mesmo trocando de aba.</span>
+      </div>
 
       <button onClick=${()=>setAssistantOpen(true)} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1.5px dashed var(--accent-1)', color:'var(--accent-1)', fontWeight:700}}>🤖 Assistente de Liturgia (colar texto)</button>
       <div style=${{display:'grid', gridTemplateColumns:'1fr auto', gap:'8px', marginBottom:'8px'}}>
@@ -5352,6 +5448,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'ferramentas' ? html`<${FerramentasView} key="ferramentas" churchName=${church.name} churchId=${church.id} />` : ''}
       ${tab === 'sugestoes' ? html`<${SugestoesView} key="sugestoes" church=${church} />` : ''}
       ${tab === 'config' ? html`<${ConfiguracoesView} key="config" church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
+      <${GlobalMixerWidget} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />
     </div>
   `;
 }
