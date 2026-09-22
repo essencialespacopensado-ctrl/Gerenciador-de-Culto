@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.11';
+const APP_VERSION = '2026-09-21.12';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1523,12 +1523,11 @@ const MEDIA_LIBRARY = [
   { title:'Grande é o Senhor', query:'grande e o senhor playback adventista' },
   { title:'Águas Purificadoras', query:'aguas purificadoras playback adventista' },
   { title:'Provai e Vede - Vídeo Oficial', query:'provai e vede adventista video oficial', dynamic:true, directUrl:'https://www.youtube.com/@provaievedeoficial', playlistId:'UUR5me469JF9P-ZkOG3TkPmg' },
-  // Trocado do canal @daniellocutor (vídeo às vezes vinha com o áudio original, não em português)
-  // pro canal oficial "Adventistas Brasil" (@adventistasbrasil, Divisão Sul-Americana), que também
-  // publica o Informativo Mundial das Missões em português. Como é o canal geral da igreja (não só
-  // desse programa), o upload mais recente pode não ser sempre o vídeo da semana — vale conferir
-  // na aba "Buscas Semanais" antes de projetar.
-  { title:'Informativo Mundial das Missões', query:'informativo mundial das missoes adventista', dynamic:true, directUrl:'https://www.youtube.com/@adventistasbrasil', playlistId:'UUJAO3KgZdEhCqwpkZyAYY6A' },
+  // Canal confirmado pelo Paulo: Daniel Locutor. Se algum vídeo específico vier com o áudio num
+  // idioma diferente do português, normalmente é porque aquele vídeo tem mais de uma faixa de áudio
+  // e o YouTube carregou a faixa "original" por padrão — o player mostra os controles (⚙️ engrenagem
+  // no canto do vídeo), então dá pra trocar a faixa de áudio ali na hora, se precisar.
+  { title:'Informativo Mundial das Missões', query:'informativo mundial das missoes adventista', dynamic:true, directUrl:'https://www.youtube.com/@daniellocutor', playlistId:'UUZrVZOwtnvVIdsZnDpVb7jw' },
   // Antes sem canal nenhum configurado (por isso "Projetar"/"Play" abriam uma busca em vez do
   // vídeo). Agora aponta pro canal oficial do programa na TV Novo Tempo.
   { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video', dynamic:true, directUrl:'https://www.youtube.com/@VidaeSaudeNT', playlistId:'UUpOKqTChGaGw-Oj53kk4jsg' },
@@ -2527,56 +2526,115 @@ function openImageInNewTab(item) {
   }
 }
 
+// Página "casca" da janela de projeção: montada UMA vez só, quando a janela é aberta pela primeira
+// vez. Cada vídeo/imagem/texto novo chega depois disso por postMessage, trocando só o conteúdo de
+// dentro dela — sem nunca escrever a página de novo. Isso é o que resolve o pedido de tela cheia e
+// reprodução automática: antes, cada "Projetar" reescrevia a janela inteira (document.write), o que
+// por regra de segurança do navegador SEMPRE derrubava a tela cheia e exigia um novo toque; agora,
+// a tela cheia (pedida uma vez, no primeiro toque) e a permissão de tocar som automaticamente
+// (concedida pelo navegador depois desse primeiro toque nesta janela) continuam valendo pros
+// próximos vídeos, porque a janela nunca é recriada.
+function projectionShellHtml() {
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Projeção</title><style>'
+    + 'html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#fff;font-family:-apple-system,sans-serif;}'
+    + '#gc-stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;}'
+    + '#gc-stage iframe{position:fixed;inset:0;width:100%;height:100%;border:none;}'
+    + '#gc-stage img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;}'
+    + '#gc-stage h1{font-size:5vw;text-align:center;padding:0 4vw;}'
+    + '#fs-fallback{position:fixed;bottom:16px;right:16px;padding:10px 16px;border-radius:10px;background:#1e293b;color:#fff;border:1px solid #475569;font-size:14px;cursor:pointer;z-index:10;}'
+    + '</style></head><body>'
+    + '<div id="gc-stage"></div>'
+    + '<button id="fs-fallback">⛶ Tela Cheia</button>'
+    + '<scr'+'ipt>(function(){'
+      + 'var stage=document.getElementById("gc-stage");'
+      + 'var fsBtn=document.getElementById("fs-fallback");'
+      + 'var ytPlayer=null,fading=false;'
+      + 'function tryFullscreen(){'
+        + 'try{'
+          + 'if(document.fullscreenElement){fsBtn.style.display="none";return;}'
+          + 'if(document.documentElement.requestFullscreen){document.documentElement.requestFullscreen().then(function(){fsBtn.style.display="none";}).catch(function(){});}'
+        + '}catch(e){}'
+      + '}'
+      + 'fsBtn.onclick=tryFullscreen;'
+      + 'function renderBlank(){stage.innerHTML="";}'
+      + 'function renderText(text){stage.innerHTML="";var h=document.createElement("h1");h.textContent=text||"";stage.appendChild(h);}'
+      + 'function renderImage(item){stage.innerHTML="";var img=document.createElement("img");img.src=(item&&item.dataUrl)||"";img.alt=(item&&item.title)||"";stage.appendChild(img);}'
+      + 'function bindYt(){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onStateChange:function(e){if(e.data===0)fadeOutEnd();}}});}catch(e){}}}'
+      + 'function fadeOutEnd(){'
+        + 'if(fading||!ytPlayer)return;fading=true;'
+        + 'var startVol=100;try{startVol=ytPlayer.getVolume();}catch(e){}'
+        + 'var steps=16,n=0;'
+        + 'var iv=setInterval(function(){'
+          + 'n++;var v=Math.max(0,Math.round(startVol*(1-n/steps)));'
+          + 'try{ytPlayer.setVolume(v);}catch(e){}'
+          + 'if(n>=steps){clearInterval(iv);try{ytPlayer.pauseVideo();}catch(e){}}'
+        + '},110);'
+      + '}'
+      + 'function renderVideo(media){'
+        + 'stage.innerHTML="";fading=false;ytPlayer=null;'
+        + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1&mute=0";'
+        + 'var src=media&&media.videoId?("https://www.youtube-nocookie.com/embed/"+media.videoId+"?"+params)'
+          + ':media&&media.playlistId?("https://www.youtube-nocookie.com/embed/videoseries?list="+media.playlistId+"&"+params):null;'
+        + 'if(!src){if(media&&media.url)window.location.href=media.url;return;}'
+        + 'var iframe=document.createElement("iframe");iframe.id="gc-player";iframe.src=src;'
+        + 'iframe.allow="autoplay; encrypted-media; fullscreen";iframe.allowFullscreen=true;'
+        + 'stage.appendChild(iframe);bindYt();'
+      + '}'
+      + 'window.onYouTubeIframeAPIReady=function(){if(document.getElementById("gc-player"))bindYt();};'
+      + 'var ytScript=document.createElement("scr"+"ipt");ytScript.src="https://www.youtube.com/iframe_api";document.head.appendChild(ytScript);'
+      + 'window.addEventListener("message",function(ev){'
+        + 'var d=ev.data;if(!d||typeof d!=="object")return;'
+        + 'if(d.gcType==="media")renderVideo(d.media);'
+        + 'else if(d.gcType==="imagem")renderImage(d.item);'
+        + 'else if(d.gcType==="texto")renderText(d.text);'
+        + 'else if(d.gcType==="blank")renderBlank();'
+        + 'tryFullscreen();'
+      + '});'
+      + 'tryFullscreen();'
+      + 'document.addEventListener("click",tryFullscreen);'
+      + 'document.addEventListener("touchend",tryFullscreen);'
+    + '})();<\/scr'+'ipt>'
+    + '</body></html>';
+}
+
 function sendToScreenObj(scr, kind, payload) {
   try {
     const sig = screenSig(scr);
     const features = 'left='+scr.left+',top='+scr.top+',width='+scr.width+',height='+scr.height;
     let win = projectionWindows[sig];
+    let isNewWindow = false;
     if (!win || win.closed) {
       win = window.open('', 'gc_screen_'+sig, features);
       projectionWindows[sig] = win;
+      isNewWindow = true;
     } else {
       try { win.moveTo(scr.left, scr.top); win.resizeTo(scr.width, scr.height); } catch(e) {}
     }
     if (!win) { alert('Erro: o navegador bloqueou a abertura da janela de projeção. Vá nas configurações do navegador e permita pop-ups pra este site (só precisa autorizar uma vez).'); return; }
 
-    if (kind === 'media') {
-      const media = (payload && typeof payload === 'object') ? payload : { url: payload };
-      const embedHtml = videoEmbedHtml(media);
-      if (embedHtml) {
-        win.document.open();
-        win.document.write(embedHtml);
-        win.document.close();
-        // Pede tela cheia aqui mesmo, ainda dentro do clique do usuário (é isso que o navegador exige
-        // pra permitir tela cheia automática) — sai mais confiável do que só o script de dentro da janela.
-        try {
-          const el = win.document.documentElement;
-          if (el && el.requestFullscreen) { el.requestFullscreen().catch(()=>{}); }
-        } catch(e) {}
-      } else if (media.url) {
-        win.location.href = media.url;
-      } else {
-        alert('Erro: esse item não tem vídeo nem link válido pra projetar.');
-        return;
-      }
-    } else if (kind === 'imagem') {
+    if (isNewWindow) {
+      // Só escreve a página inteira UMA vez, na primeira abertura desta tela — as próximas trocas
+      // de conteúdo (mesmo de outra atividade, minutos depois) reaproveitam essa mesma janela.
       win.document.open();
-      win.document.write(imageEmbedHtml(payload || {}));
+      win.document.write(projectionShellHtml());
       win.document.close();
-      // Mesma lógica do vídeo: pede tela cheia aqui, ainda dentro do clique original do usuário.
+      // Pede tela cheia aqui mesmo, ainda dentro do clique do usuário (é isso que o navegador exige
+      // pra permitir tela cheia automática) — sai mais confiável do que só o script de dentro da janela.
       try {
         const el = win.document.documentElement;
         if (el && el.requestFullscreen) { el.requestFullscreen().catch(()=>{}); }
       } catch(e) {}
-    } else if (kind === 'texto') {
-      win.document.open();
-      win.document.write(blankWindowHtml('Transmissão', '<h1>'+(payload || '').replace(/</g,'&lt;')+'</h1>'));
-      win.document.close();
-    } else {
-      win.document.open();
-      win.document.write(blankWindowHtml('Tela Preta', ''));
-      win.document.close();
     }
+
+    const msg = kind === 'media'
+      ? { gcType:'media', media: (payload && typeof payload === 'object') ? payload : { url: payload } }
+      : kind === 'imagem' ? { gcType:'imagem', item: payload || {} }
+      : kind === 'texto' ? { gcType:'texto', text: payload || '' }
+      : { gcType:'blank' };
+    const post = () => { try { win.postMessage(msg, '*'); } catch(e) {} };
+    // Numa janela recém-criada, dá um tiquinho pro script da página terminar de registrar o "ouvinte"
+    // de mensagens antes de mandar o conteúdo; numa janela já aberta, manda na hora.
+    if (isNewWindow) { setTimeout(post, 60); } else { post(); }
     win.focus();
   } catch (e) {
     alert('Erro ao enviar para a tela: ' + (e && e.message ? e.message : String(e)));
@@ -3302,7 +3360,7 @@ function YoutubeQuickSearch({ churchId }) {
 function BuscasSemanaisView({ churchId }) {
   const items = [
     { key:'provai', title:'Provai e Vede - Vídeo Oficial', sub:'Canal oficial: @provaievedeoficial' },
-    { key:'informativo', title:'Informativo Mundial das Missões', sub:'Canal: Adventistas Brasil (@adventistasbrasil) — confira se é o vídeo certo da semana antes de projetar' },
+    { key:'informativo', title:'Informativo Mundial das Missões', sub:'Canal: Daniel Locutor (@daniellocutor)' },
     { key:'saude', title:'Momento Vida e Saúde', sub:'Canal oficial: Vida e Saúde NT (@VidaeSaudeNT)' },
   ];
   const mediaFor = (key) => {
