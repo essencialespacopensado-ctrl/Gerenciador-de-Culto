@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-21.16';
+const APP_VERSION = '2026-09-22.17';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2558,7 +2558,7 @@ function projectionShellHtml() {
       + '}'
       + 'fsBtn.onclick=tryFullscreen;'
       + 'function renderBlank(){stage.innerHTML="";}'
-      + 'function renderText(text){stage.innerHTML="";var h=document.createElement("h1");h.textContent=text||"";stage.appendChild(h);}'
+      + 'function renderText(text){stage.innerHTML="";var h=document.createElement("h1");h.textContent=text||"";h.style.whiteSpace="pre-line";h.style.lineHeight="1.35";h.style.fontSize="clamp(28px, 4.6vw, 74px)";stage.appendChild(h);}'
       + 'function renderImage(item){stage.innerHTML="";var img=document.createElement("img");img.src=(item&&item.dataUrl)||"";img.alt=(item&&item.title)||"";stage.appendChild(img);}'
       + 'function bindYt(){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onStateChange:function(e){if(e.data===0)fadeOutEnd();}}});}catch(e){}}}'
       + 'function fadeOutEnd(){'
@@ -3088,6 +3088,146 @@ function loadColetaneasLinks(churchId) {
 }
 function saveColetaneasLinks(churchId, map) { try { localStorage.setItem('gc_coletaneas_links_'+churchId, JSON.stringify(map)); } catch(e) {} }
 
+// Faixas (músicas) de cada coletânea — igual à ideia do "abrir o CD e ver as músicas dele", só que do
+// jeitinho do Gerenciador: cada faixa pode ter vídeo vinculado e letra, guardado por coletânea (chave =
+// id da coletânea, seed ou personalizada) e por igreja, pra cada uma montar seu próprio repertório.
+function coletaneaTracksKey(churchId) { return 'gc_coletanea_tracks_' + churchId; }
+function loadColetaneaTracksAll(churchId) {
+  try { const raw = localStorage.getItem(coletaneaTracksKey(churchId)); if (raw) return JSON.parse(raw); } catch(e) {}
+  return {};
+}
+function saveColetaneaTracksAll(churchId, map) { try { localStorage.setItem(coletaneaTracksKey(churchId), JSON.stringify(map)); } catch(e) {} }
+
+// Quebra a letra em estrofes (parágrafos separados por linha em branco), pra poder projetar uma de
+// cada vez — igual a como qualquer sonoplastia de culto avança a letra aos poucos, em vez de jogar a
+// música inteira de uma vez na tela.
+function splitLyricsIntoStanzas(text) {
+  return String(text || '').split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+}
+
+// Navegador de estrofes: mostra a estrofe atual, deixa ir pra próxima/anterior e projetar só ela.
+function LetraProjectorPanel({ churchId, lyrics, itemKey }) {
+  const stanzas = splitLyricsIntoStanzas(lyrics);
+  const [idx, setIdx] = useState(0);
+  useEffect(() => { setIdx(0); }, [lyrics]);
+  if (stanzas.length === 0) return '';
+  const current = stanzas[Math.min(idx, stanzas.length - 1)];
+
+  const project = () => {
+    try {
+      const enabled = loadEnabledScreens(churchId);
+      if (enabled.length === 0) { alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.'); return; }
+      pickTargetScreens(churchId, itemKey, enabled).forEach(scr => sendToScreenObj(scr, 'texto', current));
+    } catch (e) { alert('Erro ao projetar: ' + (e && e.message ? e.message : e)); }
+  };
+
+  return html`
+    <div style=${{display:'grid', gap:'6px', padding:'10px', borderRadius:'10px', background:'rgba(99,102,241,0.08)', border:'1px solid var(--border-soft)'}}>
+      <div style=${{fontSize:'11.5px', color:'var(--text-mid)', whiteSpace:'pre-line', lineHeight:1.4, maxHeight:'110px', overflowY:'auto'}}>${current}</div>
+      <div style=${{display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>
+        <button type="button" onClick=${()=>setIdx(i=>Math.max(0,i-1))} disabled=${idx===0} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px', opacity: idx===0?0.4:1}}>◀</button>
+        <span style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Estrofe ${idx+1}/${stanzas.length}</span>
+        <button type="button" onClick=${()=>setIdx(i=>Math.min(stanzas.length-1,i+1))} disabled=${idx===stanzas.length-1} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px', opacity: idx===stanzas.length-1?0.4:1}}>▶</button>
+        <button type="button" onClick=${project} style=${{...btnPrimary, width:'auto', padding:'6px 12px', fontSize:'10.5px'}}>📽️ Projetar Esta Estrofe</button>
+        ${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`}
+      </div>
+    </div>
+  `;
+}
+
+// Uma faixa dentro de uma coletânea: título, duração, vídeo (busca/vincula/projeta) e letra
+// (escreve/edita/projeta estrofe por estrofe).
+function ColetaneaTrackRow({ churchId, coletaneaId, track, onChange, onRemove }) {
+  const [editingLyrics, setEditingLyrics] = useState(false);
+  const [lyricsDraft, setLyricsDraft] = useState(track.lyrics || '');
+  const [linkingVideo, setLinkingVideo] = useState(false);
+  const media = track.media || null;
+  const trackKey = 'colet-faixa-' + coletaneaId + '-' + track.id;
+
+  const setTitle = (title) => onChange({ ...track, title });
+  const setDuration = (duration) => onChange({ ...track, duration });
+  const setMedia = (media) => onChange({ ...track, media });
+  const saveLyrics = () => { onChange({ ...track, lyrics: lyricsDraft.trim() }); setEditingLyrics(false); };
+
+  return html`
+    <div class="glass fade-up" style=${{padding:'12px', borderRadius:'12px', display:'grid', gap:'8px', border:'1px solid var(--border-soft)'}}>
+      <div style=${{display:'flex', alignItems:'center', gap:'8px'}}>
+        <input value=${track.title} onChange=${e=>setTitle(e.target.value)} placeholder="Nome da faixa" style=${{...inputStyle, fontSize:'12.5px', fontWeight:700, flex:1}} />
+        <input value=${track.duration||''} onChange=${e=>setDuration(e.target.value)} placeholder="0:00" style=${{...inputStyle, fontSize:'11.5px', width:'56px', textAlign:'center'}} />
+        <button type="button" onClick=${onRemove} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'14px'}}>✕</button>
+      </div>
+
+      <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+        ${linkingVideo
+          ? html`<${ColetaneaLinkForm} onLink=${(vid)=>{setMedia({ title: track.title, url:'https://www.youtube.com/watch?v='+vid, videoId: vid }); setLinkingVideo(false);}} onCancel=${()=>setLinkingVideo(false)} />`
+          : media
+          ? html`
+            <a href=${media.url} target="_blank" rel="noopener" style=${{...btnGhost, textDecoration:'none', padding:'5px 9px', fontSize:'10.5px'}}>▶ Abrir</a>
+            <${ProjectButton} churchId=${churchId} media=${media} itemKey=${trackKey} />
+            <button type="button" onClick=${()=>setLinkingVideo(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>🔗 Trocar</button>
+            <button type="button" onClick=${()=>setMedia(null)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>✕ Vídeo</button>
+          `
+          : html`
+            <a href=${youtubeSearchUrl(track.title+' playback')} target="_blank" rel="noopener" style=${{...btnGhost, textDecoration:'none', padding:'5px 9px', fontSize:'10.5px'}}>🔎 Buscar Vídeo</a>
+            <button type="button" onClick=${()=>setLinkingVideo(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>🔗 Vincular Vídeo</button>
+          `}
+      </div>
+
+      ${editingLyrics
+        ? html`
+          <div style=${{display:'grid', gap:'6px'}}>
+            <textarea value=${lyricsDraft} onChange=${e=>setLyricsDraft(e.target.value)} placeholder="Cole a letra aqui. Deixe uma linha em branco entre as estrofes pra poder projetar uma de cada vez." rows="6" style=${{...inputStyle, fontSize:'11.5px', fontFamily:'inherit', resize:'vertical'}} />
+            <div style=${{display:'flex', gap:'6px'}}>
+              <button type="button" onClick=${saveLyrics} style=${{...btnPrimary, width:'auto', padding:'6px 12px', fontSize:'10.5px'}}>💾 Salvar Letra</button>
+              <button type="button" onClick=${()=>{setLyricsDraft(track.lyrics||''); setEditingLyrics(false);}} style=${{...btnGhost, padding:'6px 12px', fontSize:'10.5px'}}>Cancelar</button>
+            </div>
+          </div>
+        `
+        : track.lyrics
+        ? html`
+          <div style=${{display:'grid', gap:'6px'}}>
+            <${LetraProjectorPanel} churchId=${churchId} lyrics=${track.lyrics} itemKey=${trackKey} />
+            <button type="button" onClick=${()=>setEditingLyrics(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px', justifySelf:'start'}}>✏️ Editar Letra</button>
+          </div>
+        `
+        : html`<button type="button" onClick=${()=>setEditingLyrics(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px', justifySelf:'start'}}>📝 Adicionar Letra</button>`}
+    </div>
+  `;
+}
+
+// Painel com as faixas de uma coletânea — aparece ao clicar em "🎵 Faixas" no card. Cada igreja monta
+// as músicas do CD do jeito que for tocar (não precisa ser o CD inteiro, só o que interessa).
+function ColetaneaTracksPanel({ churchId, coletanea, onClose }) {
+  const [allTracks, setAllTracks] = useState(() => loadColetaneaTracksAll(churchId));
+  const tracks = allTracks[coletanea.id] || [];
+
+  const persist = (next) => {
+    setAllTracks(map => {
+      const updated = { ...map, [coletanea.id]: next };
+      saveColetaneaTracksAll(churchId, updated);
+      return updated;
+    });
+  };
+
+  const addTrack = () => persist([...tracks, { id:'trk-'+Date.now(), title:'Nova faixa', duration:'', media:null, lyrics:'' }]);
+  const updateTrack = (id, next) => persist(tracks.map(t => t.id === id ? next : t));
+  const removeTrack = (id) => persist(tracks.filter(t => t.id !== id));
+
+  return html`
+    <div class="glass fade-up" style=${{borderRadius:'16px', padding:'14px', display:'grid', gap:'10px'}}>
+      <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+        <div style=${{fontWeight:800, fontSize:'13px'}}>🎵 Faixas — ${coletanea.title}${coletanea.year ? ' ('+coletanea.year+')' : ''}</div>
+        <button type="button" onClick=${onClose} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}}>✕ Fechar</button>
+      </div>
+      <div style=${{display:'grid', gap:'8px'}}>
+        ${tracks.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhuma faixa cadastrada ainda. Toca em "+ Adicionar Faixa" pra montar as músicas dessa coletânea.</div>`}
+        ${tracks.map(t => html`<${ColetaneaTrackRow} key=${t.id} churchId=${churchId} coletaneaId=${coletanea.id} track=${t} onChange=${(next)=>updateTrack(t.id, next)} onRemove=${()=>removeTrack(t.id)} />`)}
+      </div>
+      <button type="button" onClick=${addTrack} style=${{...btnGhost, justifySelf:'start', padding:'8px 14px', fontSize:'11.5px', border:'1.5px dashed var(--accent-1)', color:'var(--accent-1)', fontWeight:700}}>+ Adicionar Faixa</button>
+    </div>
+  `;
+}
+
 function ColetaneaLinkForm({ onLink, onCancel }) {
   const [link, setLink] = useState('');
   const confirm = (e) => {
@@ -3115,6 +3255,12 @@ function ColetaneasCategoryGrid({ churchId, category }) {
   const [newCat, setNewCat] = useState(COLETANEAS_CATEGORIES[0]);
   const [links, setLinks] = useState(() => loadColetaneasLinks(churchId));
   const [linkingId, setLinkingId] = useState(null);
+  const [tracksOpenId, setTracksOpenId] = useState(null);
+  const [tracksCounts, setTracksCounts] = useState(() => {
+    const map = loadColetaneaTracksAll(churchId);
+    const counts = {}; Object.keys(map).forEach(k => counts[k] = (map[k]||[]).length);
+    return counts;
+  });
 
   useEffect(() => saveColetaneasCustom(churchId, custom), [custom, churchId]);
   useEffect(() => saveColetaneasLinks(churchId, links), [links, churchId]);
@@ -3163,6 +3309,7 @@ function ColetaneasCategoryGrid({ churchId, category }) {
               ${c.year && html`<div style=${{fontSize:'11px', opacity:0.85, marginTop:'2px'}}>${c.year}</div>`}
               ${isTodas && html`<div style=${{fontSize:'9.5px', opacity:0.7, marginTop:'2px'}}>${c.category}</div>`}
             </div>
+            <button onClick=${()=>setTracksOpenId(id => id===c.id ? null : c.id)} style=${{fontSize:'10.5px', fontWeight:700, color:'#fff', background: tracksOpenId===c.id ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.2)', border:'none', padding:'4px 8px', borderRadius:'7px', textAlign:'left'}}>🎵 Faixas${tracksCounts[c.id] ? ' ('+tracksCounts[c.id]+')' : ''}</button>
             ${linkingId === c.id
               ? html`<${ColetaneaLinkForm} onLink=${(vid)=>setLink(c.id, vid)} onCancel=${()=>setLinkingId(null)} />`
               : media
@@ -3188,6 +3335,20 @@ function ColetaneasCategoryGrid({ churchId, category }) {
           </div>
         `;})}
       </div>
+      ${tracksOpenId && html`
+        <div style=${{marginTop:'12px'}}>
+          <${ColetaneaTracksPanel}
+            churchId=${churchId}
+            coletanea=${all.find(c => c.id === tracksOpenId)}
+            onClose=${()=>{
+              setTracksOpenId(null);
+              const map = loadColetaneaTracksAll(churchId);
+              const counts = {}; Object.keys(map).forEach(k => counts[k] = (map[k]||[]).length);
+              setTracksCounts(counts);
+            }}
+          />
+        </div>
+      `}
     </div>
   `;
 }
