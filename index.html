@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.29';
+const APP_VERSION = '2026-09-22.30';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2640,8 +2640,9 @@ function projectionShellHtml() {
     + '#gc-stage h1{font-size:5vw;text-align:center;padding:0 4vw;}'
     // Camada separada, por cima do #gc-stage — pra dar pra projetar um texto (ex: versículo bíblico)
     // com fade suave SEM apagar o que já está sendo projetado embaixo (foto, slide, vídeo).
-    + '#gc-overlay{position:fixed;inset:0;z-index:5;display:flex;align-items:flex-end;justify-content:center;pointer-events:none;padding:6vh 5vw;opacity:0;}'
+    + '#gc-overlay{position:fixed;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;pointer-events:none;padding:6vh 5vw;opacity:0;}'
     + '.gc-overlay-box{max-width:90vw;background:linear-gradient(180deg, rgba(0,0,0,0.1), rgba(0,0,0,0.82));border-radius:18px;padding:2.6vh 4vw;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,0.55);}'
+    + '.gc-overlay-logo{display:block;max-width:16vw;max-height:14vh;margin:0 auto 2vh;object-fit:contain;}'
     + '.gc-overlay-text{font-size:clamp(22px,3.4vw,48px);line-height:1.42;white-space:pre-line;font-weight:600;}'
     + '.gc-overlay-ref{margin-top:1.2vh;font-size:clamp(13px,1.5vw,22px);opacity:0.78;font-weight:700;letter-spacing:0.03em;}'
     // z-index bem alto e "!important" pra garantir que esse botão sempre fique VISÍVEL por cima do
@@ -2678,10 +2679,11 @@ function projectionShellHtml() {
       + 'function clearOverlayTimers(){if(overlayTimer){clearTimeout(overlayTimer);overlayTimer=null;}if(overlayClearTimer){clearTimeout(overlayClearTimer);overlayClearTimer=null;}}'
       + 'function renderOverlayText(item){'
         + 'clearOverlayTimers();'
-        + 'var text=(item&&item.text)||"";var reference=(item&&item.reference)||"";'
+        + 'var text=(item&&item.text)||"";var reference=(item&&item.reference)||"";var logoDataUrl=(item&&item.logoDataUrl)||"";'
         + 'var fadeMs=(item&&item.fadeMs)||800;var holdMs=(item&&item.holdMs)===0?0:((item&&item.holdMs)||8000);'
         + 'overlay.innerHTML="";'
         + 'var box=document.createElement("div");box.className="gc-overlay-box";'
+        + 'if(logoDataUrl){var lg=document.createElement("img");lg.className="gc-overlay-logo";lg.src=logoDataUrl;box.appendChild(lg);}'
         + 'var p=document.createElement("div");p.className="gc-overlay-text";p.textContent=text;box.appendChild(p);'
         + 'if(reference){var r=document.createElement("div");r.className="gc-overlay-ref";r.textContent=reference;box.appendChild(r);}'
         + 'overlay.appendChild(box);'
@@ -2829,7 +2831,7 @@ function closeAllProjectionScreens() {
 // ajustar/colar o texto à mão antes de projetar, do mesmo jeito confiável usado pra letra de música) e
 // projeta como texto animado por cima do que já estiver na tela (foto/slide/vídeo) — não apaga o que já
 // está projetado. Dá pra configurar o tempo de entrada/saída (fade) e quanto tempo fica na tela.
-function BibliaTool({ churchId }) {
+function BibliaTool({ churchId, churchLogo }) {
   const [bookIdx, setBookIdx] = useState(42); // João, o mais comum em pregações
   const [chapter, setChapter] = useState('3');
   const [verse, setVerse] = useState('16');
@@ -2874,7 +2876,7 @@ function BibliaTool({ churchId }) {
       const fadeMs = Math.max(100, Math.round((parseFloat(fadeSec) || 0.8) * 1000));
       const holdMs = holdForever ? 0 : Math.max(500, Math.round((parseFloat(holdSec) || 8) * 1000));
       pickTargetScreens(churchId, 'biblia-overlay', enabled).forEach(scr => {
-        try { sendToScreenObj(scr, 'overlay_texto', { text: text.trim(), reference: reference.trim(), fadeMs, holdMs }); } catch (e) { alert('Erro ao projetar: ' + (e && e.message ? e.message : e)); }
+        try { sendToScreenObj(scr, 'overlay_texto', { text: text.trim(), reference: reference.trim(), fadeMs, holdMs, logoDataUrl: churchLogo || '' }); } catch (e) { alert('Erro ao projetar: ' + (e && e.message ? e.message : e)); }
       });
     } catch (e) {
       alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
@@ -2892,7 +2894,7 @@ function BibliaTool({ churchId }) {
 
   return html`
     <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'10px'}}>
-      <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Escolha o versículo, confira o texto e projete animado — funciona por cima de uma foto, slide ou vídeo que já esteja na tela, sem apagar o que tá lá.</div>
+      <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Escolha o versículo, confira o texto e projete animado — funciona por cima de uma foto, slide ou vídeo que já esteja na tela, sem apagar o que tá lá. O texto aparece centralizado na tela, com a referência (livro e capítulo/versículo) e a logo da igreja (se você cadastrou uma em Config).</div>
 
       <div style=${{display:'grid', gridTemplateColumns:'2fr 1fr 1.4fr', gap:'8px'}}>
         <select value=${bookIdx} onChange=${e=>setBookIdx(Number(e.target.value))} style=${{...inputStyle, fontSize:'12px'}}>
@@ -3780,7 +3782,7 @@ function MomentosLouvorTool({ churchId }) {
   `;
 }
 
-function FerramentasView({ churchName, churchId }) {
+function FerramentasView({ churchName, churchId, churchLogo }) {
   const [selected, setSelected] = useState(null);
   const tools = [
     { key:'biblia', label:'📖 Bíblia Sagrada' },
@@ -3798,7 +3800,7 @@ function FerramentasView({ churchName, churchId }) {
         ${tools.map((t,i) => html`<${TabTile} key=${t.key} text=${t.label} idx=${i} delay=${i} active=${selected===t.key} onClick=${()=>setSelected(s => s===t.key ? null : t.key)} />`)}
       </div>
 
-      ${selected === 'biblia' && html`<${BibliaTool} churchId=${churchId} />`}
+      ${selected === 'biblia' && html`<${BibliaTool} churchId=${churchId} churchLogo=${churchLogo} />`}
       ${selected === 'sorteio' && html`<${NumberDrawTool} churchId=${churchId} />`}
       ${selected === 'relogio' && html`<${RelogioTool} />`}
       ${selected === 'cronometro' && html`<${CronometroTool} />`}
@@ -5564,6 +5566,41 @@ function saveAnuncios(churchId, list) {
 // Lê o arquivo e devolve na melhor qualidade possível: se já for um arquivo leve, mantém do
 // jeito que foi enviado; se for muito grande, redimensiona (mantendo proporção) pra caber numa
 // tela cheia sem pesar demais no armazenamento do navegador.
+// Logo da igreja: redimensiona pra um tamanho pequeno (ela vai aparecer só como um selinho por cima
+// da projeção) e mantém PNG (preserva fundo transparente, comum em logos) — só cai pra JPEG se mesmo
+// assim o arquivo ficar grande demais.
+function readLogoFileSmart(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Não consegui ler o arquivo.'));
+    reader.onload = () => {
+      const originalDataUrl = reader.result;
+      const img = new Image();
+      img.onerror = () => resolve(originalDataUrl);
+      img.onload = () => {
+        try {
+          const maxSide = 500;
+          let { width, height } = img;
+          if (width > maxSide || height > maxSide) {
+            const scale = maxSide / Math.max(width, height);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          let out = canvas.toDataURL('image/png');
+          if (out.length > 700 * 1024) out = canvas.toDataURL('image/jpeg', 0.9);
+          resolve(out);
+        } catch (e) { resolve(originalDataUrl); }
+      };
+      img.src = originalDataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function readImageFileSmart(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -6170,6 +6207,8 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
   const [elderName, setElderName] = useState(church.elderName || '');
   const [ministryLeaders, setMinistryLeaders] = useState(church.ministryLeaders && church.ministryLeaders.length ? church.ministryLeaders : [{ ministry:'', leader:'' }]);
   const [dataSaved, setDataSaved] = useState(false);
+  const [logoDataUrl, setLogoDataUrl] = useState(church.logoDataUrl || '');
+  const [logoSaving, setLogoSaving] = useState(false);
 
   const updateLeaderRow = (idx, field, value) => setMinistryLeaders(rows => rows.map((r,i) => i===idx ? {...r, [field]: value} : r));
   const addLeaderRow = () => setMinistryLeaders(rows => [...rows, { ministry:'', leader:'' }]);
@@ -6200,6 +6239,27 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
     }, 'Dados da igreja atualizados');
     setDataSaved(true);
     setTimeout(()=>setDataSaved(false), 2200);
+  };
+
+  /* ---- Logo (aparece por cima da projeção da Bíblia Sagrada) ---- */
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    setLogoSaving(true);
+    try {
+      const dataUrl = await readLogoFileSmart(file);
+      setLogoDataUrl(dataUrl);
+      persistChurch({ logoDataUrl: dataUrl }, 'Logo da igreja atualizada');
+    } catch (err) {
+      alert('Erro ao carregar a logo: ' + (err && err.message ? err.message : err));
+    } finally {
+      setLogoSaving(false);
+    }
+  };
+  const removeLogo = () => {
+    setLogoDataUrl('');
+    persistChurch({ logoDataUrl: '' }, 'Logo da igreja removida');
   };
 
   /* ---- Senha ---- */
@@ -6265,6 +6325,15 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
       ${section === 'dados' && html`
         <form onSubmit=${saveChurchData} class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'10px'}}>
           <div style=${sectionLabelStyle}>Identificação da Igreja</div>
+          <div style=${{display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap'}}>
+            ${logoDataUrl && html`<img src=${logoDataUrl} style=${{width:'56px', height:'56px', objectFit:'contain', borderRadius:'8px', background:'rgba(255,255,255,0.06)', padding:'4px'}} />`}
+            <label style=${{...btnGhost, padding:'8px 14px', fontSize:'11.5px', cursor:'pointer'}}>
+              ${logoSaving ? 'Carregando...' : (logoDataUrl ? '🖼️ Trocar Logo' : '🖼️ Enviar Logo')}
+              <input type="file" accept="image/*" onChange=${handleLogoUpload} style=${{display:'none'}} />
+            </label>
+            ${logoDataUrl && html`<button type="button" onClick=${removeLogo} style=${{...btnGhost, padding:'8px 12px', fontSize:'11.5px', color:'var(--danger)'}}>✕ Remover</button>`}
+          </div>
+          <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginTop:'-4px'}}>Essa logo aparece junto com o versículo quando você projeta um texto pela ferramenta "📖 Bíblia Sagrada" (em Ferramentas).</div>
           <input placeholder="Nome da igreja adventista" value=${name} onChange=${e=>setName(e.target.value)} style=${inputStyle} />
           <input placeholder="Endereço completo" value=${address} onChange=${e=>setAddress(e.target.value)} style=${inputStyle} />
           <input placeholder="Cidade" value=${city} onChange=${e=>setCity(e.target.value)} style=${inputStyle} />
@@ -6393,7 +6462,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'telas' ? html`<${TelasView} key="telas" churchId=${church.id} />` : ''}
       ${tab === 'mensagem' ? html`<${MensagemView} key="mensagem" churchId=${church.id} items=${mensagemItems} setItems=${setMensagemItems} current=${mensagemCurrent} setCurrent=${setMensagemCurrent} />` : ''}
       ${tab === 'buscas' ? html`<${BuscasSemanaisView} key="buscas" churchId=${church.id} />` : ''}
-      ${tab === 'ferramentas' ? html`<${FerramentasView} key="ferramentas" churchName=${church.name} churchId=${church.id} />` : ''}
+      ${tab === 'ferramentas' ? html`<${FerramentasView} key="ferramentas" churchName=${church.name} churchId=${church.id} churchLogo=${church.logoDataUrl || ''} />` : ''}
       ${tab === 'sugestoes' ? html`<${SugestoesView} key="sugestoes" church=${church} />` : ''}
       ${tab === 'config' ? html`<${ConfiguracoesView} key="config" church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       <${GlobalMixerWidget} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />
