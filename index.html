@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.28';
+const APP_VERSION = '2026-09-22.29';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2691,13 +2691,18 @@ function projectionShellHtml() {
         + 'overlay.style.opacity="1";'
         + 'if(holdMs>0){overlayTimer=setTimeout(function(){'
           + 'overlay.style.opacity="0";'
-          + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";},fadeMs);'
+          + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";closeIfStageEmpty();},fadeMs);'
         + '},holdMs);}'
       + '}'
+      // Se não tinha nenhuma foto/slide/vídeo por baixo do texto (tela estava vazia, só o versículo
+      // sendo mostrado sozinho), fecha a janela de projeção sozinha quando o texto sumir — assim a
+      // tela/projetor volta ao normal em vez de ficar com uma janela preta parada. Se tinha algo por
+      // baixo, a janela continua aberta mostrando esse conteúdo (o texto some, o resto fica).
+      + 'function closeIfStageEmpty(){try{if(!stage.innerHTML.trim())window.close();}catch(e){}}'
       + 'function clearOverlayText(){'
         + 'clearOverlayTimers();'
         + 'var fadeMs=500;overlay.style.transition="opacity "+fadeMs+"ms ease";overlay.style.opacity="0";'
-        + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";},fadeMs);'
+        + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";closeIfStageEmpty();},fadeMs);'
       + '}'
       + 'function bindYt(){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onStateChange:function(e){if(e.data===0)fadeOutEnd();}}});}catch(e){}}}'
       + 'function fadeOutEnd(){'
