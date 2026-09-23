@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.25';
+const APP_VERSION = '2026-09-22.26';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1901,7 +1901,28 @@ function ProjectButton({ churchId, media, itemKey }) {
   `;
 }
 
-function ImageProjectButton({ churchId, item, itemKey }) {
+// Usada pelos itens da aba Mensagem (fotos, slides de PowerPoint convertidos, vídeos locais) — tanto
+// pelos botões "Projetar" de cada item quanto pelas setas de navegação, que reusam essa mesma lógica
+// pra sempre mandar pra tela do jeito certo (imagem ou vídeo).
+function projectMensagemItem(churchId, item, itemKey) {
+  try {
+    const enabled = loadEnabledScreens(churchId);
+    if (enabled.length === 0) {
+      alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.');
+      return false;
+    }
+    const kind = item.type === 'video' ? 'localvideo' : 'imagem';
+    pickTargetScreens(churchId, itemKey, enabled).forEach(scr => {
+      try { sendToScreenObj(scr, kind, item); } catch (e) { alert('Erro ao projetar: ' + (e && e.message ? e.message : e)); }
+    });
+    return true;
+  } catch (e) {
+    alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
+    return false;
+  }
+}
+
+function ImageProjectButton({ churchId, item, itemKey, onProjected }) {
   if (!item || !item.dataUrl) return '';
 
   const handleClick = () => {
@@ -1916,6 +1937,7 @@ function ImageProjectButton({ churchId, item, itemKey }) {
       pickTargetScreens(churchId, itemKey, enabled).forEach(scr => {
         try { sendToScreenObj(scr, 'imagem', item); } catch (e) { alert('Erro ao projetar: ' + (e && e.message ? e.message : e)); }
       });
+      if (onProjected) onProjected();
     } catch (e) {
       alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
     }
@@ -1929,7 +1951,7 @@ function ImageProjectButton({ churchId, item, itemKey }) {
   `;
 }
 
-function LocalVideoProjectButton({ churchId, item, itemKey }) {
+function LocalVideoProjectButton({ churchId, item, itemKey, onProjected }) {
   if (!item || !item.url) return '';
 
   const handleClick = () => {
@@ -1942,6 +1964,7 @@ function LocalVideoProjectButton({ churchId, item, itemKey }) {
       pickTargetScreens(churchId, itemKey, enabled).forEach(scr => {
         try { sendToScreenObj(scr, 'localvideo', item); } catch (e) { alert('Erro ao projetar: ' + (e && e.message ? e.message : e)); }
       });
+      if (onProjected) onProjected();
     } catch (e) {
       alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
     }
@@ -3881,13 +3904,95 @@ function TelasView({ churchId }) {
   `;
 }
 
-// Aba "Mensagem": lugar pra carregar do pendrive, na hora da pregação, as fotos e vídeos que vão
-// ser usados e projetar em tela cheia com um toque. De propósito NÃO fica salvo entre recarregamentos
-// (fotos/vídeos de pendrive mudam toda semana e vídeo não cabe no armazenamento do navegador) — é
-// pensado pra: chegou a hora da mensagem, conecta o pendrive, carrega os arquivos, usa, e pronto.
+// Carrega (uma vez só, e guarda pronta pras próximas vezes) a biblioteca que sabe ler um .pptx e
+// desenhar os slides num <canvas> — usada só na hora de carregar um PowerPoint na aba Mensagem.
+let _pptxLibsPromise = null;
+function loadPptxLibs() {
+  if (_pptxLibsPromise) return _pptxLibsPromise;
+  const loadScript = (src) => new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Falha ao carregar biblioteca de PowerPoint'));
+    document.head.appendChild(s);
+  });
+  _pptxLibsPromise = (async () => {
+    if (!window.JSZip) await loadScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
+    if (!window.Chart) await loadScript('https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.js');
+    if (!(window.PptxViewJS && window.PptxViewJS.PPTXViewer)) await loadScript('https://cdn.jsdelivr.net/npm/pptxviewjs/dist/PptxViewJS.min.js');
+    return true;
+  })();
+  return _pptxLibsPromise;
+}
+
+// Abre um .pptx de verdade e transforma cada slide numa imagem (PNG), pra cada slide virar um item
+// "imagem" comum — o mesmo caminho, já testado e confiável, usado pras fotos. De propósito cada slide
+// usa um <canvas> e um "leitor" novos, pra nunca herdar nada desenhado do slide anterior. O tamanho do
+// canvas segue a proporção real do PowerPoint (4:3 ou 16:9), lida do próprio arquivo, pra não esticar.
+async function pptxToSlideImages(file) {
+  await loadPptxLibs();
+  const probe = new window.PptxViewJS.PPTXViewer({ canvas: document.createElement('canvas') });
+  await probe.loadFile(file);
+  const count = probe.getSlideCount();
+  const size = (probe.presentation && probe.presentation.slideSize) || { cx: 9144000, cy: 6858000 };
+  const ratio = size.cx / size.cy;
+  const baseName = file.name.replace(/\.[^.]+$/, '');
+  const slides = [];
+  for (let i = 0; i < count; i++) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1600;
+    canvas.height = Math.round(1600 / ratio);
+    const viewer = new window.PptxViewJS.PPTXViewer({ canvas });
+    await viewer.loadFile(file);
+    viewer.goToSlide(i);
+    await viewer.render(canvas);
+    slides.push({
+      id: 'msg-' + Date.now() + Math.random().toString(36).slice(2, 6) + '-' + i,
+      type: 'imagem',
+      title: baseName + ' — Slide ' + (i + 1) + '/' + count,
+      dataUrl: canvas.toDataURL('image/png')
+    });
+  }
+  return slides;
+}
+
+// Navegador de setas: depois de projetar a primeira foto/slide, ◀ e ▶ avançam ou voltam pra próxima/
+// última imagem da lista JÁ projetando na hora — pra dar pra seguir a pregação com um toque só, sem
+// precisar caçar o item certo lá embaixo na lista toda vez.
+function MensagemGalleryNav({ churchId, items, current, onNavigate }) {
+  if (items.length === 0) return '';
+  const idx = Math.min(current, items.length - 1);
+  const item = items[idx];
+
+  const go = (newIdx) => {
+    if (newIdx < 0 || newIdx >= items.length) return;
+    onNavigate(newIdx);
+    projectMensagemItem(churchId, items[newIdx], 'msg-' + items[newIdx].id);
+  };
+
+  return html`
+    <div class="glass fade-up" style=${{padding:'10px 12px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'10px', position:'sticky', top:'8px', zIndex:5}}>
+      ${item.type === 'imagem'
+        ? html`<img src=${item.dataUrl} style=${{width:'44px', height:'44px', objectFit:'cover', borderRadius:'8px', flexShrink:0, background:'#000'}} />`
+        : html`<video src=${item.url} muted style=${{width:'44px', height:'44px', objectFit:'cover', borderRadius:'8px', flexShrink:0, background:'#000'}} />`}
+      <div style=${{flex:1, minWidth:0}}>
+        <div style=${{fontWeight:700, fontSize:'11px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${item.title}</div>
+        <div style=${{fontSize:'10px', color:'var(--text-dim)'}}>${idx+1} de ${items.length} — as setas já projetam</div>
+      </div>
+      <button type="button" onClick=${()=>go(idx-1)} disabled=${idx===0} style=${{...btnGhost, padding:'8px 13px', fontSize:'14px', opacity: idx===0?0.4:1}} title="Voltar pra anterior">◀</button>
+      <button type="button" onClick=${()=>go(idx+1)} disabled=${idx===items.length-1} style=${{...btnGhost, padding:'8px 13px', fontSize:'14px', opacity: idx===items.length-1?0.4:1}} title="Avançar pra próxima">▶</button>
+    </div>
+  `;
+}
+
+// Aba "Mensagem": lugar pra carregar do pendrive, na hora da pregação, as fotos, vídeos e apresentações
+// de PowerPoint que vão ser usados e projetar em tela cheia com um toque. De propósito NÃO fica salvo
+// entre recarregamentos (fotos/vídeos de pendrive mudam toda semana e vídeo não cabe no armazenamento
+// do navegador) — é pensado pra: chegou a hora da mensagem, conecta o pendrive, carrega os arquivos, usa.
 function MensagemView({ churchId }) {
   const [items, setItems] = useState([]);
   const [processing, setProcessing] = useState(false);
+  const [current, setCurrent] = useState(0);
   const fileRef = useRef(null);
 
   const handleFiles = async (fileList) => {
@@ -3905,7 +4010,15 @@ function MensagemView({ churchId }) {
             const url = URL.createObjectURL(file);
             added.push({ id:'msg-'+Date.now()+Math.random().toString(36).slice(2,6), type:'video', title: file.name.replace(/\.[^.]+$/,''), url, file });
           } else if (/\.(ppt|pptx)$/i.test(file.name)) {
-            added.push({ id:'msg-'+Date.now()+Math.random().toString(36).slice(2,6), type:'aviso_ppt', title: file.name });
+            try {
+              const slides = await pptxToSlideImages(file);
+              if (slides.length > 0) added.push(...slides);
+              else throw new Error('sem slides');
+            } catch (e) {
+              // Não conseguiu abrir automaticamente (formato .ppt antigo, arquivo corrompido, etc.) —
+              // avisa e deixa o caminho de sempre (exportar como imagem) como alternativa.
+              added.push({ id:'msg-'+Date.now()+Math.random().toString(36).slice(2,6), type:'aviso_ppt', title: file.name });
+            }
           }
         } catch (e) { /* pula esse arquivo se der erro */ }
       }
@@ -3927,25 +4040,31 @@ function MensagemView({ churchId }) {
     if (!confirm('Limpar todos os arquivos carregados desta sessão? Isso não apaga nada do pendrive/computador, só tira daqui.')) return;
     items.forEach(it => { if (it.url) { try { URL.revokeObjectURL(it.url); } catch (e) {} } });
     setItems([]);
+    setCurrent(0);
   };
+
+  // Fotos, slides de PowerPoint já convertidos e vídeos — nessa ordem é que as setas navegam.
+  const projectable = items.filter(it => it.type === 'imagem' || it.type === 'video');
 
   return html`
     <div style=${{maxWidth:'760px', margin:'0 auto', padding:'20px 16px 60px', display:'grid', gap:'14px'}}>
       <div class="glass fade-up" style=${{padding:'14px 16px', borderRadius:'14px'}}>
         <div style=${{fontWeight:800, fontSize:'13px', color:'var(--text-hi)', marginBottom:'4px'}}>🎤 Projeção da Mensagem</div>
-        <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Conecte o pendrive, escolha as fotos e vídeos da pregação e projete em tela cheia com um toque. Os arquivos ficam só nesta sessão do navegador — ao fechar ou recarregar a página, é preciso carregar de novo (é assim de propósito, pra sempre usar o pendrive certo do dia).</div>
+        <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Conecte o pendrive, escolha as fotos, vídeos e o PowerPoint da pregação e projete em tela cheia com um toque. Os arquivos ficam só nesta sessão do navegador — ao fechar ou recarregar a página, é preciso carregar de novo (é assim de propósito, pra sempre usar o pendrive certo do dia).</div>
       </div>
 
       <div class="glass fade-up" style=${{padding:'12px 14px', borderRadius:'12px', fontSize:'11px', color:'var(--text-dim)'}}>
-        <b style=${{color:'var(--text-mid)'}}>PowerPoint:</b> exporte os slides como imagens antes de carregar aqui — no PowerPoint vá em <b>Arquivo → Exportar → Mudar o Tipo de Arquivo → Imagem JPEG</b> e escolha "Todos os Slides". Depois é só carregar essas imagens aqui embaixo, na ordem, do mesmo jeito que fotos. Isso garante que cada slide apareça em tela exatamente igual ao que você preparou.
+        <b style=${{color:'var(--text-mid)'}}>PowerPoint:</b> ao carregar um .pptx aqui, cada slide já é aberto automaticamente e vira uma imagem pronta pra projetar, na ordem certa. Efeitos, animações e transições do PowerPoint não aparecem (só o conteúdo do slide). Se algum arquivo não abrir sozinho, exporte os slides como imagem antes — no PowerPoint vá em <b>Arquivo → Exportar → Mudar o Tipo de Arquivo → Imagem JPEG → Todos os Slides</b> — e carregue essas imagens aqui do mesmo jeito que fotos.
       </div>
 
       <label class="glass fade-up" style=${{padding:'20px', borderRadius:'16px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'8px', border:'1.5px dashed var(--border-soft)', cursor:'pointer', textAlign:'center'}}>
         <div style=${{fontSize:'26px'}}>📁</div>
-        <div style=${{fontSize:'12.5px', fontWeight:700}}>${processing ? 'Processando...' : 'Toque para escolher fotos e vídeos do pendrive'}</div>
-        <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>JPG, PNG, WEBP, MP4, MOV — pode escolher vários de uma vez</div>
+        <div style=${{fontSize:'12.5px', fontWeight:700}}>${processing ? 'Processando...' : 'Toque para escolher fotos, vídeos ou PowerPoint do pendrive'}</div>
+        <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>JPG, PNG, WEBP, MP4, MOV, PPT/PPTX — pode escolher vários de uma vez</div>
         <input ref=${fileRef} type="file" accept="image/*,video/*,.ppt,.pptx" multiple disabled=${processing} onChange=${e=>handleFiles(e.target.files)} style=${{display:'none'}} />
       </label>
+
+      <${MensagemGalleryNav} churchId=${churchId} items=${projectable} current=${current} onNavigate=${setCurrent} />
 
       ${items.length > 0 && html`
         <button type="button" onClick=${clearAll} style=${{...btnGhost, width:'100%', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🧹 Limpar Tudo</button>
@@ -3961,7 +4080,7 @@ function MensagemView({ churchId }) {
                 <div style=${{fontSize:'28px'}}>📊</div>
                 <div>
                   <div style=${{fontWeight:700, fontSize:'12.5px'}}>${it.title}</div>
-                  <div style=${{fontSize:'10.5px', color:'var(--highlight)'}}>Esse arquivo .pptx sozinho não dá pra projetar direto — exporte os slides como imagem JPG (veja a dica ali em cima) e carregue as imagens aqui.</div>
+                  <div style=${{fontSize:'10.5px', color:'var(--highlight)'}}>Não consegui abrir esse arquivo automaticamente — exporte os slides como imagem JPG (veja a dica ali em cima) e carregue as imagens aqui.</div>
                 </div>
               </div>
               <div style=${{display:'flex', justifyContent:'flex-end'}}>
@@ -3978,8 +4097,8 @@ function MensagemView({ churchId }) {
               </div>
               <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end', flexWrap:'wrap'}}>
                 ${it.type === 'imagem'
-                  ? html`<${ImageProjectButton} churchId=${churchId} item=${it} itemKey=${'msg-'+it.id} />`
-                  : html`<${LocalVideoProjectButton} churchId=${churchId} item=${it} itemKey=${'msg-'+it.id} />`}
+                  ? html`<${ImageProjectButton} churchId=${churchId} item=${it} itemKey=${'msg-'+it.id} onProjected=${()=>{ const pi = projectable.indexOf(it); if (pi >= 0) setCurrent(pi); }} />`
+                  : html`<${LocalVideoProjectButton} churchId=${churchId} item=${it} itemKey=${'msg-'+it.id} onProjected=${()=>{ const pi = projectable.indexOf(it); if (pi >= 0) setCurrent(pi); }} />`}
                 <button type="button" onClick=${()=>remove(it.id)} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🗑️ Remover</button>
               </div>
             `}
