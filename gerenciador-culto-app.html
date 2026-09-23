@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.30';
+const APP_VERSION = '2026-09-23.32';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2657,7 +2657,7 @@ function projectionShellHtml() {
       + 'var overlay=document.getElementById("gc-overlay");'
       + 'var overlayTimer=null,overlayClearTimer=null;'
       + 'var fsBtn=document.getElementById("fs-fallback");'
-      + 'var ytPlayer=null,fading=false;'
+      + 'var ytPlayer=null,fading=false;var localVideoEl=null;'
       + 'function tryFullscreen(){'
         + 'try{'
           + 'if(document.fullscreenElement){fsBtn.style.display="none";return;}'
@@ -2665,13 +2665,19 @@ function projectionShellHtml() {
         + '}catch(e){}'
       + '}'
       + 'fsBtn.onclick=tryFullscreen;'
-      + 'function renderBlank(){stage.innerHTML="";}'
-      + 'function renderText(text){stage.innerHTML="";var h=document.createElement("h1");h.textContent=text||"";h.style.whiteSpace="pre-line";h.style.lineHeight="1.35";h.style.fontSize="clamp(28px, 4.6vw, 74px)";stage.appendChild(h);}'
-      + 'function renderImage(item){stage.innerHTML="";var img=document.createElement("img");img.src=(item&&item.dataUrl)||"";img.alt=(item&&item.title)||"";stage.appendChild(img);}'
+      + 'function renderBlank(){stage.innerHTML="";localVideoEl=null;ytPlayer=null;}'
+      + 'function renderText(text){stage.innerHTML="";localVideoEl=null;ytPlayer=null;var h=document.createElement("h1");h.textContent=text||"";h.style.whiteSpace="pre-line";h.style.lineHeight="1.35";h.style.fontSize="clamp(28px, 4.6vw, 74px)";stage.appendChild(h);}'
+      + 'function renderImage(item){stage.innerHTML="";localVideoEl=null;ytPlayer=null;var img=document.createElement("img");img.src=(item&&item.dataUrl)||"";img.alt=(item&&item.title)||"";stage.appendChild(img);}'
       // Vídeo local (arquivo carregado do pendrive na aba Mensagem) — o item.url é um blob: URL criado
       // na janela principal; blob: URLs do mesmo site funcionam em qualquer janela/aba, então dá pra
       // tocar aqui sem precisar subir o arquivo pra lugar nenhum.
-      + 'function renderLocalVideo(item){stage.innerHTML="";fading=false;ytPlayer=null;var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;stage.appendChild(v);v.play().catch(function(){});}'
+      + 'function renderLocalVideo(item){stage.innerHTML="";fading=false;ytPlayer=null;var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
+      // Pausa/retoma o vídeo (local ou do YouTube) que estiver tocando agora — usado pelo controle
+      // miniatura na janela principal. Sem vídeo nenhum tocando, não faz nada.
+      + 'function togglePause(){'
+        + 'if(localVideoEl){if(localVideoEl.paused){localVideoEl.play().catch(function(){});}else{localVideoEl.pause();}return;}'
+        + 'if(ytPlayer){try{var st=ytPlayer.getPlayerState();if(st===1){ytPlayer.pauseVideo();}else{ytPlayer.playVideo();}}catch(e){}}'
+      + '}'
       // Texto animado por cima (ex: versículo bíblico) — não mexe no #gc-stage, então continua
       // aparecendo o que já estava projetado (foto/slide/vídeo) atrás dele. fadeMs = duração do
       // aparecer/sumir; holdMs = quanto tempo fica todo visível antes de sumir sozinho (0 = fica até
@@ -2718,7 +2724,7 @@ function projectionShellHtml() {
         + '},110);'
       + '}'
       + 'function renderVideo(media){'
-        + 'stage.innerHTML="";fading=false;ytPlayer=null;'
+        + 'stage.innerHTML="";fading=false;ytPlayer=null;localVideoEl=null;'
         + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1&mute=0";'
         + 'var src=media&&media.videoId?("https://www.youtube-nocookie.com/embed/"+media.videoId+"?"+params)'
           + ':media&&media.playlistId?("https://www.youtube-nocookie.com/embed/videoseries?list="+media.playlistId+"&"+params):null;'
@@ -2737,6 +2743,7 @@ function projectionShellHtml() {
         + 'else if(d.gcType==="texto")renderText(d.text);'
         + 'else if(d.gcType==="overlay_texto")renderOverlayText(d.item);'
         + 'else if(d.gcType==="overlay_limpar")clearOverlayText();'
+        + 'else if(d.gcType==="pause_toggle")togglePause();'
         + 'else if(d.gcType==="blank")renderBlank();'
         + 'tryFullscreen();'
       + '});'
@@ -2808,6 +2815,7 @@ async function sendToScreenObj(scr, kind, payload) {
       : kind === 'texto' ? { gcType:'texto', text: payload || '' }
       : kind === 'overlay_texto' ? { gcType:'overlay_texto', item: payload || {} }
       : kind === 'overlay_limpar' ? { gcType:'overlay_limpar' }
+      : kind === 'pause_toggle' ? { gcType:'pause_toggle' }
       : { gcType:'blank' };
     const post = () => { try { win.postMessage(msg, '*'); } catch(e) {} };
     // Numa janela recém-criada, dá um tiquinho pro script da página terminar de registrar o "ouvinte"
@@ -2824,6 +2832,30 @@ function closeAllProjectionScreens() {
     const win = projectionWindows[sig];
     try { if (win && !win.closed) win.close(); } catch(e) {}
     delete projectionWindows[sig];
+  });
+}
+
+// Pausa/retoma o que estiver tocando (vídeo local ou do YouTube) em todas as telas habilitadas —
+// usado pelo controle miniatura (ProjectionMiniControl).
+function pauseToggleAllScreens(churchId) {
+  const enabled = loadEnabledScreens(churchId);
+  enabled.forEach(scr => { try { sendToScreenObj(scr, 'pause_toggle'); } catch(e) {} });
+}
+
+// Pede tela cheia de novo pras janelas de projeção já abertas. Chamado direto (sem postMessage) a
+// partir de um clique real do operador aqui na janela principal — é o mesmo truque usado quando a
+// janela é aberta pela primeira vez: o navegador só permite pedir tela cheia numa janela de destino
+// quando o pedido acontece durante o mesmo clique do usuário, mesmo que a chamada mire noutra janela.
+function retryFullscreenAllScreens(churchId) {
+  const enabled = loadEnabledScreens(churchId);
+  enabled.forEach(scr => {
+    const win = projectionWindows[screenSig(scr)];
+    if (win && !win.closed) {
+      try {
+        const el = win.document.documentElement;
+        if (el && el.requestFullscreen && !win.document.fullscreenElement) el.requestFullscreen().catch(()=>{});
+      } catch(e) {}
+    }
   });
 }
 
@@ -4739,16 +4771,113 @@ function GlobalMixerWidget({ churchId, church, onUpdateChurch }) {
   `;
 }
 
+// Janelinha flutuante de controle rápido da projeção — fica visível em qualquer aba, pro operador não
+// precisar ficar voltando pra Mensagem/Bíblia toda hora só pra pausar um vídeo, avançar pra próxima
+// foto/slide, pedir tela cheia de novo ou fechar tudo. Só aparece um botão redondo discreto (canto
+// inferior esquerdo, pra não brigar com o mixer de áudio que já fica no canto direito); clicando nele
+// abre o painel com os controles.
+function ProjectionMiniControl({ churchId, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
+  const [open, setOpen] = useState(false);
+  const isMobile = useIsMobile();
+  const items = mensagemItems || [];
+  const hasNext = items.length > 0 && mensagemCurrent < items.length - 1;
+
+  const proximo = () => {
+    if (!hasNext) return;
+    const newIdx = mensagemCurrent + 1;
+    setMensagemCurrent(newIdx);
+    projectMensagemItem(churchId, items[newIdx], 'msg-' + items[newIdx].id);
+  };
+  const pausarRetomar = () => pauseToggleAllScreens(churchId);
+  const telaCheia = () => retryFullscreenAllScreens(churchId);
+  const fechar = () => closeAllProjectionScreens();
+
+  return html`
+    <div style=${{position:'fixed', left: isMobile ? '12px' : '20px', bottom: 'calc(14px + env(safe-area-inset-bottom,0px))', zIndex:150, display:'flex', flexDirection:'column', alignItems:'flex-start', gap:'10px'}}>
+      ${open && html`
+        <div class="glass fade-up" style=${{width: isMobile ? 'min(88vw, 300px)' : '260px', padding:'14px', borderRadius:'18px', boxShadow:'0 20px 50px -14px rgba(0,0,0,0.55)', display:'grid', gap:'8px'}}>
+          <div style=${{fontSize:'11px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:'2px'}}>🎛️ Controle da Projeção</div>
+          ${items.length > 0 && html`
+            <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>${items[Math.min(mensagemCurrent, items.length-1)] ? items[Math.min(mensagemCurrent, items.length-1)].title : ''} (${Math.min(mensagemCurrent, items.length-1)+1} de ${items.length})</div>
+          `}
+          <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
+            <button type="button" onClick=${pausarRetomar} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>⏸️ Pausar/Retomar</button>
+            <button type="button" onClick=${proximo} disabled=${!hasNext} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', opacity: hasNext ? 1 : 0.4}}>⏭️ Próximo</button>
+            <button type="button" onClick=${telaCheia} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>⛶ Tela Cheia</button>
+            <button type="button" onClick=${fechar} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>✖️ Fechar</button>
+          </div>
+        </div>
+      `}
+      <button onClick=${()=>setOpen(v=>!v)} title="Controle da Projeção" style=${{width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color:'#fff', background:'linear-gradient(150deg,var(--accent-2),var(--accent-1))', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
+        ${open ? '✕' : '🎛️'}
+      </button>
+    </div>
+  `;
+}
+
 // Modo Ao Vivo: uma tela em foco total pro operador seguir durante o culto de verdade — mostra só a
 // etapa atual (bem grande) e a próxima, com um botão único e óbvio pra avançar. Sem distração, sem menu.
-function CultoLiveMode({ activities, sections, churchId, onAdvance, onClose, onOpenFinalize }) {
+function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch, onAdvance, onClose, onOpenFinalize }) {
   const ordered = useMemo(() => sections.flatMap(sec => activities.filter(a => a.section === sec)), [activities, sections]);
   const firstPending = ordered.findIndex(a => !a.done);
   const [idx, setIdx] = useState(firstPending === -1 ? 0 : firstPending);
 
+  // Programação automática: avança sozinho pra próxima etapa depois de X minutos, sem precisar tocar
+  // em "PRÓXIMO" — pra quando o operador tá de mãos ocupadas (som, projeção) e não quer ficar de olho
+  // no relógio. Desligado por padrão. O tempo por etapa fica salvo na conta da igreja (não só neste
+  // aparelho) — assim, entrando em outro computador com o mesmo login, o valor configurado já vem
+  // pronto, igual às outras configurações da igreja.
+  const [autoOn, setAutoOn] = useState(false);
+  const [autoMinutes, setAutoMinutes] = useState(() => {
+    if (church && typeof church.autoProgMinutes === 'number' && church.autoProgMinutes > 0) return church.autoProgMinutes;
+    try { const v = localStorage.getItem('gc_auto_prog_min_' + churchId); return v ? Math.max(1, Number(v)) : 5; } catch (e) { return 5; }
+  });
+  const [secondsLeft, setSecondsLeft] = useState(null);
+  const goNextRef = useRef(() => {});
+
   const current = ordered[idx];
   const next = ordered[idx+1];
   const isLast = idx >= ordered.length - 1;
+
+  const goNext = () => {
+    if (!current) return;
+    onAdvance(current.id);
+    if (isLast) { setAutoOn(false); onOpenFinalize(); return; }
+    setIdx(i => Math.min(i+1, ordered.length-1));
+  };
+  const goBack = () => setIdx(i => Math.max(i-1, 0));
+  goNextRef.current = goNext;
+
+  // Salva o tempo por etapa neste aparelho na hora (offline-safe) e também na conta da igreja, pra
+  // valer em qualquer login/aparelho dela — mesmo padrão usado pra tema, fundo musical etc.
+  useEffect(() => {
+    try { localStorage.setItem('gc_auto_prog_min_' + churchId, String(autoMinutes)); } catch (e) {}
+    if (church && church.autoProgMinutes !== autoMinutes) {
+      const docId = church.fbDocId || church.docId;
+      if (docId) fbUpdateChurchFields(docId, { autoProgMinutes: autoMinutes });
+      if (onUpdateChurch) onUpdateChurch({ ...church, autoProgMinutes: autoMinutes });
+    }
+  }, [autoMinutes, churchId]);
+
+  // Reinicia a contagem sempre que muda de etapa (manual ou automático) ou liga/desliga o automático.
+  useEffect(() => {
+    if (!autoOn) { setSecondsLeft(null); return; }
+    setSecondsLeft(autoMinutes * 60);
+  }, [autoOn, idx]);
+
+  // O intervalo roda continuamente enquanto autoOn estiver ligado — chama sempre o goNext mais atual
+  // (via ref), pra nunca avançar a partir de uma etapa "velha".
+  useEffect(() => {
+    if (!autoOn) return;
+    const iv = setInterval(() => {
+      setSecondsLeft(s => {
+        if (s === null) return s;
+        if (s <= 1) { goNextRef.current(); return autoMinutes * 60; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [autoOn, autoMinutes]);
 
   if (!current) {
     return html`
@@ -4760,20 +4889,28 @@ function CultoLiveMode({ activities, sections, churchId, onAdvance, onClose, onO
     `;
   }
 
-  const goNext = () => {
-    onAdvance(current.id);
-    if (isLast) { onOpenFinalize(); return; }
-    setIdx(i => Math.min(i+1, ordered.length-1));
-  };
-  const goBack = () => setIdx(i => Math.max(i-1, 0));
+  const mm = Math.floor((secondsLeft||0)/60);
+  const ss = (secondsLeft||0)%60;
+  const timeLabel = mm + ':' + String(ss).padStart(2,'0');
 
   return html`
     <div style=${{position:'fixed', inset:0, background:'var(--bg-1, #0b1120)', zIndex:200, display:'flex', flexDirection:'column', padding:'20px 16px', overflowY:'auto'}}>
-      <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'18px'}}>
+      <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'18px', gap:'10px', flexWrap:'wrap'}}>
         <div style=${{fontSize:'11.5px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em'}}>
           Etapa ${idx+1} de ${ordered.length} • ${SECTION_LABELS[current.section]}
         </div>
-        <button onClick=${onClose} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'20px', padding:'4px 8px'}} title="Sair do Modo Ao Vivo">✕</button>
+        <div style=${{display:'flex', alignItems:'center', gap:'10px'}}>
+          ${autoOn
+            ? html`<button onClick=${()=>setAutoOn(false)} title="Toque pra desligar" style=${{...btnGhost, padding:'6px 12px', fontSize:'11px', fontWeight:700, color:'var(--success)', borderColor:'var(--success)'}}>⏱️ ${timeLabel} — Automático ligado</button>`
+            : html`
+              <div style=${{display:'flex', alignItems:'center', gap:'6px'}}>
+                <input type="number" min="1" value=${autoMinutes} onChange=${e=>setAutoMinutes(Math.max(1, Number(e.target.value)||1))} style=${{...inputStyle, width:'50px', padding:'5px 6px', fontSize:'11px', textAlign:'center'}} />
+                <span style=${{fontSize:'10px', color:'var(--text-dim)'}}>min/etapa</span>
+                <button onClick=${()=>setAutoOn(true)} style=${{...btnGhost, padding:'6px 12px', fontSize:'11px'}}>⏱️ Programação Automática</button>
+              </div>
+            `}
+          <button onClick=${onClose} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'20px', padding:'4px 8px'}} title="Sair do Modo Ao Vivo">✕</button>
+        </div>
       </div>
 
       <div style=${{width:'100%', height:'6px', borderRadius:'999px', background:'rgba(148,163,184,0.18)', overflow:'hidden', marginBottom:'24px'}}>
@@ -4988,7 +5125,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       <button onClick=${()=>setLiveMode(true)} style=${{...btnPrimary, width:'100%', marginBottom:'20px', padding:'16px', fontSize:'15px', display:'flex', alignItems:'center', justifyContent:'center', gap:'8px'}}>
         ▶️ Iniciar Modo Ao Vivo
       </button>
-      ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
+      ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
 
       <div class="glass fade-up" style=${{padding:'12px 14px', borderRadius:'14px', marginBottom:'20px', display:'flex', alignItems:'center', gap:'10px', fontSize:'11.5px', color:'var(--text-mid)'}}>
         <span style=${{fontSize:'18px'}}>🎚️</span>
@@ -6466,6 +6603,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'sugestoes' ? html`<${SugestoesView} key="sugestoes" church=${church} />` : ''}
       ${tab === 'config' ? html`<${ConfiguracoesView} key="config" church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       <${GlobalMixerWidget} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />
+      <${ProjectionMiniControl} churchId=${church.id} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />
     </div>
   `;
 }

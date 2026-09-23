@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.31';
+const APP_VERSION = '2026-09-23.32';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -4817,14 +4817,67 @@ function ProjectionMiniControl({ churchId, mensagemItems, mensagemCurrent, setMe
 
 // Modo Ao Vivo: uma tela em foco total pro operador seguir durante o culto de verdade — mostra só a
 // etapa atual (bem grande) e a próxima, com um botão único e óbvio pra avançar. Sem distração, sem menu.
-function CultoLiveMode({ activities, sections, churchId, onAdvance, onClose, onOpenFinalize }) {
+function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch, onAdvance, onClose, onOpenFinalize }) {
   const ordered = useMemo(() => sections.flatMap(sec => activities.filter(a => a.section === sec)), [activities, sections]);
   const firstPending = ordered.findIndex(a => !a.done);
   const [idx, setIdx] = useState(firstPending === -1 ? 0 : firstPending);
 
+  // Programação automática: avança sozinho pra próxima etapa depois de X minutos, sem precisar tocar
+  // em "PRÓXIMO" — pra quando o operador tá de mãos ocupadas (som, projeção) e não quer ficar de olho
+  // no relógio. Desligado por padrão. O tempo por etapa fica salvo na conta da igreja (não só neste
+  // aparelho) — assim, entrando em outro computador com o mesmo login, o valor configurado já vem
+  // pronto, igual às outras configurações da igreja.
+  const [autoOn, setAutoOn] = useState(false);
+  const [autoMinutes, setAutoMinutes] = useState(() => {
+    if (church && typeof church.autoProgMinutes === 'number' && church.autoProgMinutes > 0) return church.autoProgMinutes;
+    try { const v = localStorage.getItem('gc_auto_prog_min_' + churchId); return v ? Math.max(1, Number(v)) : 5; } catch (e) { return 5; }
+  });
+  const [secondsLeft, setSecondsLeft] = useState(null);
+  const goNextRef = useRef(() => {});
+
   const current = ordered[idx];
   const next = ordered[idx+1];
   const isLast = idx >= ordered.length - 1;
+
+  const goNext = () => {
+    if (!current) return;
+    onAdvance(current.id);
+    if (isLast) { setAutoOn(false); onOpenFinalize(); return; }
+    setIdx(i => Math.min(i+1, ordered.length-1));
+  };
+  const goBack = () => setIdx(i => Math.max(i-1, 0));
+  goNextRef.current = goNext;
+
+  // Salva o tempo por etapa neste aparelho na hora (offline-safe) e também na conta da igreja, pra
+  // valer em qualquer login/aparelho dela — mesmo padrão usado pra tema, fundo musical etc.
+  useEffect(() => {
+    try { localStorage.setItem('gc_auto_prog_min_' + churchId, String(autoMinutes)); } catch (e) {}
+    if (church && church.autoProgMinutes !== autoMinutes) {
+      const docId = church.fbDocId || church.docId;
+      if (docId) fbUpdateChurchFields(docId, { autoProgMinutes: autoMinutes });
+      if (onUpdateChurch) onUpdateChurch({ ...church, autoProgMinutes: autoMinutes });
+    }
+  }, [autoMinutes, churchId]);
+
+  // Reinicia a contagem sempre que muda de etapa (manual ou automático) ou liga/desliga o automático.
+  useEffect(() => {
+    if (!autoOn) { setSecondsLeft(null); return; }
+    setSecondsLeft(autoMinutes * 60);
+  }, [autoOn, idx]);
+
+  // O intervalo roda continuamente enquanto autoOn estiver ligado — chama sempre o goNext mais atual
+  // (via ref), pra nunca avançar a partir de uma etapa "velha".
+  useEffect(() => {
+    if (!autoOn) return;
+    const iv = setInterval(() => {
+      setSecondsLeft(s => {
+        if (s === null) return s;
+        if (s <= 1) { goNextRef.current(); return autoMinutes * 60; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [autoOn, autoMinutes]);
 
   if (!current) {
     return html`
@@ -4836,20 +4889,28 @@ function CultoLiveMode({ activities, sections, churchId, onAdvance, onClose, onO
     `;
   }
 
-  const goNext = () => {
-    onAdvance(current.id);
-    if (isLast) { onOpenFinalize(); return; }
-    setIdx(i => Math.min(i+1, ordered.length-1));
-  };
-  const goBack = () => setIdx(i => Math.max(i-1, 0));
+  const mm = Math.floor((secondsLeft||0)/60);
+  const ss = (secondsLeft||0)%60;
+  const timeLabel = mm + ':' + String(ss).padStart(2,'0');
 
   return html`
     <div style=${{position:'fixed', inset:0, background:'var(--bg-1, #0b1120)', zIndex:200, display:'flex', flexDirection:'column', padding:'20px 16px', overflowY:'auto'}}>
-      <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'18px'}}>
+      <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'18px', gap:'10px', flexWrap:'wrap'}}>
         <div style=${{fontSize:'11.5px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em'}}>
           Etapa ${idx+1} de ${ordered.length} • ${SECTION_LABELS[current.section]}
         </div>
-        <button onClick=${onClose} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'20px', padding:'4px 8px'}} title="Sair do Modo Ao Vivo">✕</button>
+        <div style=${{display:'flex', alignItems:'center', gap:'10px'}}>
+          ${autoOn
+            ? html`<button onClick=${()=>setAutoOn(false)} title="Toque pra desligar" style=${{...btnGhost, padding:'6px 12px', fontSize:'11px', fontWeight:700, color:'var(--success)', borderColor:'var(--success)'}}>⏱️ ${timeLabel} — Automático ligado</button>`
+            : html`
+              <div style=${{display:'flex', alignItems:'center', gap:'6px'}}>
+                <input type="number" min="1" value=${autoMinutes} onChange=${e=>setAutoMinutes(Math.max(1, Number(e.target.value)||1))} style=${{...inputStyle, width:'50px', padding:'5px 6px', fontSize:'11px', textAlign:'center'}} />
+                <span style=${{fontSize:'10px', color:'var(--text-dim)'}}>min/etapa</span>
+                <button onClick=${()=>setAutoOn(true)} style=${{...btnGhost, padding:'6px 12px', fontSize:'11px'}}>⏱️ Programação Automática</button>
+              </div>
+            `}
+          <button onClick=${onClose} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'20px', padding:'4px 8px'}} title="Sair do Modo Ao Vivo">✕</button>
+        </div>
       </div>
 
       <div style=${{width:'100%', height:'6px', borderRadius:'999px', background:'rgba(148,163,184,0.18)', overflow:'hidden', marginBottom:'24px'}}>
@@ -5064,7 +5125,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       <button onClick=${()=>setLiveMode(true)} style=${{...btnPrimary, width:'100%', marginBottom:'20px', padding:'16px', fontSize:'15px', display:'flex', alignItems:'center', justifyContent:'center', gap:'8px'}}>
         ▶️ Iniciar Modo Ao Vivo
       </button>
-      ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
+      ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
 
       <div class="glass fade-up" style=${{padding:'12px 14px', borderRadius:'14px', marginBottom:'20px', display:'flex', alignItems:'center', gap:'10px', fontSize:'11.5px', color:'var(--text-mid)'}}>
         <span style=${{fontSize:'18px'}}>🎚️</span>
