@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.26';
+const APP_VERSION = '2026-09-22.27';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1514,6 +1514,27 @@ const HYMNS = [
 const SECTION_LABELS = { escola_sabatina: 'Escola Sabatina', culto_divino: 'Culto Divino' };
 const CATEGORY_ICON = { louvor:'🎵', oracao:'🙏', video:'🎬', mensagem_musical:'🎤', infantil:'🧸', ofertas:'💰', sermao:'📖', anuncios:'📢', abertura:'✨', geral:'📌' };
 
+// Os 66 livros, em português (pra mostrar) e o "slug" em inglês que a API pública de busca de
+// versículos (bible-api.com) espera — ela devolve o TEXTO em português (tradução Almeida), só o nome
+// do livro na busca precisa ser em inglês. Isso fica escondido do Paulo, ele só vê os nomes em português.
+const BIBLE_BOOKS = [
+  ['Gênesis','genesis'], ['Êxodo','exodus'], ['Levítico','leviticus'], ['Números','numbers'], ['Deuteronômio','deuteronomy'],
+  ['Josué','joshua'], ['Juízes','judges'], ['Rute','ruth'], ['1 Samuel','1 samuel'], ['2 Samuel','2 samuel'],
+  ['1 Reis','1 kings'], ['2 Reis','2 kings'], ['1 Crônicas','1 chronicles'], ['2 Crônicas','2 chronicles'],
+  ['Esdras','ezra'], ['Neemias','nehemiah'], ['Ester','esther'], ['Jó','job'], ['Salmos','psalms'],
+  ['Provérbios','proverbs'], ['Eclesiastes','ecclesiastes'], ['Cânticos','song of solomon'], ['Isaías','isaiah'],
+  ['Jeremias','jeremiah'], ['Lamentações','lamentations'], ['Ezequiel','ezekiel'], ['Daniel','daniel'],
+  ['Oséias','hosea'], ['Joel','joel'], ['Amós','amos'], ['Obadias','obadiah'], ['Jonas','jonah'],
+  ['Miquéias','micah'], ['Naum','nahum'], ['Habacuque','habakkuk'], ['Sofonias','zephaniah'], ['Ageu','haggai'],
+  ['Zacarias','zechariah'], ['Malaquias','malachi'],
+  ['Mateus','matthew'], ['Marcos','mark'], ['Lucas','luke'], ['João','john'], ['Atos','acts'], ['Romanos','romans'],
+  ['1 Coríntios','1 corinthians'], ['2 Coríntios','2 corinthians'], ['Gálatas','galatians'], ['Efésios','ephesians'],
+  ['Filipenses','philippians'], ['Colossenses','colossians'], ['1 Tessalonicenses','1 thessalonians'],
+  ['2 Tessalonicenses','2 thessalonians'], ['1 Timóteo','1 timothy'], ['2 Timóteo','2 timothy'], ['Tito','titus'],
+  ['Filemom','philemon'], ['Hebreus','hebrews'], ['Tiago','james'], ['1 Pedro','1 peter'], ['2 Pedro','2 peter'],
+  ['1 João','1 john'], ['2 João','2 john'], ['3 João','3 john'], ['Judas','jude'], ['Apocalipse','revelation'],
+];
+
 const MEDIA_LIBRARY = [
   { title:'10 Mil Razões (Bendize, ó Minh\'Alma)', query:'10 mil razoes playback congregacional adventista' },
   { title:'Quão Grande é o Meu Deus', query:'quao grande e o meu deus playback adventista' },
@@ -1978,7 +1999,7 @@ function LocalVideoProjectButton({ churchId, item, itemKey, onProjected }) {
   `;
 }
 
-function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, idx }) {
+function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, idx, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(act.name);
@@ -1986,6 +2007,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
   const [category, setCategory] = useState(act.category);
   const [time, setTime] = useState(act.time === '--:--' ? '' : act.time);
   const [media, setMedia] = useState(act.media || null);
+  const [sermaoExpanded, setSermaoExpanded] = useState(false);
   const needsMedia = category === 'mensagem_musical' || category === 'louvor';
 
   const save = () => {
@@ -2036,6 +2058,29 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
               : html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>🎬 ${media.title}</div>`}
           </div>
           ${media && media.title && html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${ProjectButton} churchId=${churchId} media=${media} itemKey=${act.id} /></div>`}
+        </div>
+      `}
+      ${act.category === 'sermao' && !editing && html`
+        <div style=${{marginLeft: isMobile ? '0' : '46px', display:'grid', gap:'8px'}}>
+          ${(!mensagemItems || mensagemItems.length === 0)
+            ? html`<div style=${{fontSize:'11px', color:'var(--text-dim)', padding:'6px 2px'}}>Nenhum arquivo carregado ainda — vá na aba 🎤 Mensagem pra carregar fotos, vídeos ou PowerPoint da pregação.</div>`
+            : html`
+              <${MensagemGalleryNav} churchId=${churchId} items=${mensagemItems} current=${mensagemCurrent || 0} onNavigate=${setMensagemCurrent} />
+              <button type="button" onClick=${()=>setSermaoExpanded(v=>!v)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', justifySelf:'start'}}>${sermaoExpanded ? '▴ Esconder lista' : '▾ Ver todos os arquivos ('+mensagemItems.length+')'}</button>
+              ${sermaoExpanded && html`
+                <div style=${{display:'grid', gap:'6px', maxHeight:'320px', overflowY:'auto'}}>
+                  ${mensagemItems.map((it,i) => html`
+                    <div key=${it.id} style=${{display:'flex', alignItems:'center', gap:'8px', padding:'6px', borderRadius:'10px', background: i===(mensagemCurrent||0) ? 'rgba(99,102,241,0.14)' : 'transparent'}}>
+                      ${it.type === 'imagem'
+                        ? html`<img src=${it.dataUrl} style=${{width:'34px', height:'34px', objectFit:'cover', borderRadius:'6px', flexShrink:0, background:'#000'}} />`
+                        : html`<video src=${it.url} muted style=${{width:'34px', height:'34px', objectFit:'cover', borderRadius:'6px', flexShrink:0, background:'#000'}} />`}
+                      <div style=${{flex:1, minWidth:0, fontSize:'10.5px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${it.title}</div>
+                      <button type="button" onClick=${()=>{ projectMensagemItem(churchId, it, 'msg-'+it.id); setMensagemCurrent(i); }} style=${{...btnGhost, padding:'4px 8px', fontSize:'10px', flexShrink:0}}>📽️</button>
+                    </div>
+                  `)}
+                </div>
+              `}
+            `}
         </div>
       `}
     </div>
@@ -2593,14 +2638,23 @@ function projectionShellHtml() {
     + '#gc-stage img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;}'
     + '#gc-stage video{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;}'
     + '#gc-stage h1{font-size:5vw;text-align:center;padding:0 4vw;}'
+    // Camada separada, por cima do #gc-stage — pra dar pra projetar um texto (ex: versículo bíblico)
+    // com fade suave SEM apagar o que já está sendo projetado embaixo (foto, slide, vídeo).
+    + '#gc-overlay{position:fixed;inset:0;z-index:5;display:flex;align-items:flex-end;justify-content:center;pointer-events:none;padding:6vh 5vw;opacity:0;}'
+    + '.gc-overlay-box{max-width:90vw;background:linear-gradient(180deg, rgba(0,0,0,0.1), rgba(0,0,0,0.82));border-radius:18px;padding:2.6vh 4vw;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,0.55);}'
+    + '.gc-overlay-text{font-size:clamp(22px,3.4vw,48px);line-height:1.42;white-space:pre-line;font-weight:600;}'
+    + '.gc-overlay-ref{margin-top:1.2vh;font-size:clamp(13px,1.5vw,22px);opacity:0.78;font-weight:700;letter-spacing:0.03em;}'
     // z-index bem alto e "!important" pra garantir que esse botão sempre fique VISÍVEL por cima do
     // vídeo do YouTube (em alguns casos o iframe do vídeo ficava cobrindo o botão por completo).
     + '#fs-fallback{position:fixed !important;bottom:20px !important;right:20px !important;padding:12px 18px !important;border-radius:10px !important;background:#4f46e5 !important;color:#fff !important;border:2px solid #fff !important;font-size:15px !important;font-weight:600 !important;cursor:pointer !important;z-index:2147483647 !important;box-shadow:0 4px 14px rgba(0,0,0,0.5) !important;}'
     + '</style></head><body>'
     + '<div id="gc-stage"></div>'
+    + '<div id="gc-overlay"></div>'
     + '<button id="fs-fallback">⛶ Tela Cheia</button>'
     + '<scr'+'ipt>(function(){'
       + 'var stage=document.getElementById("gc-stage");'
+      + 'var overlay=document.getElementById("gc-overlay");'
+      + 'var overlayTimer=null,overlayClearTimer=null;'
       + 'var fsBtn=document.getElementById("fs-fallback");'
       + 'var ytPlayer=null,fading=false;'
       + 'function tryFullscreen(){'
@@ -2617,6 +2671,34 @@ function projectionShellHtml() {
       // na janela principal; blob: URLs do mesmo site funcionam em qualquer janela/aba, então dá pra
       // tocar aqui sem precisar subir o arquivo pra lugar nenhum.
       + 'function renderLocalVideo(item){stage.innerHTML="";fading=false;ytPlayer=null;var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;stage.appendChild(v);v.play().catch(function(){});}'
+      // Texto animado por cima (ex: versículo bíblico) — não mexe no #gc-stage, então continua
+      // aparecendo o que já estava projetado (foto/slide/vídeo) atrás dele. fadeMs = duração do
+      // aparecer/sumir; holdMs = quanto tempo fica todo visível antes de sumir sozinho (0 = fica até
+      // ser tirado manualmente).
+      + 'function clearOverlayTimers(){if(overlayTimer){clearTimeout(overlayTimer);overlayTimer=null;}if(overlayClearTimer){clearTimeout(overlayClearTimer);overlayClearTimer=null;}}'
+      + 'function renderOverlayText(item){'
+        + 'clearOverlayTimers();'
+        + 'var text=(item&&item.text)||"";var reference=(item&&item.reference)||"";'
+        + 'var fadeMs=(item&&item.fadeMs)||800;var holdMs=(item&&item.holdMs)===0?0:((item&&item.holdMs)||8000);'
+        + 'overlay.innerHTML="";'
+        + 'var box=document.createElement("div");box.className="gc-overlay-box";'
+        + 'var p=document.createElement("div");p.className="gc-overlay-text";p.textContent=text;box.appendChild(p);'
+        + 'if(reference){var r=document.createElement("div");r.className="gc-overlay-ref";r.textContent=reference;box.appendChild(r);}'
+        + 'overlay.appendChild(box);'
+        + 'overlay.style.transition="opacity "+fadeMs+"ms ease";'
+        + 'overlay.style.opacity="0";'
+        + 'void overlay.offsetHeight;' // força o navegador a "commitar" o opacity 0 antes de animar pro 1
+        + 'overlay.style.opacity="1";'
+        + 'if(holdMs>0){overlayTimer=setTimeout(function(){'
+          + 'overlay.style.opacity="0";'
+          + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";},fadeMs);'
+        + '},holdMs);}'
+      + '}'
+      + 'function clearOverlayText(){'
+        + 'clearOverlayTimers();'
+        + 'var fadeMs=500;overlay.style.transition="opacity "+fadeMs+"ms ease";overlay.style.opacity="0";'
+        + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";},fadeMs);'
+      + '}'
       + 'function bindYt(){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onStateChange:function(e){if(e.data===0)fadeOutEnd();}}});}catch(e){}}}'
       + 'function fadeOutEnd(){'
         + 'if(fading||!ytPlayer)return;fading=true;'
@@ -2646,6 +2728,8 @@ function projectionShellHtml() {
         + 'else if(d.gcType==="imagem")renderImage(d.item);'
         + 'else if(d.gcType==="localvideo")renderLocalVideo(d.item);'
         + 'else if(d.gcType==="texto")renderText(d.text);'
+        + 'else if(d.gcType==="overlay_texto")renderOverlayText(d.item);'
+        + 'else if(d.gcType==="overlay_limpar")clearOverlayText();'
         + 'else if(d.gcType==="blank")renderBlank();'
         + 'tryFullscreen();'
       + '});'
@@ -2715,6 +2799,8 @@ async function sendToScreenObj(scr, kind, payload) {
       : kind === 'imagem' ? { gcType:'imagem', item: payload || {} }
       : kind === 'localvideo' ? { gcType:'localvideo', item: payload || {} }
       : kind === 'texto' ? { gcType:'texto', text: payload || '' }
+      : kind === 'overlay_texto' ? { gcType:'overlay_texto', item: payload || {} }
+      : kind === 'overlay_limpar' ? { gcType:'overlay_limpar' }
       : { gcType:'blank' };
     const post = () => { try { win.postMessage(msg, '*'); } catch(e) {} };
     // Numa janela recém-criada, dá um tiquinho pro script da página terminar de registrar o "ouvinte"
@@ -2732,6 +2818,109 @@ function closeAllProjectionScreens() {
     try { if (win && !win.closed) win.close(); } catch(e) {}
     delete projectionWindows[sig];
   });
+}
+
+// Bíblia Sagrada: busca o versículo (tenta automático pela internet, tradução Almeida; sempre dá pra
+// ajustar/colar o texto à mão antes de projetar, do mesmo jeito confiável usado pra letra de música) e
+// projeta como texto animado por cima do que já estiver na tela (foto/slide/vídeo) — não apaga o que já
+// está projetado. Dá pra configurar o tempo de entrada/saída (fade) e quanto tempo fica na tela.
+function BibliaTool({ churchId }) {
+  const [bookIdx, setBookIdx] = useState(38); // João, o mais comum em pregações
+  const [chapter, setChapter] = useState('3');
+  const [verse, setVerse] = useState('16');
+  const [text, setText] = useState('');
+  const [reference, setReference] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [fadeSec, setFadeSec] = useState(0.8);
+  const [holdSec, setHoldSec] = useState(8);
+  const [holdForever, setHoldForever] = useState(false);
+
+  const buscar = async () => {
+    setSearching(true);
+    setSearchError('');
+    try {
+      const [label, slug] = BIBLE_BOOKS[bookIdx];
+      const ref = chapter.trim() + (verse.trim() ? ':' + verse.trim() : '');
+      if (!chapter.trim()) throw new Error('sem capítulo');
+      const url = 'https://bible-api.com/' + encodeURIComponent(slug + ' ' + ref) + '?translation=almeida';
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!res.ok || !data.text) throw new Error(data.error || 'não encontrado');
+      setText(data.text.trim());
+      setReference(data.reference || (label + ' ' + ref));
+    } catch (e) {
+      setSearchError('Não consegui buscar esse automaticamente — sem problema, é só colar ou escrever o texto do versículo aqui embaixo.');
+      const [label] = BIBLE_BOOKS[bookIdx];
+      setReference(label + ' ' + chapter + (verse.trim() ? ':' + verse.trim() : ''));
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const projetar = () => {
+    if (!text.trim()) { alert('Escreva ou busque o texto do versículo primeiro.'); return; }
+    try {
+      const enabled = loadEnabledScreens(churchId);
+      if (enabled.length === 0) { alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.'); return; }
+      const fadeMs = Math.max(100, Math.round((parseFloat(fadeSec) || 0.8) * 1000));
+      const holdMs = holdForever ? 0 : Math.max(500, Math.round((parseFloat(holdSec) || 8) * 1000));
+      pickTargetScreens(churchId, 'biblia-overlay', enabled).forEach(scr => {
+        try { sendToScreenObj(scr, 'overlay_texto', { text: text.trim(), reference: reference.trim(), fadeMs, holdMs }); } catch (e) { alert('Erro ao projetar: ' + (e && e.message ? e.message : e)); }
+      });
+    } catch (e) {
+      alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
+    }
+  };
+
+  const tirarDaTela = () => {
+    try {
+      const enabled = loadEnabledScreens(churchId);
+      pickTargetScreens(churchId, 'biblia-overlay', enabled).forEach(scr => {
+        try { sendToScreenObj(scr, 'overlay_limpar'); } catch (e) {}
+      });
+    } catch (e) {}
+  };
+
+  return html`
+    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'10px'}}>
+      <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Escolha o versículo, confira o texto e projete animado — funciona por cima de uma foto, slide ou vídeo que já esteja na tela, sem apagar o que tá lá.</div>
+
+      <div style=${{display:'grid', gridTemplateColumns:'2fr 1fr 1.4fr', gap:'8px'}}>
+        <select value=${bookIdx} onChange=${e=>setBookIdx(Number(e.target.value))} style=${{...inputStyle, fontSize:'12px'}}>
+          ${BIBLE_BOOKS.map(([label], i) => html`<option key=${i} value=${i}>${label}</option>`)}
+        </select>
+        <input value=${chapter} onChange=${e=>setChapter(e.target.value)} placeholder="Cap." style=${{...inputStyle, fontSize:'12px', textAlign:'center'}} />
+        <input value=${verse} onChange=${e=>setVerse(e.target.value)} placeholder="Vers. (16 ou 16-18)" style=${{...inputStyle, fontSize:'12px', textAlign:'center'}} />
+      </div>
+      <button type="button" onClick=${buscar} disabled=${searching} style=${{...btnGhost, padding:'8px'}}>${searching ? 'Buscando...' : '🔎 Buscar Texto'}</button>
+      ${searchError && html`<div style=${{fontSize:'10.5px', color:'var(--highlight)'}}>${searchError}</div>`}
+
+      <input value=${reference} onChange=${e=>setReference(e.target.value)} placeholder="Referência (ex: João 3:16)" style=${{...inputStyle, fontSize:'12px', fontWeight:700}} />
+      <textarea value=${text} onChange=${e=>setText(e.target.value)} placeholder="O texto do versículo aparece aqui depois de buscar — ou cole/escreva à mão." rows="4" style=${{...inputStyle, fontSize:'12.5px', fontFamily:'inherit', resize:'vertical'}}></textarea>
+
+      <div style=${{display:'grid', gap:'8px', padding:'10px', borderRadius:'12px', background:'rgba(99,102,241,0.08)', border:'1px solid var(--border-soft)'}}>
+        <div style=${{fontSize:'10.5px', fontWeight:700, color:'var(--text-mid)'}}>⚙️ Animação</div>
+        <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
+          <label style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Tempo de entrar/sumir (seg.)
+            <input type="number" min="0.1" step="0.1" value=${fadeSec} onChange=${e=>setFadeSec(e.target.value)} style=${{...inputStyle, fontSize:'12px', marginTop:'4px'}} />
+          </label>
+          <label style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Tempo na tela (seg.)
+            <input type="number" min="1" step="1" value=${holdSec} onChange=${e=>setHoldSec(e.target.value)} disabled=${holdForever} style=${{...inputStyle, fontSize:'12px', marginTop:'4px', opacity: holdForever ? 0.5 : 1}} />
+          </label>
+        </div>
+        <label style=${{display:'flex', alignItems:'center', gap:'6px', fontSize:'11px', color:'var(--text-mid)'}}>
+          <input type="checkbox" checked=${holdForever} onChange=${e=>setHoldForever(e.target.checked)} />
+          Ficar na tela até eu tirar manualmente (não sumir sozinho)
+        </label>
+      </div>
+
+      <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
+        <button type="button" onClick=${projetar} style=${{...btnPrimary, padding:'10px'}}>📽️ Projetar Animado</button>
+        <button type="button" onClick=${tirarDaTela} style=${{...btnGhost, padding:'10px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>✖️ Tirar da Tela</button>
+      </div>
+    </div>
+  `;
 }
 
 function RelogioTool() {
@@ -3586,6 +3775,7 @@ function MomentosLouvorTool({ churchId }) {
 function FerramentasView({ churchName, churchId }) {
   const [selected, setSelected] = useState(null);
   const tools = [
+    { key:'biblia', label:'📖 Bíblia Sagrada' },
     { key:'sorteio', label:'🎱 Sorteador de Números' },
     { key:'relogio', label:'🕐 Relógio' },
     { key:'cronometro', label:'⏱️ Cronômetro' },
@@ -3600,6 +3790,7 @@ function FerramentasView({ churchName, churchId }) {
         ${tools.map((t,i) => html`<${TabTile} key=${t.key} text=${t.label} idx=${i} delay=${i} active=${selected===t.key} onClick=${()=>setSelected(s => s===t.key ? null : t.key)} />`)}
       </div>
 
+      ${selected === 'biblia' && html`<${BibliaTool} churchId=${churchId} />`}
       ${selected === 'sorteio' && html`<${NumberDrawTool} churchId=${churchId} />`}
       ${selected === 'relogio' && html`<${RelogioTool} />`}
       ${selected === 'cronometro' && html`<${CronometroTool} />`}
@@ -3989,10 +4180,8 @@ function MensagemGalleryNav({ churchId, items, current, onNavigate }) {
 // de PowerPoint que vão ser usados e projetar em tela cheia com um toque. De propósito NÃO fica salvo
 // entre recarregamentos (fotos/vídeos de pendrive mudam toda semana e vídeo não cabe no armazenamento
 // do navegador) — é pensado pra: chegou a hora da mensagem, conecta o pendrive, carrega os arquivos, usa.
-function MensagemView({ churchId }) {
-  const [items, setItems] = useState([]);
+function MensagemView({ churchId, items, setItems, current, setCurrent }) {
   const [processing, setProcessing] = useState(false);
-  const [current, setCurrent] = useState(0);
   const fileRef = useRef(null);
 
   const handleFiles = async (fileList) => {
@@ -4615,7 +4804,7 @@ function CultoLiveMode({ activities, sections, churchId, onAdvance, onClose, onO
   `;
 }
 
-function LiturgiaView({ churchId, churchName, church, onUpdateChurch }) {
+function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
   const [activities, setActivities] = useState(() => loadActivities(churchId));
   const [adding, setAdding] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -4818,7 +5007,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch }) {
             <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 10px 4px'}}>${SECTION_LABELS[sec]}</h3>
             <div style=${{display:'grid', gap:'8px'}}>
               ${items.length === 0 && html`<div style=${{color:'var(--text-dim)', fontSize:'12.5px', padding:'8px 4px'}}>Nenhuma atividade cadastrada ainda.</div>`}
-              ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} churchId=${churchId} />`)}
+              ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} churchId=${churchId} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />`)}
             </div>
           </div>
         `;
@@ -6156,6 +6345,11 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
 
 function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   const [tab, setTab] = useState('liturgia');
+  // Fica aqui (não dentro da aba Mensagem) de propósito: assim, os arquivos carregados do pendrive
+  // continuam disponíveis mesmo trocando de aba (ex: voltar pra Liturgia pra ver a atividade do
+  // sermão). Ainda assim NÃO é salvo em disco/nuvem — some se recarregar a página, como sempre foi.
+  const [mensagemItems, setMensagemItems] = useState([]);
+  const [mensagemCurrent, setMensagemCurrent] = useState(0);
   // Aparelho que fica logado (opção "Manter conectado") não passa mais pela tela de login a cada
   // acesso, que era o único lugar que buscava os dados atualizados da igreja no banco compartilhado.
   // Por isso os fundos musicais salvos na nuvem por outro aparelho podiam demorar a aparecer aqui —
@@ -6185,11 +6379,11 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
     <div>
       <${ChurchHeader} church=${church} tab=${tab} setTab=${setTab} onLogout=${onLogout} />
       ${tab === 'presenca' ? html`<${PresencaView} key="presenca" churchId=${church.id} />` : ''}
-      ${tab === 'liturgia' ? html`<${LiturgiaView} key="lit" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
+      ${tab === 'liturgia' ? html`<${LiturgiaView} key="lit" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />` : ''}
       ${tab === 'musicas' ? html`<${MusicasView} key="musicas" churchId=${church.id} />` : ''}
       ${tab === 'gestao' ? html`<${GestaoView} key="gestao" churchId=${church.id} churchName=${church.name} />` : ''}
       ${tab === 'telas' ? html`<${TelasView} key="telas" churchId=${church.id} />` : ''}
-      ${tab === 'mensagem' ? html`<${MensagemView} key="mensagem" churchId=${church.id} />` : ''}
+      ${tab === 'mensagem' ? html`<${MensagemView} key="mensagem" churchId=${church.id} items=${mensagemItems} setItems=${setMensagemItems} current=${mensagemCurrent} setCurrent=${setMensagemCurrent} />` : ''}
       ${tab === 'buscas' ? html`<${BuscasSemanaisView} key="buscas" churchId=${church.id} />` : ''}
       ${tab === 'ferramentas' ? html`<${FerramentasView} key="ferramentas" churchName=${church.name} churchId=${church.id} />` : ''}
       ${tab === 'sugestoes' ? html`<${SugestoesView} key="sugestoes" church=${church} />` : ''}
