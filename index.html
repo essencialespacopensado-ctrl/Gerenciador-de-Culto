@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-22.27';
+const APP_VERSION = '2026-09-22.28';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2825,7 +2825,7 @@ function closeAllProjectionScreens() {
 // projeta como texto animado por cima do que já estiver na tela (foto/slide/vídeo) — não apaga o que já
 // está projetado. Dá pra configurar o tempo de entrada/saída (fade) e quanto tempo fica na tela.
 function BibliaTool({ churchId }) {
-  const [bookIdx, setBookIdx] = useState(38); // João, o mais comum em pregações
+  const [bookIdx, setBookIdx] = useState(42); // João, o mais comum em pregações
   const [chapter, setChapter] = useState('3');
   const [verse, setVerse] = useState('16');
   const [text, setText] = useState('');
@@ -2843,7 +2843,10 @@ function BibliaTool({ churchId }) {
       const [label, slug] = BIBLE_BOOKS[bookIdx];
       const ref = chapter.trim() + (verse.trim() ? ':' + verse.trim() : '');
       if (!chapter.trim()) throw new Error('sem capítulo');
-      const url = 'https://bible-api.com/' + encodeURIComponent(slug + ' ' + ref) + '?translation=almeida';
+      // Importante: NÃO usar encodeURIComponent na referência inteira — ela tem ":" (e às vezes "-" pra
+      // intervalo de versículos), e essa API só reconhece a referência com esses caracteres "crus" na URL.
+      // Só o espaço entre as palavras do nome do livro precisa virar %20.
+      const url = 'https://bible-api.com/' + slug.split(' ').join('%20') + '%20' + ref + '?translation=almeida';
       const res = await fetch(url);
       const data = await res.json();
       if (!res.ok || !data.text) throw new Error(data.error || 'não encontrado');
