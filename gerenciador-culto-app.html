@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-23.34';
+const APP_VERSION = '2026-09-23.35';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -3835,6 +3835,65 @@ function MomentosLouvorTool({ churchId }) {
   `;
 }
 
+// Manual do operador, embutido no próprio app (pedido do Paulo em 23/09: "coloque numa aba dentro de
+// ferramentas como utilizar"). Um resumo em texto do que cada aba do sistema faz, em formato de
+// sanfona (acordeão) — pra qualquer pessoa escalada na sonoplastia conseguir se virar sozinha, mesmo
+// sem nunca ter usado o sistema, sem precisar sair do app pra consultar o manual completo.
+const MANUAL_SECOES = [
+  { icon:'✅', titulo:'Presença', local:'Aba CULTO → Presença',
+    texto:'Mostra quem está escalado na sonoplastia para o culto do dia e permite confirmar presença. A escala em si é feita em Gestão → Sonoplastia.' },
+  { icon:'📋', titulo:'Liturgia', local:'Aba CULTO → Liturgia',
+    texto:'O coração do sistema: a lista de atividades do culto, dividida em Escola Sabatina e Culto Divino. Cada atividade é um cartão com nome, responsável, categoria e, quando tem, uma mídia (vídeo/música/slide) vinculada. Toque no cartão pra marcar como feito (✓); atividades com mídia mostram os botões ▶ Play e 🖥️ Projetar direto no cartão. Dá pra fixar (📌) uma atividade pra ela não se mover na reordenação automática. É daqui que se inicia o Modo Ao Vivo.' },
+  { icon:'🔴', titulo:'Modo Ao Vivo', local:'Liturgia → botão "Iniciar Modo Ao Vivo"',
+    texto:'Tela de acompanhamento durante o culto: mostra a etapa atual, a próxima, e tem Voltar/Próximo pra navegar manualmente. A Programação Automática avança as etapas sozinha: "min/etapa (teto)" é o tempo máximo de cada etapa; "seg. ocioso" só conta depois que um vídeo/música vinculado à etapa termina de tocar de verdade — assim nada é cortado no meio. Etapas sem mídia avançam pelo tempo cheio configurado, sem espera.' },
+  { icon:'🖥️', titulo:'Telas', local:'Aba CULTO → Telas',
+    texto:'Mostra as telas/projetores conectados e permite escolher qual delas recebe a projeção do culto. Use "Detectar Telas Novamente" se conectar o projetor depois de abrir o sistema.' },
+  { icon:'🎙️', titulo:'Mensagem', local:'Aba CULTO → Mensagem',
+    texto:'Projeta os slides da pregação (fotos, vídeos ou PowerPoint) direto do pendrive, em tela cheia. Aceita JPG, PNG, WEBP, MP4, MOV, PPT/PPTX, vários arquivos de uma vez — cada slide do PowerPoint já abre pronto, na ordem certa. Os arquivos só ficam na sessão do navegador daquele dia (é assim de propósito, pra sempre usar o pendrive certo).' },
+  { icon:'🎵', titulo:'Músicas', local:'Aba MÚSICAS → Músicas',
+    texto:'Reúne a parte musical em 4 áreas: Momentos de Louvor (hinos congregacionais, letra pra projetar), Mensagens Musicais (apresentações especiais com vídeo/áudio), Catálogo de Músicas (busca geral) e CDs Oficiais/Ano (coletâneas adventistas por ano, com faixas e vídeos).' },
+  { icon:'🔎', titulo:'Buscas', local:'Aba ORGANIZAÇÃO → Buscas',
+    texto:'Junta os itens que mudam toda semana — Provai e Vede, Informativo Mundial das Missões e Momento Vida e Saúde — já prontos pra tocar ou projetar, sem abrir a Liturgia. Também busca qualquer vídeo no YouTube: digite e aparecem sugestões, ou cole o link de um vídeo já encontrado.' },
+  { icon:'👥', titulo:'Gestão', local:'Aba ORGANIZAÇÃO → Gestão',
+    texto:'Organiza equipes, escalas e funções: Sonoplastia, Louvor, Mídia, Anúncios (escalas por equipe), Editar Equipes (adiciona/remove membros), Equipes & Funções (define as funções de cada equipe) e Liturgia Padrão (modelo usado como base toda semana). A Escala Automática gira entre os membros cadastrados sozinha, semana a semana; o botão 💬 abre o WhatsApp com o lembrete daquela data pronto.' },
+  { icon:'🛠️', titulo:'Ferramentas', local:'Aba SISTEMA → Ferramentas',
+    texto:'Ferramentas rápidas do dia a dia: 📖 Bíblia Sagrada (projeta qualquer versículo por cima do que já está na tela, sem apagar nada), 🎱 Sorteador de Números, 🕐 Relógio, ⏱️ Cronômetro e 📊 Criador de PowerPoint.' },
+  { icon:'💡', titulo:'Sugestões', local:'Aba SISTEMA → Sugestões',
+    texto:'Canal direto pra enviar ideias de melhoria pro desenvolvedor e acompanhar a resposta.' },
+  { icon:'⚙️', titulo:'Config.', local:'Aba SISTEMA → Config.',
+    texto:'Dados da Igreja (nome, endereço, logo), Alterar Senha, Palavra de Recuperação (pergunta/resposta pra recuperar acesso) e Cores do Tema. Atenção: ao cadastrar uma igreja nova, se a cidade e o endereço forem iguais aos de uma já cadastrada, o sistema bloqueia o cadastro pra evitar login duplicado — nesse caso, peça o login já existente.' },
+];
+
+function ManualTool() {
+  const [openIdx, setOpenIdx] = useState(0);
+  return html`
+    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
+      <div style=${{fontWeight:800, fontSize:'13.5px'}}>📘 Como Usar o App</div>
+      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Resumo de cada aba do sistema — toque num item pra abrir. Se preferir um manual mais visual com telas de exemplo, peça pro responsável o link do manual completo.</div>
+      <div style=${{display:'grid', gap:'8px'}}>
+        ${MANUAL_SECOES.map((s,i) => html`
+          <div key=${i} class="glass" style=${{borderRadius:'14px', border:'1px solid var(--border-soft)', overflow:'hidden'}}>
+            <button type="button" onClick=${()=>setOpenIdx(v => v===i ? -1 : i)} style=${{
+              width:'100%', display:'flex', alignItems:'center', gap:'10px', padding:'12px',
+              background:'transparent', border:'none', cursor:'pointer', textAlign:'left',
+            }}>
+              <span style=${{fontSize:'18px'}}>${s.icon}</span>
+              <div style=${{flex:1}}>
+                <div style=${{fontWeight:700, fontSize:'12.5px'}}>${s.titulo}</div>
+                <div style=${{fontSize:'10px', color:'var(--text-dim)'}}>${s.local}</div>
+              </div>
+              <span style=${{fontSize:'12px', color:'var(--text-dim)', transform: openIdx===i ? 'rotate(180deg)' : 'none', transition:'transform .15s'}}>▾</span>
+            </button>
+            ${openIdx===i && html`
+              <div style=${{padding:'0 14px 14px', fontSize:'11.5px', color:'var(--text-mid)', lineHeight:1.5}}>${s.texto}</div>
+            `}
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
 function FerramentasView({ churchName, churchId, churchLogo }) {
   const [selected, setSelected] = useState(null);
   const tools = [
@@ -3843,6 +3902,7 @@ function FerramentasView({ churchName, churchId, churchLogo }) {
     { key:'relogio', label:'🕐 Relógio' },
     { key:'cronometro', label:'⏱️ Cronômetro' },
     { key:'ppt', label:'📊 Criador de PowerPoint' },
+    { key:'manual', label:'📘 Como Usar' },
   ];
 
   return html`
@@ -3858,6 +3918,7 @@ function FerramentasView({ churchName, churchId, churchLogo }) {
       ${selected === 'relogio' && html`<${RelogioTool} />`}
       ${selected === 'cronometro' && html`<${CronometroTool} />`}
       ${selected === 'ppt' && html`<${PowerpointTool} churchName=${churchName} />`}
+      ${selected === 'manual' && html`<${ManualTool} />`}
     </div>
   `;
 }
