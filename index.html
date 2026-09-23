@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-23.36';
+const APP_VERSION = '2026-09-23.37';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -3840,27 +3840,27 @@ function MomentosLouvorTool({ churchId }) {
 // sanfona (acordeão) — pra qualquer pessoa escalada na sonoplastia conseguir se virar sozinha, mesmo
 // sem nunca ter usado o sistema, sem precisar sair do app pra consultar o manual completo.
 const MANUAL_SECOES = [
-  { icon:'✅', titulo:'Presença', local:'Aba CULTO → Presença', c1:'#6d28d9', c2:'#4c1d95',
+  { icon:'✅', titulo:'Presença', local:'Aba CULTO → Presença', c1:'#a855f7', c2:'#7e22ce',
     texto:'Mostra quem está escalado na sonoplastia para o culto do dia e permite confirmar presença. A escala em si é feita em Gestão → Sonoplastia.' },
-  { icon:'📋', titulo:'Liturgia', local:'Aba CULTO → Liturgia', c1:'#7c3aed', c2:'#5b21b6',
+  { icon:'📋', titulo:'Liturgia', local:'Aba CULTO → Liturgia', c1:'#c026d3', c2:'#a21caf',
     texto:'O coração do sistema: a lista de atividades do culto, dividida em Escola Sabatina e Culto Divino. Cada atividade é um cartão com nome, responsável, categoria e, quando tem, uma mídia (vídeo/música/slide) vinculada. Toque no cartão pra marcar como feito (✓); atividades com mídia mostram os botões ▶ Play e 🖥️ Projetar direto no cartão. Dá pra fixar (📌) uma atividade pra ela não se mover na reordenação automática. É daqui que se inicia o Modo Ao Vivo.' },
-  { icon:'🔴', titulo:'Modo Ao Vivo', local:'Liturgia → botão "Iniciar Modo Ao Vivo"', c1:'#e11d48', c2:'#881337',
+  { icon:'🔴', titulo:'Modo Ao Vivo', local:'Liturgia → botão "Iniciar Modo Ao Vivo"', c1:'#fb2c58', c2:'#e11d48',
     texto:'Tela de acompanhamento durante o culto: mostra a etapa atual, a próxima, e tem Voltar/Próximo pra navegar manualmente. A Programação Automática avança as etapas sozinha: "min/etapa (teto)" é o tempo máximo de cada etapa; "seg. ocioso" só conta depois que um vídeo/música vinculado à etapa termina de tocar de verdade — assim nada é cortado no meio. Etapas sem mídia avançam pelo tempo cheio configurado, sem espera.' },
-  { icon:'🖥️', titulo:'Telas', local:'Aba CULTO → Telas', c1:'#8b5cf6', c2:'#6d28d9',
+  { icon:'🖥️', titulo:'Telas', local:'Aba CULTO → Telas', c1:'#818cf8', c2:'#6366f1',
     texto:'Mostra as telas/projetores conectados e permite escolher qual delas recebe a projeção do culto. Use "Detectar Telas Novamente" se conectar o projetor depois de abrir o sistema.' },
-  { icon:'🎙️', titulo:'Mensagem', local:'Aba CULTO → Mensagem', c1:'#9333ea', c2:'#6d28d9',
+  { icon:'🎙️', titulo:'Mensagem', local:'Aba CULTO → Mensagem', c1:'#e879f9', c2:'#d946ef',
     texto:'Projeta os slides da pregação (fotos, vídeos ou PowerPoint) direto do pendrive, em tela cheia. Aceita JPG, PNG, WEBP, MP4, MOV, PPT/PPTX, vários arquivos de uma vez — cada slide do PowerPoint já abre pronto, na ordem certa. Os arquivos só ficam na sessão do navegador daquele dia (é assim de propósito, pra sempre usar o pendrive certo).' },
-  { icon:'🎵', titulo:'Músicas', local:'Aba MÚSICAS → Músicas', c1:'#2563eb', c2:'#1e3a8a',
+  { icon:'🎵', titulo:'Músicas', local:'Aba MÚSICAS → Músicas', c1:'#38bdf8', c2:'#0ea5e9',
     texto:'Reúne a parte musical em 4 áreas: Momentos de Louvor (hinos congregacionais, letra pra projetar), Mensagens Musicais (apresentações especiais com vídeo/áudio), Catálogo de Músicas (busca geral) e CDs Oficiais/Ano (coletâneas adventistas por ano, com faixas e vídeos).' },
-  { icon:'🔎', titulo:'Buscas', local:'Aba ORGANIZAÇÃO → Buscas', c1:'#0f766e', c2:'#134e4a',
+  { icon:'🔎', titulo:'Buscas', local:'Aba ORGANIZAÇÃO → Buscas', c1:'#2dd4bf', c2:'#14b8a6',
     texto:'Junta os itens que mudam toda semana — Provai e Vede, Informativo Mundial das Missões e Momento Vida e Saúde — já prontos pra tocar ou projetar, sem abrir a Liturgia. Também busca qualquer vídeo no YouTube: digite e aparecem sugestões, ou cole o link de um vídeo já encontrado.' },
-  { icon:'👥', titulo:'Gestão', local:'Aba ORGANIZAÇÃO → Gestão', c1:'#0891b2', c2:'#155e75',
+  { icon:'👥', titulo:'Gestão', local:'Aba ORGANIZAÇÃO → Gestão', c1:'#22d3ee', c2:'#06b6d4',
     texto:'Organiza equipes, escalas e funções: Sonoplastia, Louvor, Mídia, Anúncios (escalas por equipe), Editar Equipes (adiciona/remove membros), Equipes & Funções (define as funções de cada equipe) e Liturgia Padrão (modelo usado como base toda semana). A Escala Automática gira entre os membros cadastrados sozinha, semana a semana; o botão 💬 abre o WhatsApp com o lembrete daquela data pronto.' },
-  { icon:'🛠️', titulo:'Ferramentas', local:'Aba SISTEMA → Ferramentas', c1:'#15803d', c2:'#14532d',
+  { icon:'🛠️', titulo:'Ferramentas', local:'Aba SISTEMA → Ferramentas', c1:'#4ade80', c2:'#22c55e',
     texto:'Ferramentas rápidas do dia a dia: 📖 Bíblia Sagrada (projeta qualquer versículo por cima do que já está na tela, sem apagar nada), 🎱 Sorteador de Números, 🕐 Relógio, ⏱️ Cronômetro e 📊 Criador de PowerPoint.' },
-  { icon:'💡', titulo:'Sugestões', local:'Aba SISTEMA → Sugestões', c1:'#b45309', c2:'#78350f',
+  { icon:'💡', titulo:'Sugestões', local:'Aba SISTEMA → Sugestões', c1:'#fbbf24', c2:'#f59e0b',
     texto:'Canal direto pra enviar ideias de melhoria pro desenvolvedor e acompanhar a resposta.' },
-  { icon:'⚙️', titulo:'Config.', local:'Aba SISTEMA → Config.', c1:'#4d7c0f', c2:'#365314',
+  { icon:'⚙️', titulo:'Config.', local:'Aba SISTEMA → Config.', c1:'#a3e635', c2:'#84cc16',
     texto:'Dados da Igreja (nome, endereço, logo), Alterar Senha, Palavra de Recuperação (pergunta/resposta pra recuperar acesso) e Cores do Tema. Atenção: ao cadastrar uma igreja nova, se a cidade e o endereço forem iguais aos de uma já cadastrada, o sistema bloqueia o cadastro pra evitar login duplicado — nesse caso, peça o login já existente.' },
 ];
 
@@ -3874,9 +3874,11 @@ function ManualTool() {
         ${MANUAL_SECOES.map((s,i) => html`
           <div key=${i} style=${{
             borderRadius:'14px', overflow:'hidden',
-            background: openIdx===i ? `linear-gradient(135deg, ${s.c1}33, ${s.c2}22)` : 'var(--card-bg, rgba(255,255,255,0.03))',
-            border: openIdx===i ? `1px solid ${s.c1}88` : '1px solid var(--border-soft)',
-            boxShadow: openIdx===i ? `0 4px 18px -6px ${s.c1}66` : 'none',
+            borderLeft: `4px solid ${s.c1}`,
+            background: openIdx===i ? `linear-gradient(120deg, ${s.c1}45, ${s.c2}25 60%, transparent)` : `linear-gradient(120deg, ${s.c1}22, transparent 70%)`,
+            border: openIdx===i ? `1px solid ${s.c1}` : `1px solid ${s.c1}55`,
+            borderLeftWidth:'4px', borderLeftColor: s.c1,
+            boxShadow: openIdx===i ? `0 6px 22px -6px ${s.c1}99` : `0 2px 10px -4px ${s.c1}55`,
             transition:'all .2s',
           }}>
             <button type="button" onClick=${()=>setOpenIdx(v => v===i ? -1 : i)} style=${{
@@ -3884,16 +3886,16 @@ function ManualTool() {
               background:'transparent', border:'none', cursor:'pointer', textAlign:'left',
             }}>
               <span style=${{
-                fontSize:'17px', width:'34px', height:'34px', borderRadius:'10px', flex:'none',
+                fontSize:'18px', width:'36px', height:'36px', borderRadius:'11px', flex:'none',
                 display:'flex', alignItems:'center', justifyContent:'center',
                 background:`linear-gradient(135deg, ${s.c1}, ${s.c2})`,
-                boxShadow:`0 2px 8px -2px ${s.c1}99`,
+                boxShadow:`0 3px 12px -2px ${s.c1}, inset 0 1px 0 rgba(255,255,255,.25)`,
               }}>${s.icon}</span>
               <div style=${{flex:1, minWidth:0}}>
-                <div style=${{fontWeight:700, fontSize:'12.5px'}}>${s.titulo}</div>
-                <div style=${{fontSize:'10px', color:s.c1, fontWeight:600}}>${s.local}</div>
+                <div style=${{fontWeight:800, fontSize:'12.5px', color:s.c1}}>${s.titulo}</div>
+                <div style=${{fontSize:'10px', color:'var(--text-dim)', fontWeight:600}}>${s.local}</div>
               </div>
-              <span style=${{fontSize:'12px', color: openIdx===i ? s.c1 : 'var(--text-dim)', transform: openIdx===i ? 'rotate(180deg)' : 'none', transition:'transform .15s'}}>▾</span>
+              <span style=${{fontSize:'12px', color: s.c1, transform: openIdx===i ? 'rotate(180deg)' : 'none', transition:'transform .15s'}}>▾</span>
             </button>
             ${openIdx===i && html`
               <div style=${{padding:'0 14px 14px 58px', fontSize:'11.5px', color:'var(--text-mid)', lineHeight:1.5}}>${s.texto}</div>
