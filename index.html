@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-23.33';
+const APP_VERSION = '2026-09-23.34';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -636,6 +636,16 @@ function LoginScreen({ onLogin }) {
     if (!newPassword.trim() || newPassword.length < 4) { setError('A senha deve ter no mínimo 4 caracteres.'); return; }
     if (!recoveryQuestion.trim() || !recoveryAnswer.trim()) { setError('Preencha a pergunta e a resposta de segurança — é por elas que você vai recuperar a senha se esquecer.'); return; }
     if (!union.trim() || !association.trim()) { setError('Selecione a União e a Associação/Missão da sua igreja.'); return; }
+
+    // Trava contra cadastro duplicado (pedido dele, 23/09): se já existe outra igreja ativa com a
+    // MESMA cidade e o MESMO endereço, é quase certo que é a mesma igreja se cadastrando de novo
+    // por engano (gerando um segundo login pra quem já tinha acesso) — bloqueia aqui, antes de criar
+    // conta nova, e manda a pessoa entrar com o acesso já existente em vez disso.
+    const normLoc = (s) => (s||'').trim().toLowerCase().replace(/\s+/g,' ');
+    if (city.trim() && address.trim() && churches.some(c => !c.removed && normLoc(c.city) === normLoc(city) && normLoc(c.address) === normLoc(address))) {
+      setError('Já existe uma igreja cadastrada com essa mesma cidade e endereço. Se essa é a sua igreja, peça o login de acesso a quem já cadastrou (ou ao Paulo) em vez de criar um cadastro novo — dois logins pra igreja causam confusão e dados divididos.');
+      return;
+    }
 
     const newLoginLower = newLogin.trim().toLowerCase();
     const db = loadDB();
