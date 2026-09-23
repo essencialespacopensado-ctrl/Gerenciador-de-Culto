@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-23.32';
+const APP_VERSION = '2026-09-23.33';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2008,10 +2008,11 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
   const [time, setTime] = useState(act.time === '--:--' ? '' : act.time);
   const [media, setMedia] = useState(act.media || null);
   const [sermaoExpanded, setSermaoExpanded] = useState(false);
+  const [idleSeconds, setIdleSeconds] = useState(typeof act.idleSeconds === 'number' ? act.idleSeconds : '');
   const needsMedia = category === 'mensagem_musical' || category === 'louvor';
 
   const save = () => {
-    onEdit({ ...act, name: name.trim() || act.name, responsible: responsible.trim() || 'A definir', category, time: time || '--:--', media: media || null });
+    onEdit({ ...act, name: name.trim() || act.name, responsible: responsible.trim() || 'A definir', category, time: time || '--:--', media: media || null, idleSeconds: idleSeconds === '' ? null : Math.max(0, Number(idleSeconds) || 0) });
     setEditing(false);
   };
 
@@ -2027,6 +2028,12 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
         </div>
         <input type="time" value=${time} onChange=${e=>setTime(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
         ${needsMedia && html`<${MediaSearchField} media=${media} onChange=${setMedia} searchKey=${act.id} />`}
+        ${needsMedia && html`
+          <div style=${{display:'flex', alignItems:'center', gap:'6px'}}>
+            <input type="number" min="0" placeholder="padrão" value=${idleSeconds} onChange=${e=>setIdleSeconds(e.target.value)} style=${{...inputStyle, fontSize:'12px', width:'70px'}} />
+            <span style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>seg. ocioso após o vídeo/música terminar, na Programação Automática (vazio = usa o padrão)</span>
+          </div>
+        `}
         <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end'}}>
           <button onClick=${()=>setEditing(false)} style=${btnGhost}>Cancelar</button>
           <button onClick=${save} style=${{...btnPrimary, width:'auto', padding:'8px 16px'}}>Salvar</button>
@@ -2671,7 +2678,11 @@ function projectionShellHtml() {
       // Vídeo local (arquivo carregado do pendrive na aba Mensagem) — o item.url é um blob: URL criado
       // na janela principal; blob: URLs do mesmo site funcionam em qualquer janela/aba, então dá pra
       // tocar aqui sem precisar subir o arquivo pra lugar nenhum.
-      + 'function renderLocalVideo(item){stage.innerHTML="";fading=false;ytPlayer=null;var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
+      // Avisa a janela principal (opener) quando o vídeo/música termina de verdade — usado pela
+      // Programação Automática do Modo Ao Vivo pra nunca cortar um vídeo no meio, esperando o fim de
+      // verdade em vez de um tempo fixo "no chute".
+      + 'function notifyMediaEnded(){try{if(window.opener&&!window.opener.closed)window.opener.postMessage({gcType:"gc_media_ended"},"*");}catch(e){}}'
+      + 'function renderLocalVideo(item){stage.innerHTML="";fading=false;ytPlayer=null;var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;v.addEventListener("ended",notifyMediaEnded);stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
       // Pausa/retoma o vídeo (local ou do YouTube) que estiver tocando agora — usado pelo controle
       // miniatura na janela principal. Sem vídeo nenhum tocando, não faz nada.
       + 'function togglePause(){'
@@ -2712,7 +2723,7 @@ function projectionShellHtml() {
         + 'var fadeMs=500;overlay.style.transition="opacity "+fadeMs+"ms ease";overlay.style.opacity="0";'
         + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";closeIfStageEmpty();},fadeMs);'
       + '}'
-      + 'function bindYt(){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onStateChange:function(e){if(e.data===0)fadeOutEnd();}}});}catch(e){}}}'
+      + 'function bindYt(){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onStateChange:function(e){if(e.data===0){fadeOutEnd();notifyMediaEnded();}}}});}catch(e){}}}'
       + 'function fadeOutEnd(){'
         + 'if(fading||!ytPlayer)return;fading=true;'
         + 'var startVol=100;try{startVol=ytPlayer.getVolume();}catch(e){}'
@@ -4822,22 +4833,34 @@ function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch,
   const firstPending = ordered.findIndex(a => !a.done);
   const [idx, setIdx] = useState(firstPending === -1 ? 0 : firstPending);
 
-  // Programação automática: avança sozinho pra próxima etapa depois de X minutos, sem precisar tocar
-  // em "PRÓXIMO" — pra quando o operador tá de mãos ocupadas (som, projeção) e não quer ficar de olho
-  // no relógio. Desligado por padrão. O tempo por etapa fica salvo na conta da igreja (não só neste
-  // aparelho) — assim, entrando em outro computador com o mesmo login, o valor configurado já vem
-  // pronto, igual às outras configurações da igreja.
+  // Programação automática: avança sozinho pra próxima etapa, sem precisar tocar em "PRÓXIMO" — pra
+  // quando o operador tá de mãos ocupadas (som, projeção) e não quer ficar de olho no relógio.
+  // Desligado por padrão. Pra NUNCA cortar um vídeo/música no meio (pedido dele), o comportamento
+  // muda conforme a etapa tem mídia (vídeo/música) vinculada ou não:
+  //  - Etapa COM vídeo/música: espera o vídeo avisar sozinho que terminou de verdade (a janela de
+  //    projeção manda esse aviso), e só DEPOIS conta o "tempo ocioso" (configurável, por etapa ou um
+  //    padrão geral) antes de avançar. "min/etapa" vira um teto de segurança — só avança sem esperar
+  //    o aviso se passar todo esse tempo (ex: o operador esqueceu de clicar em Projetar).
+  //  - Etapa SEM vídeo/música: continua como antes, avança sozinha depois de "min/etapa".
+  // Os dois números (min/etapa e o tempo ocioso padrão) ficam salvos na conta da igreja, valendo em
+  // qualquer aparelho/login dela — mesmo padrão usado pra tema, fundo musical etc.
   const [autoOn, setAutoOn] = useState(false);
   const [autoMinutes, setAutoMinutes] = useState(() => {
     if (church && typeof church.autoProgMinutes === 'number' && church.autoProgMinutes > 0) return church.autoProgMinutes;
     try { const v = localStorage.getItem('gc_auto_prog_min_' + churchId); return v ? Math.max(1, Number(v)) : 5; } catch (e) { return 5; }
   });
+  const [idleSecDefault, setIdleSecDefault] = useState(() => {
+    if (church && typeof church.autoProgIdleSec === 'number' && church.autoProgIdleSec >= 0) return church.autoProgIdleSec;
+    try { const v = localStorage.getItem('gc_auto_prog_idle_' + churchId); return v !== null ? Math.max(0, Number(v)) : 5; } catch (e) { return 5; }
+  });
   const [secondsLeft, setSecondsLeft] = useState(null);
+  const [waitingMedia, setWaitingMedia] = useState(false);
   const goNextRef = useRef(() => {});
 
   const current = ordered[idx];
   const next = ordered[idx+1];
   const isLast = idx >= ordered.length - 1;
+  const currentHasMedia = !!(current && current.media && current.media.title);
 
   const goNext = () => {
     if (!current) return;
@@ -4848,25 +4871,47 @@ function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch,
   const goBack = () => setIdx(i => Math.max(i-1, 0));
   goNextRef.current = goNext;
 
-  // Salva o tempo por etapa neste aparelho na hora (offline-safe) e também na conta da igreja, pra
-  // valer em qualquer login/aparelho dela — mesmo padrão usado pra tema, fundo musical etc.
+  // Salva os dois números neste aparelho na hora (offline-safe) e também na conta da igreja.
   useEffect(() => {
     try { localStorage.setItem('gc_auto_prog_min_' + churchId, String(autoMinutes)); } catch (e) {}
-    if (church && church.autoProgMinutes !== autoMinutes) {
+    try { localStorage.setItem('gc_auto_prog_idle_' + churchId, String(idleSecDefault)); } catch (e) {}
+    if (church && (church.autoProgMinutes !== autoMinutes || church.autoProgIdleSec !== idleSecDefault)) {
       const docId = church.fbDocId || church.docId;
-      if (docId) fbUpdateChurchFields(docId, { autoProgMinutes: autoMinutes });
-      if (onUpdateChurch) onUpdateChurch({ ...church, autoProgMinutes: autoMinutes });
+      if (docId) fbUpdateChurchFields(docId, { autoProgMinutes: autoMinutes, autoProgIdleSec: idleSecDefault });
+      if (onUpdateChurch) onUpdateChurch({ ...church, autoProgMinutes: autoMinutes, autoProgIdleSec: idleSecDefault });
     }
-  }, [autoMinutes, churchId]);
+  }, [autoMinutes, idleSecDefault, churchId]);
 
   // Reinicia a contagem sempre que muda de etapa (manual ou automático) ou liga/desliga o automático.
+  // Com vídeo/música: começa "aguardando" (teto de segurança = min/etapa). Sem mídia: contagem normal.
   useEffect(() => {
-    if (!autoOn) { setSecondsLeft(null); return; }
+    if (!autoOn) { setSecondsLeft(null); setWaitingMedia(false); return; }
     setSecondsLeft(autoMinutes * 60);
+    setWaitingMedia(currentHasMedia);
   }, [autoOn, idx]);
 
+  // Ouve o aviso de "vídeo/música terminou de verdade" que a janela de projeção manda. Quando chega
+  // (e essa etapa tinha mídia e ainda tava esperando), troca pra contagem do tempo ocioso configurado
+  // pra essa etapa (ou o padrão geral) antes de avançar.
+  useEffect(() => {
+    if (!autoOn) return;
+    const onMsg = (ev) => {
+      const d = ev.data;
+      if (!d || d.gcType !== 'gc_media_ended') return;
+      setWaitingMedia(w => {
+        if (!w) return w;
+        const secs = (current && typeof current.idleSeconds === 'number') ? current.idleSeconds : idleSecDefault;
+        setSecondsLeft(Math.max(0, secs));
+        return false;
+      });
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [autoOn, current, idleSecDefault]);
+
   // O intervalo roda continuamente enquanto autoOn estiver ligado — chama sempre o goNext mais atual
-  // (via ref), pra nunca avançar a partir de uma etapa "velha".
+  // (via ref), pra nunca avançar a partir de uma etapa "velha". Se a etapa tem mídia e ainda tá
+  // "aguardando" o vídeo terminar, esse tempo é só o teto de segurança (última opção).
   useEffect(() => {
     if (!autoOn) return;
     const iv = setInterval(() => {
@@ -4901,11 +4946,15 @@ function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch,
         </div>
         <div style=${{display:'flex', alignItems:'center', gap:'10px'}}>
           ${autoOn
-            ? html`<button onClick=${()=>setAutoOn(false)} title="Toque pra desligar" style=${{...btnGhost, padding:'6px 12px', fontSize:'11px', fontWeight:700, color:'var(--success)', borderColor:'var(--success)'}}>⏱️ ${timeLabel} — Automático ligado</button>`
+            ? html`<button onClick=${()=>setAutoOn(false)} title="Toque pra desligar" style=${{...btnGhost, padding:'6px 12px', fontSize:'11px', fontWeight:700, color:'var(--success)', borderColor:'var(--success)'}}>
+                ${waitingMedia ? '🎬 Aguardando vídeo/música terminar…' : '⏱️ ' + timeLabel} — Automático ligado
+              </button>`
             : html`
-              <div style=${{display:'flex', alignItems:'center', gap:'6px'}}>
+              <div style=${{display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>
                 <input type="number" min="1" value=${autoMinutes} onChange=${e=>setAutoMinutes(Math.max(1, Number(e.target.value)||1))} style=${{...inputStyle, width:'50px', padding:'5px 6px', fontSize:'11px', textAlign:'center'}} />
-                <span style=${{fontSize:'10px', color:'var(--text-dim)'}}>min/etapa</span>
+                <span style=${{fontSize:'10px', color:'var(--text-dim)'}}>min/etapa (teto)</span>
+                <input type="number" min="0" value=${idleSecDefault} onChange=${e=>setIdleSecDefault(Math.max(0, Number(e.target.value)||0))} style=${{...inputStyle, width:'50px', padding:'5px 6px', fontSize:'11px', textAlign:'center'}} title="Tempo ocioso após o vídeo/música terminar, antes de avançar" />
+                <span style=${{fontSize:'10px', color:'var(--text-dim)'}}>seg. ocioso</span>
                 <button onClick=${()=>setAutoOn(true)} style=${{...btnGhost, padding:'6px 12px', fontSize:'11px'}}>⏱️ Programação Automática</button>
               </div>
             `}
