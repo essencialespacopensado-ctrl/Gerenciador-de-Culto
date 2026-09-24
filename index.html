@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-23.37';
+const APP_VERSION = '2026-09-24.38';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -5534,15 +5534,23 @@ function savePresence(churchId, dKey, data) {
   try { localStorage.setItem(presenceStoreKey(churchId, dKey), JSON.stringify(data)); } catch(e) {}
 }
 
-function AutoSchedule({ churchId, teamKey, members, reminderTemplateForDate }) {
+function AutoSchedule({ churchId, teamKey, members, reminderTemplateForDate, docId, onUpdateChurch, remoteSchedules }) {
   const validMembers = members.filter(m => m.name && m.name.trim());
-  const [sched, setSched] = useState(() => loadSchedule(churchId, teamKey));
+  const [sched, setSched] = useState(() => (remoteSchedules && remoteSchedules[teamKey]) ? remoteSchedules[teamKey] : loadSchedule(churchId, teamKey));
   const [showAddDate, setShowAddDate] = useState(false);
   const [newDate, setNewDate] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const groupSize = sched.groupSize || 2;
 
-  useEffect(() => saveSchedule(churchId, teamKey, sched), [sched, churchId, teamKey]);
+  // Escala (quem está de plantão em cada data) — sincroniza com a nuvem igual às equipes/funções
+  // (mesmo motivo: sem isso, os ajustes de escala só ficavam salvos no navegador de quem editou).
+  // Usa caminho com ponto ("schedules.sonoplastia") no Firestore pra atualizar só essa equipe sem
+  // sobrescrever a escala de outra equipe salva ao mesmo tempo por outra pessoa.
+  useEffect(() => {
+    saveSchedule(churchId, teamKey, sched);
+    if (docId) fbUpdateChurchFields(docId, { ['schedules.' + teamKey]: sched });
+    if (onUpdateChurch) onUpdateChurch({ schedules: { ...(remoteSchedules || {}), [teamKey]: sched } });
+  }, [sched, churchId, teamKey]);
 
   const todayKey = dateKey(new Date());
   const regularKeys = useMemo(() => getSaturdaysForMonths(3), []);
@@ -5664,14 +5672,18 @@ function autoTeamForDate(dateKeyStr, teams) {
   return teams[((w % teams.length) + teams.length) % teams.length];
 }
 
-function AutoScheduleTeams({ churchId, louvorTeams }) {
+function AutoScheduleTeams({ churchId, louvorTeams, docId, onUpdateChurch, remoteSchedules }) {
   const scheduleId = 'louvor_equipes';
-  const [sched, setSched] = useState(() => loadSchedule(churchId, scheduleId));
+  const [sched, setSched] = useState(() => (remoteSchedules && remoteSchedules[scheduleId]) ? remoteSchedules[scheduleId] : loadSchedule(churchId, scheduleId));
   const [showAddDate, setShowAddDate] = useState(false);
   const [newDate, setNewDate] = useState('');
   const [newLabel, setNewLabel] = useState('');
 
-  useEffect(() => saveSchedule(churchId, scheduleId, sched), [sched, churchId]);
+  useEffect(() => {
+    saveSchedule(churchId, scheduleId, sched);
+    if (docId) fbUpdateChurchFields(docId, { ['schedules.' + scheduleId]: sched });
+    if (onUpdateChurch) onUpdateChurch({ schedules: { ...(remoteSchedules || {}), [scheduleId]: sched } });
+  }, [sched, churchId]);
 
   const todayKey = dateKey(new Date());
   const regularKeys = useMemo(() => getSaturdaysForMonths(3), []);
@@ -5967,13 +5979,29 @@ function AnunciosTool({ churchId }) {
   `;
 }
 
-function GestaoView({ churchId, churchName }) {
-  const [teams, setTeams] = useState(() => loadTeams(churchId));
+// Equipes e funções (Gestão) — antes só ficavam salvas no armazenamento local do navegador (por
+// aparelho/navegador), então "sumiam" pra quem abria em outro computador, celular ou depois de
+// limpar os dados do navegador. Corrigido (23/09): igual já acontecia com Dados da Igreja e os
+// fundos musicais, agora sincroniza com o banco compartilhado (Firestore) — o valor vindo da nuvem
+// (church.teams/church.functionsList) tem prioridade no carregamento inicial, e toda alteração é
+// gravada tanto localmente (cache, funciona offline) quanto na nuvem, além de atualizar a sessão na
+// hora (onUpdateChurch) pra refletir imediatamente em qualquer aba/tela aberta.
+function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
+  const docId = church && (church.fbDocId || church.docId);
+  const [teams, setTeams] = useState(() => (church && church.teams) ? church.teams : loadTeams(churchId));
   const [section, setSection] = useState(null);
   const [activeLouvorId, setActiveLouvorId] = useState(null);
-  const [functionsList, setFunctionsList] = useState(() => loadFunctionsList(churchId));
-  useEffect(() => saveTeams(churchId, teams), [teams, churchId]);
-  useEffect(() => saveFunctionsList(churchId, functionsList), [functionsList, churchId]);
+  const [functionsList, setFunctionsList] = useState(() => (church && church.functionsList) ? church.functionsList : loadFunctionsList(churchId));
+  useEffect(() => {
+    saveTeams(churchId, teams);
+    if (docId) fbUpdateChurchFields(docId, { teams });
+    if (onUpdateChurch) onUpdateChurch({ teams });
+  }, [teams, churchId]);
+  useEffect(() => {
+    saveFunctionsList(churchId, functionsList);
+    if (docId) fbUpdateChurchFields(docId, { functionsList });
+    if (onUpdateChurch) onUpdateChurch({ functionsList });
+  }, [functionsList, churchId]);
   useEffect(() => {
     if (!activeLouvorId && teams.louvorTeams.length > 0) setActiveLouvorId(teams.louvorTeams[0].id);
   }, [teams.louvorTeams, activeLouvorId]);
@@ -6121,7 +6149,7 @@ function GestaoView({ churchId, churchName }) {
         <div style=${{display:'grid', gap:'12px'}}>
           <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:0}}>🎚️ Escala da Sonoplastia</h3>
           <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Essa aba é para ver e ajustar a escala automática (em duplas) de quem opera som e vídeo.</div>
-          <${AutoSchedule} churchId=${churchId} teamKey="sonoplastia" members=${teams.sonoplastia} reminderTemplateForDate=${sonoScheduleReminder} />
+          <${AutoSchedule} churchId=${churchId} teamKey="sonoplastia" members=${teams.sonoplastia} reminderTemplateForDate=${sonoScheduleReminder} docId=${docId} onUpdateChurch=${onUpdateChurch} remoteSchedules=${church && church.schedules} />
         </div>
       `}
 
@@ -6129,7 +6157,7 @@ function GestaoView({ churchId, churchName }) {
         <div style=${{display:'grid', gap:'12px'}}>
           <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:0}}>🎤 Escala de Louvor</h3>
           <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Essa aba é para ver qual equipe de louvor serve em cada data, e escrever a mensagem musical.</div>
-          <${AutoScheduleTeams} churchId=${churchId} louvorTeams=${teams.louvorTeams} />
+          <${AutoScheduleTeams} churchId=${churchId} louvorTeams=${teams.louvorTeams} docId=${docId} onUpdateChurch=${onUpdateChurch} remoteSchedules=${church && church.schedules} />
         </div>
       `}
 
@@ -6137,7 +6165,7 @@ function GestaoView({ churchId, churchName }) {
         <div style=${{display:'grid', gap:'12px'}}>
           <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:0}}>🎬 Escala de Mídia</h3>
           <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Essa aba é para ver e ajustar a escala automática (em duplas) da equipe de fotos, filmagem e redes.</div>
-          <${AutoSchedule} churchId=${churchId} teamKey="midia" members=${teams.midia} reminderTemplateForDate=${midiaScheduleReminder} />
+          <${AutoSchedule} churchId=${churchId} teamKey="midia" members=${teams.midia} reminderTemplateForDate=${midiaScheduleReminder} docId=${docId} onUpdateChurch=${onUpdateChurch} remoteSchedules=${church && church.schedules} />
         </div>
       `}
 
@@ -6712,11 +6740,24 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
         return onSnapshot(doc(window.__fb.db, 'igrejas', docId), snap => {
           if (!snap.exists()) return;
           const data = snap.data();
-          onUpdateChurch({
+          const patch = {
             bgMusic: data.bgMusic || null,
             paused: !!data.paused,
             removed: !!data.removed,
-          });
+          };
+          // teams/functionsList/schedules só entram no patch quando a nuvem já tem algo salvo —
+          // assim uma igreja antiga (criada antes desses campos existirem, sem nada salvo ainda na
+          // nuvem) não sobrescreve com "vazio" o que já estiver carregado localmente nesta sessão.
+          // Também grava no armazenamento local (cache) deste aparelho: assim uma tela que lê os
+          // dados direto do armazenamento local sem passar pela sessão (como a Presença, que mostra
+          // quem está escalado) também fica atualizada, mesmo sem ter sido aberta a aba Gestão aqui.
+          if (data.teams) { patch.teams = data.teams; saveTeams(church.id, data.teams); }
+          if (data.functionsList) { patch.functionsList = data.functionsList; saveFunctionsList(church.id, data.functionsList); }
+          if (data.schedules) {
+            patch.schedules = data.schedules;
+            Object.keys(data.schedules).forEach(k => saveSchedule(church.id, k, data.schedules[k]));
+          }
+          onUpdateChurch(patch);
         }, () => {});
       } catch(e) { return () => {}; }
     });
@@ -6728,7 +6769,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'presenca' ? html`<${PresencaView} key="presenca" churchId=${church.id} />` : ''}
       ${tab === 'liturgia' ? html`<${LiturgiaView} key="lit" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />` : ''}
       ${tab === 'musicas' ? html`<${MusicasView} key="musicas" churchId=${church.id} />` : ''}
-      ${tab === 'gestao' ? html`<${GestaoView} key="gestao" churchId=${church.id} churchName=${church.name} />` : ''}
+      ${tab === 'gestao' ? html`<${GestaoView} key="gestao" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       ${tab === 'telas' ? html`<${TelasView} key="telas" churchId=${church.id} />` : ''}
       ${tab === 'mensagem' ? html`<${MensagemView} key="mensagem" churchId=${church.id} items=${mensagemItems} setItems=${setMensagemItems} current=${mensagemCurrent} setCurrent=${setMensagemCurrent} />` : ''}
       ${tab === 'buscas' ? html`<${BuscasSemanaisView} key="buscas" churchId=${church.id} />` : ''}
