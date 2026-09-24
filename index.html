@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-24.38';
+const APP_VERSION = '2026-09-24.39';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -3227,14 +3227,17 @@ function NumberDrawTool({ churchId }) {
 // Ligado direto às atividades de categoria "mensagem_musical" da liturgia da semana (mesmo
 // armazenamento usado pela aba Liturgia) — a pessoa só escolhe o vídeo, o horário já vem pronto.
 // Pensado pra ser preenchido pelo celular, por quem vai cantar/tocar, sem precisar mexer na liturgia inteira.
-function MensagensMusicaisTool({ churchId }) {
-  const [activities, setActivities] = useState(() => loadActivities(churchId));
+function MensagensMusicaisTool({ churchId, church, onUpdateChurch }) {
+  const docId = church && (church.fbDocId || church.docId);
+  const [activities, setActivities] = useState(() => (church && church.activities) || loadActivities(churchId));
   const items = activities.filter(a => a.category === 'mensagem_musical');
 
   const setMediaFor = (actId, media) => {
     setActivities(list => {
       const next = list.map(a => a.id === actId ? { ...a, media: media || null } : a);
       saveActivities(churchId, next);
+      if (docId) fbUpdateChurchFields(docId, { activities: next });
+      if (onUpdateChurch) onUpdateChurch({ activities: next });
       return next;
     });
   };
@@ -3318,7 +3321,7 @@ function CatalogoMusicasTool({ churchId }) {
   `;
 }
 
-function MusicasView({ churchId }) {
+function MusicasView({ churchId, church, onUpdateChurch }) {
   const [selected, setSelected] = useState(null);
   const tabs = [
     { key:'louvor', label:'🎤 Momentos de Louvor' },
@@ -3337,8 +3340,8 @@ function MusicasView({ churchId }) {
       <div style=${{display:'flex', gap:'8px', flexWrap:'wrap'}}>
         ${tabs.map((t,i) => html`<${TabTile} key=${t.key} text=${t.label} idx=${i} delay=${i} active=${selected===t.key} onClick=${()=>setSelected(s => s===t.key ? null : t.key)} />`)}
       </div>
-      ${selected === 'louvor' && html`<${MomentosLouvorTool} churchId=${churchId} />`}
-      ${selected === 'mensagens' && html`<${MensagensMusicaisTool} churchId=${churchId} />`}
+      ${selected === 'louvor' && html`<${MomentosLouvorTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} />`}
+      ${selected === 'mensagens' && html`<${MensagensMusicaisTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} />`}
       ${selected === 'catalogo' && html`<${CatalogoMusicasTool} churchId=${churchId} />`}
       ${selected && selected.startsWith('col:') && html`<${ColetaneasCategoryGrid} churchId=${churchId} category=${selected.slice(4)} />`}
     </div>
@@ -3802,14 +3805,17 @@ function ColetaneasCategoryGrid({ churchId, category }) {
 // Ligado direto às atividades de categoria "louvor" da liturgia da semana (mesmo armazenamento
 // usado pela aba Liturgia) — a equipe só escolhe qual louvor é o seu (1, 2 ou 3) e busca o vídeo;
 // o horário já vem pronto. Pensado pra ser preenchido pelo celular, sem precisar mexer na liturgia inteira.
-function MomentosLouvorTool({ churchId }) {
-  const [activities, setActivities] = useState(() => loadActivities(churchId));
+function MomentosLouvorTool({ churchId, church, onUpdateChurch }) {
+  const docId = church && (church.fbDocId || church.docId);
+  const [activities, setActivities] = useState(() => (church && church.activities) || loadActivities(churchId));
   const items = activities.filter(a => a.category === 'louvor');
 
   const setMediaFor = (actId, media) => {
     setActivities(list => {
       const next = list.map(a => a.id === actId ? { ...a, media: media || null } : a);
       saveActivities(churchId, next);
+      if (docId) fbUpdateChurchFields(docId, { activities: next });
+      if (onUpdateChurch) onUpdateChurch({ activities: next });
       return next;
     });
   };
@@ -5085,13 +5091,23 @@ function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch,
 }
 
 function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
-  const [activities, setActivities] = useState(() => loadActivities(churchId));
+  // Liturgia (programação do sábado) — antes só ficava salva no armazenamento local do navegador,
+  // então "sumia" pra quem abria em outro computador/celular ou depois de limpar os dados do
+  // navegador (esse era o bug relatado: "estou cadastrando... mas não estão ficando salvas").
+  // Corrigido (24/09): mesmo padrão já usado em Gestão — o valor vindo da nuvem tem prioridade no
+  // carregamento inicial, e toda alteração é gravada local (cache, funciona offline) e na nuvem.
+  const docId = church && (church.fbDocId || church.docId);
+  const [activities, setActivities] = useState(() => (church && church.activities) ? church.activities : loadActivities(churchId));
   const [adding, setAdding] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [finalizeOpen, setFinalizeOpen] = useState(false);
   const [makeDefaultGate, setMakeDefaultGate] = useState(false);
 
-  useEffect(() => saveActivities(churchId, activities), [activities, churchId]);
+  useEffect(() => {
+    saveActivities(churchId, activities);
+    if (docId) fbUpdateChurchFields(docId, { activities });
+    if (onUpdateChurch) onUpdateChurch({ activities });
+  }, [activities, churchId]);
 
   // Atualiza sozinho o link de itens dinâmicos (Provai e Vede / Informativo) e completa quem ainda não tem
   useEffect(() => {
@@ -5159,7 +5175,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Assistente de liturgia: '+newActs.length+' atividade(s) adicionada(s) por texto' });
   };
 
-  const savedDefault = loadDefaultLiturgy(churchId);
+  const savedDefault = (church && church.defaultLiturgy) || loadDefaultLiturgy(churchId);
 
   // Restaura o padrão SEM apagar o que está trancado (🔒): tudo que não tem cadeado é removido e
   // trocado pelo conteúdo do modelo padrão; o que está trancado fica exatamente onde estava.
@@ -5183,7 +5199,9 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       // já oferece criar o padrão agora, com a liturgia atual, e explica em uma frase o que fazer
       // se quiser trocar isso depois.
       if (window.confirm('Você ainda não tem uma Liturgia Padrão salva, então não tem o que restaurar. Quer usar a liturgia de AGORA como o padrão? (dá pra trocar depois em Gestão > 🔒 Liturgia Padrão)')) {
-        saveDefaultLiturgyVersion(churchId, activities.map(a => ({...a})), null);
+        const newDefault = saveDefaultLiturgyVersion(churchId, activities.map(a => ({...a})), null);
+        if (docId) fbUpdateChurchFields(docId, { defaultLiturgy: newDefault });
+        if (onUpdateChurch) onUpdateChurch({ defaultLiturgy: newDefault });
         pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia padrão criada a partir da liturgia atual' });
         alert('Pronto! Essa liturgia agora é o seu padrão. Da próxima vez que clicar em "Restaurar Padrão", tudo que não estiver trancado (🔒) volta pra esse ponto.');
       }
@@ -5196,7 +5214,9 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   // Salva a liturgia de AGORA (como está na tela) como o novo modelo padrão — direto por aqui,
   // sem precisar ir em Gestão. Continua protegido por senha, igual ao fluxo de lá.
   const makeCurrentDefault = (password) => {
-    saveDefaultLiturgyVersion(churchId, activities.map(a => ({...a})), password);
+    const newDefault = saveDefaultLiturgyVersion(churchId, activities.map(a => ({...a})), password);
+    if (docId) fbUpdateChurchFields(docId, { defaultLiturgy: newDefault });
+    if (onUpdateChurch) onUpdateChurch({ defaultLiturgy: newDefault });
     pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia padrão atualizada a partir da liturgia atual' });
     setMakeDefaultGate(false);
     alert('Pronto! A liturgia de agora foi salva como o novo padrão. Toda vez que clicar em "Restaurar Padrão", tudo que não estiver trancado (🔒) volta pra esse ponto.');
@@ -5235,7 +5255,12 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       louvor: { teamName: s.louvorTeamName, musica: s.musica, members: s.louvor.team ? s.louvor.team.members.map(m=>({name:m.name, function:m.function})) : [] },
     };
     const arch = loadArchive(churchId);
-    saveArchive(churchId, [record, ...arch]);
+    // Limita a 20 cultos arquivados (os mais recentes) — evita que o histórico cresça sem limite e
+    // estoure o tamanho máximo de um documento no banco compartilhado (Firestore, 1MB por igreja).
+    const newArch = [record, ...arch].slice(0, 20);
+    saveArchive(churchId, newArch);
+    if (docId) fbUpdateChurchFields(docId, { archive: newArch });
+    if (onUpdateChurch) onUpdateChurch({ archive: newArch });
     pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Culto finalizado e arquivado ('+s.dateLabel+')' });
     setFinalizeOpen(false);
   };
@@ -5769,14 +5794,15 @@ function AutoScheduleTeams({ churchId, louvorTeams, docId, onUpdateChurch, remot
   `;
 }
 
-function LiturgiaPadraoTool({ churchId, churchName }) {
+function LiturgiaPadraoTool({ churchId, churchName, church, onUpdateChurch }) {
+  const docId = church && (church.fbDocId || church.docId);
   const [refreshTick, setRefreshTick] = useState(0);
   const [gateOpen, setGateOpen] = useState(false);
   const [postUnlockMenu, setPostUnlockMenu] = useState(false);
   const [editorState, setEditorState] = useState(null); // { list, password }
   const [versionPicker, setVersionPicker] = useState(null); // versions[]
 
-  const savedDefault = loadDefaultLiturgy(churchId);
+  const savedDefault = (church && church.defaultLiturgy) || loadDefaultLiturgy(churchId);
 
   const unlockEditor = (password) => {
     if (savedDefault && savedDefault.password) {
@@ -5786,7 +5812,7 @@ function LiturgiaPadraoTool({ churchId, churchName }) {
     setPostUnlockMenu({ password: (savedDefault && savedDefault.password) || password });
   };
   const openEditorFromMenu = () => {
-    setEditorState({ list: loadActivities(churchId), password: postUnlockMenu.password });
+    setEditorState({ list: (church && church.activities) || loadActivities(churchId), password: postUnlockMenu.password });
     setPostUnlockMenu(false);
   };
   const openOldVersionsFromMenu = () => {
@@ -5794,13 +5820,18 @@ function LiturgiaPadraoTool({ churchId, churchName }) {
     setPostUnlockMenu(false);
   };
   const saveEditorAsDefault = (newList) => {
-    saveDefaultLiturgyVersion(churchId, newList, editorState.password);
+    const newDefault = saveDefaultLiturgyVersion(churchId, newList, editorState.password);
+    if (docId) fbUpdateChurchFields(docId, { defaultLiturgy: newDefault });
+    if (onUpdateChurch) onUpdateChurch({ defaultLiturgy: newDefault });
     pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia padrão atualizada' });
     setEditorState(null);
     setRefreshTick(t=>t+1);
   };
   const applyOldVersion = (version) => {
-    saveActivities(churchId, version.list.map(a => ({...a, done:false})));
+    const restored = version.list.map(a => ({...a, done:false}));
+    saveActivities(churchId, restored);
+    if (docId) fbUpdateChurchFields(docId, { activities: restored });
+    if (onUpdateChurch) onUpdateChurch({ activities: restored });
     pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia restaurada para o padrão de '+new Date(version.at).toLocaleString('pt-BR') });
     setVersionPicker(null);
     alert('Pronto! A liturgia atual (aba Liturgia) foi atualizada para essa versão antiga do padrão.');
@@ -6249,7 +6280,7 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
         <div style=${{display:'grid', gap:'12px'}}>
           <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:0}}>🔒 Liturgia Padrão</h3>
           <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Essa aba é para definir e proteger o modelo de liturgia que será usado sempre que alguém clicar em "Restaurar Padrão" na aba Liturgia.</div>
-          <${LiturgiaPadraoTool} churchId=${churchId} churchName=${churchName} />
+          <${LiturgiaPadraoTool} churchId=${churchId} churchName=${churchName} church=${church} onUpdateChurch=${onUpdateChurch} />
         </div>
       `}
 
@@ -6304,20 +6335,28 @@ function distanceMeters(lat1, lng1, lat2, lng2) {
 }
 const PRESENCE_RADIUS_M = 200;
 
-function PresencaView({ churchId }) {
+function PresencaView({ churchId, church, onUpdateChurch }) {
+  // Localização da igreja e confirmações de presença — antes só ficavam salvas no aparelho de quem
+  // definiu/confirmou. Corrigido (24/09): sincroniza com a nuvem (mesmo padrão de Gestão/Liturgia),
+  // senão a presença confirmada no celular de uma pessoa nunca apareceria no computador de quem está
+  // conferindo a escala, nem a localização da igreja definida num aparelho valeria nos outros.
+  const docId = church && (church.fbDocId || church.docId);
   const [teams, setTeams] = useState(() => loadTeams(churchId));
   const targetKey = useMemo(() => getSaturdaysForMonths(3)[0], []);
   const targetDate = keyToDate(targetKey);
   const scheduled = useMemo(() => getScheduledGroupForDate(churchId, 'sonoplastia', teams.sonoplastia, targetKey), [teams.sonoplastia, targetKey]);
-  const [presence, setPresence] = useState(() => loadPresence(churchId, targetKey));
+  const remotePresence = church && church.presence && church.presence[targetKey];
+  const [presence, setPresence] = useState(() => remotePresence || loadPresence(churchId, targetKey));
   const [status, setStatus] = useState({});
-  const [churchLoc, setChurchLoc] = useState(() => loadChurchLocation(churchId));
+  const [churchLoc, setChurchLoc] = useState(() => (church && church.churchLocation) || loadChurchLocation(churchId));
   const [settingLoc, setSettingLoc] = useState(false);
 
   const markPresent = (memberId, method, coords) => {
     setPresence(p => {
       const next = { ...p, [memberId]: { method, at: new Date().toISOString(), coords: coords || null } };
       savePresence(churchId, targetKey, next);
+      if (docId) fbUpdateChurchFields(docId, { ['presence.' + targetKey]: next });
+      if (onUpdateChurch) onUpdateChurch({ presence: { ...(church && church.presence || {}), [targetKey]: next } });
       return next;
     });
   };
@@ -6330,6 +6369,8 @@ function PresencaView({ churchId }) {
         const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         saveChurchLocation(churchId, loc);
         setChurchLoc(loc);
+        if (docId) fbUpdateChurchFields(docId, { churchLocation: loc });
+        if (onUpdateChurch) onUpdateChurch({ churchLocation: loc });
         setSettingLoc(false);
       },
       () => setSettingLoc(false),
@@ -6757,6 +6798,18 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
             patch.schedules = data.schedules;
             Object.keys(data.schedules).forEach(k => saveSchedule(church.id, k, data.schedules[k]));
           }
+          // Mesmo motivo/padrão acima, agora também pra Liturgia (programação do sábado, padrão
+          // salvo, arquivo de cultos finalizados), presença e localização da igreja (24/09) —
+          // todas essas configurações também sincronizam com a nuvem e ficam disponíveis em
+          // qualquer aparelho, sem precisar deslogar/logar de novo.
+          if (data.activities) { patch.activities = data.activities; saveActivities(church.id, data.activities); }
+          if (data.defaultLiturgy) { patch.defaultLiturgy = data.defaultLiturgy; try { localStorage.setItem(defaultLiturgyKey(church.id), JSON.stringify(data.defaultLiturgy)); } catch(e) {} }
+          if (data.archive) { patch.archive = data.archive; saveArchive(church.id, data.archive); }
+          if (data.churchLocation) { patch.churchLocation = data.churchLocation; saveChurchLocation(church.id, data.churchLocation); }
+          if (data.presence) {
+            patch.presence = data.presence;
+            Object.keys(data.presence).forEach(k => savePresence(church.id, k, data.presence[k]));
+          }
           onUpdateChurch(patch);
         }, () => {});
       } catch(e) { return () => {}; }
@@ -6766,9 +6819,9 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   return html`
     <div>
       <${ChurchHeader} church=${church} tab=${tab} setTab=${setTab} onLogout=${onLogout} />
-      ${tab === 'presenca' ? html`<${PresencaView} key="presenca" churchId=${church.id} />` : ''}
+      ${tab === 'presenca' ? html`<${PresencaView} key="presenca" churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       ${tab === 'liturgia' ? html`<${LiturgiaView} key="lit" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />` : ''}
-      ${tab === 'musicas' ? html`<${MusicasView} key="musicas" churchId=${church.id} />` : ''}
+      ${tab === 'musicas' ? html`<${MusicasView} key="musicas" churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       ${tab === 'gestao' ? html`<${GestaoView} key="gestao" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       ${tab === 'telas' ? html`<${TelasView} key="telas" churchId=${church.id} />` : ''}
       ${tab === 'mensagem' ? html`<${MensagemView} key="mensagem" churchId=${church.id} items=${mensagemItems} setItems=${setMensagemItems} current=${mensagemCurrent} setCurrent=${setMensagemCurrent} />` : ''}
