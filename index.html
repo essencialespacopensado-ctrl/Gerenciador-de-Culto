@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-24.39';
+const APP_VERSION = '2026-09-24.40';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -343,9 +343,17 @@ function useSyncedChurches() {
         const loginLower = rc.login.toLowerCase();
         if (!remoteByLogin.has(loginLower)) remoteByLogin.set(loginLower, rc);
       });
+      // Campos "de conteúdo" da igreja (programação, equipes, escalas etc.) — além do bgMusic, que já
+      // era tratado assim. Precisam vir junto AQUI (na lista que fica pronta ANTES da tela de login,
+      // enquanto a pessoa ainda está digitando usuário/senha) e não só através do "ouvinte" de dentro
+      // do painel da igreja: senão, ao abrir uma aba (Liturgia, Gestão...) pela primeira vez num
+      // aparelho novo — ou depois de limpar o cache — ela nasce sem saber que já existe algo salvo na
+      // nuvem, assume que está "vazia" e pode acabar regravando por cima do que já tinha, apagando de
+      // verdade o que a pessoa cadastrou. Corrigido em 24/09.
+      const CONTENT_FIELDS = ['activities', 'defaultLiturgy', 'archive', 'teams', 'functionsList', 'schedules', 'churchLocation', 'presence'];
       remoteByLogin.forEach((rc, loginLower) => {
         if (!currentLogins.has(loginLower)) {
-          merged.push({
+          const entry = {
             id: rc.churchId || ('igreja-remote-' + rc.docId),
             name: rc.name, city: rc.city || '', state: rc.state || '',
             division: rc.division || '', union: rc.union || '',
@@ -356,7 +364,9 @@ function useSyncedChurches() {
             recoveryAnswerHash: rc.recoveryAnswerHash || null,
             paused: !!rc.paused, removed: !!rc.removed, bgMusic: rc.bgMusic || null,
             createdAt: rc.createdAt, fbDocId: rc.docId, remoteOnly: true
-          });
+          };
+          CONTENT_FIELDS.forEach(f => { if (rc[f] !== undefined) entry[f] = rc[f]; });
+          merged.push(entry);
           currentLogins.add(loginLower);
           changed = true;
         } else {
@@ -368,10 +378,14 @@ function useSyncedChurches() {
             if (rc.passwordHash && rc.passwordHash !== cur.passwordHash) patch.passwordHash = rc.passwordHash;
             if (!!rc.paused !== !!cur.paused) patch.paused = !!rc.paused;
             if (!!rc.removed !== !!cur.removed) patch.removed = !!rc.removed;
-            // bgMusic é comparado como texto porque é uma lista — só atualiza o cache local (e assim
-            // o próximo login neste aparelho já vem com os fundos musicais de outro aparelho) quando
-            // realmente mudou, pra não ficar regravando localStorage sem necessidade.
+            // bgMusic e os campos de conteúdo (programação, equipes, escalas...) são comparados como
+            // texto porque são objetos/listas — só atualiza o cache local (e assim o próximo login
+            // neste aparelho já vem com o que foi salvo em outro aparelho) quando realmente mudou, pra
+            // não ficar regravando localStorage sem necessidade.
             if (JSON.stringify(rc.bgMusic || null) !== JSON.stringify(cur.bgMusic || null)) patch.bgMusic = rc.bgMusic || null;
+            CONTENT_FIELDS.forEach(f => {
+              if (rc[f] !== undefined && JSON.stringify(rc[f]) !== JSON.stringify(cur[f])) patch[f] = rc[f];
+            });
             if (Object.keys(patch).length) { merged[idx] = { ...cur, ...patch }; changed = true; }
           }
         }
@@ -5103,8 +5117,15 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   const [finalizeOpen, setFinalizeOpen] = useState(false);
   const [makeDefaultGate, setMakeDefaultGate] = useState(false);
 
+  // Trava de segurança: a primeira vez que este efeito roda (assim que a tela abre) NÃO manda nada
+  // pra nuvem — só guarda local. Isso evita que, no instante entre abrir a tela e a nuvem confirmar
+  // o que já existe (uma fração de segundo, mas existe), a gente grave por cima o que já estava
+  // salvo com um valor "vazio"/de exemplo carregado só como ponto de partida. Da segunda mudança
+  // em diante (o que a pessoa realmente editar), sincroniza normalmente.
+  const skipFirstSync = useRef(true);
   useEffect(() => {
     saveActivities(churchId, activities);
+    if (skipFirstSync.current) { skipFirstSync.current = false; return; }
     if (docId) fbUpdateChurchFields(docId, { activities });
     if (onUpdateChurch) onUpdateChurch({ activities });
   }, [activities, churchId]);
@@ -5571,8 +5592,10 @@ function AutoSchedule({ churchId, teamKey, members, reminderTemplateForDate, doc
   // (mesmo motivo: sem isso, os ajustes de escala só ficavam salvos no navegador de quem editou).
   // Usa caminho com ponto ("schedules.sonoplastia") no Firestore pra atualizar só essa equipe sem
   // sobrescrever a escala de outra equipe salva ao mesmo tempo por outra pessoa.
+  const skipFirstSchedSync = useRef(true);
   useEffect(() => {
     saveSchedule(churchId, teamKey, sched);
+    if (skipFirstSchedSync.current) { skipFirstSchedSync.current = false; return; }
     if (docId) fbUpdateChurchFields(docId, { ['schedules.' + teamKey]: sched });
     if (onUpdateChurch) onUpdateChurch({ schedules: { ...(remoteSchedules || {}), [teamKey]: sched } });
   }, [sched, churchId, teamKey]);
@@ -5704,8 +5727,10 @@ function AutoScheduleTeams({ churchId, louvorTeams, docId, onUpdateChurch, remot
   const [newDate, setNewDate] = useState('');
   const [newLabel, setNewLabel] = useState('');
 
+  const skipFirstSchedSync = useRef(true);
   useEffect(() => {
     saveSchedule(churchId, scheduleId, sched);
+    if (skipFirstSchedSync.current) { skipFirstSchedSync.current = false; return; }
     if (docId) fbUpdateChurchFields(docId, { ['schedules.' + scheduleId]: sched });
     if (onUpdateChurch) onUpdateChurch({ schedules: { ...(remoteSchedules || {}), [scheduleId]: sched } });
   }, [sched, churchId]);
@@ -6023,13 +6048,20 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
   const [section, setSection] = useState(null);
   const [activeLouvorId, setActiveLouvorId] = useState(null);
   const [functionsList, setFunctionsList] = useState(() => (church && church.functionsList) ? church.functionsList : loadFunctionsList(churchId));
+  // Mesma trava de segurança usada na Liturgia (24/09): não manda nada pra nuvem na primeiríssima
+  // vez que a tela abre, só guarda local — evita apagar dado real da nuvem com um "vazio" de
+  // partida caso a tela abra antes da nuvem confirmar o que já existe.
+  const skipFirstTeamsSync = useRef(true);
+  const skipFirstFunctionsSync = useRef(true);
   useEffect(() => {
     saveTeams(churchId, teams);
+    if (skipFirstTeamsSync.current) { skipFirstTeamsSync.current = false; return; }
     if (docId) fbUpdateChurchFields(docId, { teams });
     if (onUpdateChurch) onUpdateChurch({ teams });
   }, [teams, churchId]);
   useEffect(() => {
     saveFunctionsList(churchId, functionsList);
+    if (skipFirstFunctionsSync.current) { skipFirstFunctionsSync.current = false; return; }
     if (docId) fbUpdateChurchFields(docId, { functionsList });
     if (onUpdateChurch) onUpdateChurch({ functionsList });
   }, [functionsList, churchId]);
