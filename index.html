@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.41';
+const APP_VERSION = '2026-09-25.42';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -5117,12 +5117,16 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   const [finalizeOpen, setFinalizeOpen] = useState(false);
   const [makeDefaultGate, setMakeDefaultGate] = useState(false);
 
-  // Trava de segurança: a primeira vez que este efeito roda (assim que a tela abre) NÃO manda nada
-  // pra nuvem — só guarda local. Isso evita que, no instante entre abrir a tela e a nuvem confirmar
-  // o que já existe (uma fração de segundo, mas existe), a gente grave por cima o que já estava
-  // salvo com um valor "vazio"/de exemplo carregado só como ponto de partida. Da segunda mudança
-  // em diante (o que a pessoa realmente editar), sincroniza normalmente.
-  const skipFirstSync = useRef(true);
+  // Trava de segurança: a primeira vez que este efeito roda (assim que a tela abre) só NÃO manda
+  // nada pra nuvem quando a nuvem já tinha algo (church.activities definido) — evita que, no
+  // instante entre abrir a tela e a nuvem confirmar o que já existe, a gente grave por cima o que
+  // já estava salvo com um valor "vazio"/de exemplo carregado só como ponto de partida. MAS se a
+  // nuvem não tinha NADA ainda pra essa igreja (campo indefinido — igreja nova, ou programação que
+  // só existe neste aparelho e nunca foi enviada), manda esse primeiro valor sim: não existe risco
+  // de apagar nada, e sem isso uma programação feita só localmente (num aparelho que nunca chegou a
+  // fazer uma "segunda" edição) ficava presa pra sempre nesse aparelho, nunca aparecendo em outro
+  // (bug relatado em 25/09: "a programação feita em outro aparelho não está salvando na nuvem").
+  const skipFirstSync = useRef(!!(church && church.activities !== undefined));
   useEffect(() => {
     saveActivities(churchId, activities);
     if (skipFirstSync.current) { skipFirstSync.current = false; return; }
@@ -5591,8 +5595,11 @@ function AutoSchedule({ churchId, teamKey, members, reminderTemplateForDate, doc
   // Escala (quem está de plantão em cada data) — sincroniza com a nuvem igual às equipes/funções
   // (mesmo motivo: sem isso, os ajustes de escala só ficavam salvos no navegador de quem editou).
   // Usa caminho com ponto ("schedules.sonoplastia") no Firestore pra atualizar só essa equipe sem
-  // sobrescrever a escala de outra equipe salva ao mesmo tempo por outra pessoa.
-  const skipFirstSchedSync = useRef(true);
+  // sobrescrever a escala de outra equipe salva ao mesmo tempo por outra pessoa. A trava só pula o
+  // primeiríssimo envio quando a nuvem JÁ tinha algo pra essa equipe — se ainda não tinha nada
+  // (igreja nova ou escala feita só neste aparelho e nunca enviada), manda de primeira, sem esperar
+  // uma segunda mudança (25/09 — mesma correção da Liturgia, ver comentário lá).
+  const skipFirstSchedSync = useRef(!!(remoteSchedules && remoteSchedules[teamKey] !== undefined));
   useEffect(() => {
     saveSchedule(churchId, teamKey, sched);
     if (skipFirstSchedSync.current) { skipFirstSchedSync.current = false; return; }
@@ -5727,7 +5734,8 @@ function AutoScheduleTeams({ churchId, louvorTeams, docId, onUpdateChurch, remot
   const [newDate, setNewDate] = useState('');
   const [newLabel, setNewLabel] = useState('');
 
-  const skipFirstSchedSync = useRef(true);
+  // Mesma correção de 25/09: só pula o primeiro envio se a nuvem já tinha algo pra essa escala.
+  const skipFirstSchedSync = useRef(!!(remoteSchedules && remoteSchedules[scheduleId] !== undefined));
   useEffect(() => {
     saveSchedule(churchId, scheduleId, sched);
     if (skipFirstSchedSync.current) { skipFirstSchedSync.current = false; return; }
@@ -6111,11 +6119,14 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
   const [section, setSection] = useState(null);
   const [activeLouvorId, setActiveLouvorId] = useState(null);
   const [functionsList, setFunctionsList] = useState(() => (church && church.functionsList) ? church.functionsList : loadFunctionsList(churchId));
-  // Mesma trava de segurança usada na Liturgia (24/09): não manda nada pra nuvem na primeiríssima
-  // vez que a tela abre, só guarda local — evita apagar dado real da nuvem com um "vazio" de
-  // partida caso a tela abra antes da nuvem confirmar o que já existe.
-  const skipFirstTeamsSync = useRef(true);
-  const skipFirstFunctionsSync = useRef(true);
+  // Mesma trava de segurança usada na Liturgia (24/09, refinada em 25/09): só pula o primeiríssimo
+  // envio pra nuvem quando a nuvem JÁ tinha algo (church.teams/functionsList definidos) — evita
+  // apagar dado real com um "vazio" de partida caso a tela abra antes da nuvem confirmar o que já
+  // existe. Se a nuvem não tinha NADA ainda (igreja nova, ou equipes cadastradas só neste aparelho
+  // e nunca enviadas), manda de primeira — sem isso, ficava preso só no aparelho até uma "segunda"
+  // edição, e nunca aparecia em outro computador/celular.
+  const skipFirstTeamsSync = useRef(!!(church && church.teams !== undefined));
+  const skipFirstFunctionsSync = useRef(!!(church && church.functionsList !== undefined));
   useEffect(() => {
     saveTeams(churchId, teams);
     if (skipFirstTeamsSync.current) { skipFirstTeamsSync.current = false; return; }
