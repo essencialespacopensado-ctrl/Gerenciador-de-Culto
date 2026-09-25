@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.46';
+const APP_VERSION = '2026-09-25.47';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2093,6 +2093,85 @@ function ProjectButton({ churchId, media, itemKey }) {
   `;
 }
 
+// Cronômetro pra atividades que NÃO têm vídeo/música (oração, sermão, avisos, momento de dízimo
+// falado, etc.) — pedido do Paulo (25/09): poder escolher em que tela projetar, e a tela mostrar o
+// que já está cadastrado na Liturgia (nome da atividade + responsável/horário) junto com o relógio.
+// O tempo roda aqui no painel (pra continuar contando mesmo se a tela de projeção travar/recarregar,
+// já que ela recalcula sozinha a partir de startedAt+pausedMs) e só manda mensagem pra tela quando
+// muda de estado (Iniciar/Pausar/Zerar ou troca de tela) — não fica mandando a cada segundo.
+function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time }) {
+  const [ms, setMs] = useState(0);
+  const [running, setRunning] = useState(false);
+  const startRef = useRef(0);
+  const [targets, setTargets] = useState([]);
+
+  useEffect(() => {
+    if (!running) return;
+    startRef.current = Date.now() - ms;
+    const id = setInterval(() => setMs(Date.now() - startRef.current), 200);
+    return () => clearInterval(id);
+  }, [running]);
+
+  const pushToTargets = (scrs, runningNow, msNow) => {
+    scrs.forEach(scr => {
+      try {
+        sendToScreenObj(scr, 'cronometro', { title, responsible, time, running: runningNow, startedAt: runningNow ? (Date.now() - msNow) : null, pausedMs: msNow });
+      } catch (e) {}
+    });
+  };
+
+  useEffect(() => {
+    if (targets.length === 0) return;
+    pushToTargets(targets, running, ms);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
+
+  const sendTo = (which) => {
+    try {
+      const enabled = loadEnabledScreens(churchId);
+      if (enabled.length === 0) { alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.'); return; }
+      let scrs;
+      if (which === 'projetor') {
+        const projectors = enabled.filter(s => s.isProjector);
+        scrs = projectors.length > 0 ? projectors : pickTargetScreens(churchId, itemKey, enabled);
+      } else {
+        scrs = enabled.filter(s => !s.isProjector);
+        if (scrs.length === 0) { alert('Nenhuma tela de operador configurada ainda. Vá na aba "Telas", habilite uma tela a mais (sem marcar como Projetor) pra usar esse botão sem som.'); return; }
+      }
+      setTargets(scrs);
+      pushToTargets(scrs, running, ms);
+    } catch (e) {
+      alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
+    }
+  };
+
+  const reset = () => {
+    setRunning(false);
+    setMs(0);
+    if (targets.length > 0) pushToTargets(targets, false, 0);
+  };
+
+  const format = (t) => {
+    const totalSec = Math.floor(t / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
+    const s = String(totalSec % 60).padStart(2, '0');
+    return h > 0 ? (h + ':' + m + ':' + s) : (m + ':' + s);
+  };
+
+  return html`
+    <div style=${{display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>
+      <div style=${{fontSize:'13px', fontWeight:800, fontVariantNumeric:'tabular-nums', minWidth:'50px'}}>⏱️ ${format(ms)}</div>
+      <button type="button" onClick=${()=>setRunning(r=>!r)} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}}>${running ? '⏸ Pausar' : '▶ Iniciar'}</button>
+      <button type="button" onClick=${reset} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}}>↺ Zerar</button>
+      <button type="button" onClick=${()=>sendTo('operador')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Mostrar o cronômetro só na tela do operador, sem som">🎧 Operador</button>
+      <button type="button" onClick=${()=>sendTo('projetor')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Mostrar o cronômetro no projetor">🔊 Projetor</button>
+      ${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`}
+      ${targets.length > 0 && html`<span style=${{fontSize:'10px', color:'var(--success-1)', fontWeight:700}}>● na tela</span>`}
+    </div>
+  `;
+}
+
 // Usada pelos itens da aba Mensagem (fotos, slides de PowerPoint convertidos, vídeos locais) — tanto
 // pelos botões "Projetar" de cada item quanto pelas setas de navegação, que reusam essa mesma lógica
 // pra sempre mandar pra tela do jeito certo (imagem ou vídeo).
@@ -2249,11 +2328,19 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
               ? html`<${MediaSearchField} media=${media} onChange=${(m)=>{ setMedia(m); onEdit({...act, media: m || null}); }} searchKey=${act.id} />`
               : html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>🎬 ${media.title}</div>`}
           </div>
-          ${media && media.title && html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${ProjectButton} churchId=${churchId} media=${media} itemKey=${act.id} /></div>`}
+          ${media && media.title
+            ? html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${ProjectButton} churchId=${churchId} media=${media} itemKey=${act.id} /></div>`
+            : (needsMedia && !act.fixed && !act.weeklyFixed && html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${CronometroAtividadeButton} churchId=${churchId} itemKey=${act.id} title=${act.name} responsible=${act.responsible} time=${act.time} /></div>`)}
+        </div>
+      `}
+      ${act.category === 'oracao' && !editing && html`
+        <div style=${{marginLeft: isMobile ? '0' : '46px'}}>
+          <${CronometroAtividadeButton} churchId=${churchId} itemKey=${act.id} title=${act.name} responsible=${act.responsible} time=${act.time} />
         </div>
       `}
       ${act.category === 'sermao' && !editing && html`
         <div style=${{marginLeft: isMobile ? '0' : '46px', display:'grid', gap:'8px'}}>
+          <${CronometroAtividadeButton} churchId=${churchId} itemKey=${act.id+'-crono'} title=${act.name} responsible=${act.responsible} time=${act.time} />
           ${(!mensagemItems || mensagemItems.length === 0)
             ? html`<div style=${{fontSize:'11px', color:'var(--text-dim)', padding:'6px 2px'}}>Nenhum arquivo carregado ainda — vá na aba 🎤 Mensagem pra carregar fotos, vídeos ou PowerPoint da pregação.</div>`
             : html`
@@ -2860,6 +2947,7 @@ function projectionShellHtml() {
       + 'var overlayTimer=null,overlayClearTimer=null;'
       + 'var fsBtn=document.getElementById("fs-fallback");'
       + 'var ytPlayer=null,fading=false;var localVideoEl=null;var lastMute=false;'
+      + 'var cronoInterval=null,cronoItem=null;'
       + 'function tryFullscreen(){'
         + 'try{'
           + 'if(document.fullscreenElement){fsBtn.style.display="none";return;}'
@@ -2867,9 +2955,27 @@ function projectionShellHtml() {
         + '}catch(e){}'
       + '}'
       + 'fsBtn.onclick=tryFullscreen;'
-      + 'function renderBlank(){stage.innerHTML="";localVideoEl=null;ytPlayer=null;}'
-      + 'function renderText(text){stage.innerHTML="";localVideoEl=null;ytPlayer=null;var h=document.createElement("h1");h.textContent=text||"";h.style.whiteSpace="pre-line";h.style.lineHeight="1.35";h.style.fontSize="clamp(28px, 4.6vw, 74px)";stage.appendChild(h);}'
-      + 'function renderImage(item){stage.innerHTML="";localVideoEl=null;ytPlayer=null;var img=document.createElement("img");img.src=(item&&item.dataUrl)||"";img.alt=(item&&item.title)||"";stage.appendChild(img);}'
+      + 'function renderBlank(){stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();}'
+      + 'function renderText(text){stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();var h=document.createElement("h1");h.textContent=text||"";h.style.whiteSpace="pre-line";h.style.lineHeight="1.35";h.style.fontSize="clamp(28px, 4.6vw, 74px)";stage.appendChild(h);}'
+      + 'function renderImage(item){stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();var img=document.createElement("img");img.src=(item&&item.dataUrl)||"";img.alt=(item&&item.title)||"";stage.appendChild(img);}'
+      // Cronômetro pra atividades sem vídeo/música (oração, sermão, avisos falados, etc.) — mostra o
+      // nome/responsável já cadastrados na Liturgia (pedido do Paulo, 25/09) em cima de um relógio
+      // grande. O tempo é calculado aqui na tela a partir de startedAt (quando rodando) + pausedMs
+      // (acumulado até a última pausa), então não precisa ficar recebendo mensagem a cada segundo —
+      // só quando o operador aperta Iniciar/Pausar/Zerar lá no painel.
+      + 'function clearCronoInterval(){if(cronoInterval){clearInterval(cronoInterval);cronoInterval=null;}}'
+      + 'function fmtCrono(ms){ms=Math.max(0,ms||0);var totalSec=Math.floor(ms/1000);var h=Math.floor(totalSec/3600);var m=Math.floor((totalSec%3600)/60);var s=totalSec%60;var mm=(m<10?"0":"")+m,ss=(s<10?"0":"")+s;return h>0?(h+":"+mm+":"+ss):(mm+":"+ss);}'
+      + 'function renderCronometro(item){'
+        + 'stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();cronoItem=item||{};'
+        + 'var wrap=document.createElement("div");wrap.style.textAlign="center";wrap.style.padding="0 4vw";'
+        + 'if(cronoItem.title){var t=document.createElement("div");t.textContent=cronoItem.title;t.style.fontSize="clamp(20px,3.2vw,44px)";t.style.fontWeight="800";t.style.marginBottom="1.6vh";t.style.opacity="0.92";wrap.appendChild(t);}'
+        + 'var subText=[cronoItem.responsible,cronoItem.time].filter(Boolean).join(" • ");'
+        + 'if(subText){var sub=document.createElement("div");sub.textContent=subText;sub.style.fontSize="clamp(14px,1.8vw,24px)";sub.style.opacity="0.62";sub.style.marginBottom="4vh";wrap.appendChild(sub);}'
+        + 'var clock=document.createElement("div");clock.id="gc-crono-clock";clock.style.fontSize="clamp(64px,15vw,230px)";clock.style.fontWeight="800";clock.style.fontVariantNumeric="tabular-nums";clock.style.lineHeight="1";wrap.appendChild(clock);'
+        + 'stage.appendChild(wrap);'
+        + 'function tick(){var it=cronoItem||{};var elapsed=(it.pausedMs||0)+((it.running&&it.startedAt)?(Date.now()-it.startedAt):0);clock.textContent=fmtCrono(elapsed);clock.style.opacity=it.running?"1":"0.55";}'
+        + 'tick();cronoInterval=setInterval(tick,250);'
+      + '}'
       // Vídeo local (arquivo carregado do pendrive na aba Mensagem) — o item.url é um blob: URL criado
       // na janela principal; blob: URLs do mesmo site funcionam em qualquer janela/aba, então dá pra
       // tocar aqui sem precisar subir o arquivo pra lugar nenhum.
@@ -2877,7 +2983,7 @@ function projectionShellHtml() {
       // Programação Automática do Modo Ao Vivo pra nunca cortar um vídeo no meio, esperando o fim de
       // verdade em vez de um tempo fixo "no chute".
       + 'function notifyMediaEnded(){try{if(window.opener&&!window.opener.closed)window.opener.postMessage({gcType:"gc_media_ended"},"*");}catch(e){}}'
-      + 'function renderLocalVideo(item,mute){stage.innerHTML="";fading=false;ytPlayer=null;var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;v.muted=!!mute;v.addEventListener("ended",notifyMediaEnded);stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
+      + 'function renderLocalVideo(item,mute){stage.innerHTML="";fading=false;ytPlayer=null;clearCronoInterval();var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;v.muted=!!mute;v.addEventListener("ended",notifyMediaEnded);stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
       // Pausa/retoma o vídeo (local ou do YouTube) que estiver tocando agora — usado pelo controle
       // miniatura na janela principal. Sem vídeo nenhum tocando, não faz nada.
       + 'function togglePause(){'
@@ -2930,7 +3036,7 @@ function projectionShellHtml() {
         + '},110);'
       + '}'
       + 'function renderVideo(media,mute){'
-        + 'stage.innerHTML="";fading=false;ytPlayer=null;localVideoEl=null;'
+        + 'stage.innerHTML="";fading=false;ytPlayer=null;localVideoEl=null;clearCronoInterval();'
         + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1&mute="+(mute?1:0);'
         + 'var src=media&&media.videoId?("https://www.youtube-nocookie.com/embed/"+media.videoId+"?"+params)'
           + ':media&&media.playlistId?("https://www.youtube-nocookie.com/embed/videoseries?list="+media.playlistId+"&"+params):null;'
@@ -2947,6 +3053,7 @@ function projectionShellHtml() {
         + 'else if(d.gcType==="imagem")renderImage(d.item);'
         + 'else if(d.gcType==="localvideo")renderLocalVideo(d.item,d.mute);'
         + 'else if(d.gcType==="texto")renderText(d.text);'
+        + 'else if(d.gcType==="cronometro")renderCronometro(d.item);'
         + 'else if(d.gcType==="overlay_texto")renderOverlayText(d.item);'
         + 'else if(d.gcType==="overlay_limpar")clearOverlayText();'
         + 'else if(d.gcType==="pause_toggle")togglePause();'
@@ -3020,6 +3127,7 @@ async function sendToScreenObj(scr, kind, payload, opts) {
       : kind === 'imagem' ? { gcType:'imagem', item: payload || {} }
       : kind === 'localvideo' ? { gcType:'localvideo', item: payload || {}, mute }
       : kind === 'texto' ? { gcType:'texto', text: payload || '' }
+      : kind === 'cronometro' ? { gcType:'cronometro', item: payload || {} }
       : kind === 'overlay_texto' ? { gcType:'overlay_texto', item: payload || {} }
       : kind === 'overlay_limpar' ? { gcType:'overlay_limpar' }
       : kind === 'pause_toggle' ? { gcType:'pause_toggle' }
