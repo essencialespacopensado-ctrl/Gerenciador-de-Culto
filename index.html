@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.42';
+const APP_VERSION = '2026-09-25.43';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -350,7 +350,7 @@ function useSyncedChurches() {
       // aparelho novo — ou depois de limpar o cache — ela nasce sem saber que já existe algo salvo na
       // nuvem, assume que está "vazia" e pode acabar regravando por cima do que já tinha, apagando de
       // verdade o que a pessoa cadastrou. Corrigido em 24/09.
-      const CONTENT_FIELDS = ['activities', 'defaultLiturgy', 'archive', 'teams', 'functionsList', 'schedules', 'churchLocation', 'presence', 'lembretesAtivo', 'lembretesStatus'];
+      const CONTENT_FIELDS = ['activities', 'defaultLiturgy', 'archive', 'teams', 'functionsList', 'schedules', 'churchLocation', 'presence', 'lembretesAtivo', 'lembretesStatus', 'fixedTracks'];
       remoteByLogin.forEach((rc, loginLower) => {
         if (!currentLogins.has(loginLower)) {
           const entry = {
@@ -1579,6 +1579,107 @@ const MEDIA_LIBRARY = [
   { title:'Deixai Vir a Mim os Pequeninos', query:'deixai vir a mim os pequeninos adventista' },
 ];
 
+// Trilhas Fixas (25/09): pedido do Paulo — a maioria dos itens do MEDIA_LIBRARY acima só tem uma
+// "query" de busca, não um vídeo real vinculado (só os 3 "dinâmicos" — Provai e Vede, Informativo,
+// Vida e Saúde — têm playlistId de verdade). Sem um vídeo real, escolher um desses itens na
+// Liturgia abria a BUSCA do YouTube em vez de já tocar o vídeo (bug relatado por ele em 25/09).
+// Trilhas Fixas resolve isso: em Gestão, Paulo cadastra o link exato do YouTube pra cada "momento"
+// que se repete toda semana (nome + URL) — a partir daí, escolher esse momento na Liturgia já toca
+// direto aquele vídeo específico, sem nenhuma busca. Sincroniza com a nuvem igual equipes/escalas.
+function fixedTracksKey(churchId) { return 'gc_trilhas_fixas_' + churchId; }
+function loadFixedTracks(churchId) {
+  try { const raw = localStorage.getItem(fixedTracksKey(churchId)); if (raw) return JSON.parse(raw); } catch(e) {}
+  return [];
+}
+function saveFixedTracks(churchId, list) {
+  try { localStorage.setItem(fixedTracksKey(churchId), JSON.stringify(list)); } catch(e) {}
+}
+// Acha uma trilha fixa cadastrada pra esse nome (comparação sem diferenciar maiúsculas/espaços nas
+// pontas) — usado tanto pros nomes já sugeridos (MEDIA_LIBRARY) quanto pra qualquer nome próprio que
+// o Paulo tenha cadastrado.
+function findFixedTrack(fixedTracks, name) {
+  if (!fixedTracks || !name) return null;
+  const norm = String(name).trim().toLowerCase();
+  return fixedTracks.find(t => (t.name || '').trim().toLowerCase() === norm) || null;
+}
+
+// Aba Gestão > Trilhas Fixas: mostra os vídeos que atualizam sozinhos (só informativo) e o cadastro
+// editável dos vídeos/músicas fixas de toda semana (25/09, pedido do Paulo).
+const DYNAMIC_LIBRARY_ITEMS = MEDIA_LIBRARY.filter(m => m.dynamic);
+
+function TrilhasFixasRow({ track, onChange, onRemove }) {
+  const [name, setName] = useState(track.name);
+  const [link, setLink] = useState(track.url || '');
+  useEffect(() => { setName(track.name); setLink(track.url || ''); }, [track.id]);
+  const saveName = () => { const clean = name.trim(); if (clean && clean !== track.name) onChange({ ...track, name: clean }); else setName(track.name); };
+  const saveLink = (e) => {
+    e.preventDefault();
+    const clean = link.trim();
+    if (!clean) { onChange({ ...track, url: '', videoId: null }); return; }
+    const id = extractYouTubeId(clean);
+    if (!id) { alert('Não consegui reconhecer esse link como um vídeo do YouTube. Copie o link da barra de endereço do vídeo (não da busca).'); return; }
+    onChange({ ...track, url: 'https://www.youtube.com/watch?v='+id, videoId: id });
+  };
+  return html`
+    <div class="glass" style=${{padding:'12px 14px', borderRadius:'12px', display:'grid', gap:'8px'}}>
+      <div style=${{display:'flex', gap:'8px', alignItems:'center'}}>
+        <input value=${name} onChange=${e=>setName(e.target.value)} onBlur=${saveName} style=${{...inputStyle, fontWeight:700, fontSize:'12.5px'}} placeholder="Nome (ex: Música das Ofertas)" />
+        <button type="button" onClick=${onRemove} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'15px', padding:'4px 6px'}} title="Remover">✕</button>
+      </div>
+      <form onSubmit=${saveLink} style=${{display:'flex', gap:'6px', alignItems:'center'}}>
+        <input value=${link} onChange=${e=>setLink(e.target.value)} style=${{...inputStyle, fontSize:'11.5px'}} placeholder="Colar aqui o link do vídeo no YouTube" />
+        <button type="submit" style=${{...btnGhost, padding:'7px 12px', fontSize:'11px', whiteSpace:'nowrap'}}>✅ Salvar</button>
+      </form>
+      ${track.videoId
+        ? html`<div style=${{fontSize:'10.5px', color:'var(--success-1)'}}>🎬 Vídeo vinculado — já abre tocando direto.</div>`
+        : html`<div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Sem link ainda — cole a URL do vídeo acima.</div>`}
+    </div>
+  `;
+}
+
+function TrilhasFixasTool({ fixedTracks, onChange }) {
+  const [addingName, setAddingName] = useState('');
+  const list = fixedTracks || [];
+  const updateTrack = (updated) => onChange(list.map(t => t.id === updated.id ? updated : t));
+  const removeTrack = (id) => { if (window.confirm('Remover essa trilha fixa? Atividades da Liturgia marcadas com 📅 pra esse nome vão ficar sem vídeo/música vinculado até você cadastrar de novo.')) onChange(list.filter(t => t.id !== id)); };
+  const addTrack = (e) => {
+    e.preventDefault();
+    const clean = addingName.trim();
+    if (!clean) return;
+    if (findFixedTrack(list, clean)) { alert('Já existe uma trilha fixa com esse nome.'); return; }
+    onChange([...list, { id:'fx-'+Date.now(), name: clean, url:'', videoId:null }]);
+    setAddingName('');
+  };
+  return html`
+    <div style=${{display:'grid', gap:'16px'}}>
+      <div>
+        <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 8px'}}>🔄 Atualizam Sozinhos</h3>
+        <div style=${{fontSize:'11px', color:'var(--text-dim)', marginBottom:'8px'}}>Esses já trocam de vídeo automaticamente toda semana — não precisa mexer em nada.</div>
+        <div style=${{display:'grid', gap:'6px'}}>
+          ${DYNAMIC_LIBRARY_ITEMS.map(m => html`
+            <div key=${m.title} class="glass" style=${{padding:'10px 14px', borderRadius:'12px', display:'flex', alignItems:'center', gap:'8px', fontSize:'12px'}}>
+              <span>🎬</span><span style=${{flex:1}}>${m.title}</span><span style=${{fontSize:'10px', color:'var(--text-dim)'}}>automático</span>
+            </div>
+          `)}
+        </div>
+      </div>
+
+      <div>
+        <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 8px'}}>📌 Fixos (Toda Semana)</h3>
+        <div style=${{fontSize:'11px', color:'var(--text-dim)', marginBottom:'8px'}}>Vídeos/músicas que se repetem todo sábado (música das ofertas, entrada e saída das crianças, entrada da plataforma etc). Marque a atividade na Liturgia com 📅 "todo sábado" pra criar o espaço aqui sozinho, ou cadastre direto por aqui.</div>
+        <div style=${{display:'grid', gap:'8px'}}>
+          ${list.length === 0 && html`<div style=${{color:'var(--text-dim)', fontSize:'12px', padding:'8px 4px'}}>Nenhuma trilha fixa cadastrada ainda.</div>`}
+          ${list.map(t => html`<${TrilhasFixasRow} key=${t.id} track=${t} onChange=${updateTrack} onRemove=${()=>removeTrack(t.id)} />`)}
+        </div>
+        <form onSubmit=${addTrack} style=${{display:'flex', gap:'6px', marginTop:'10px'}}>
+          <input value=${addingName} onChange=${e=>setAddingName(e.target.value)} style=${inputStyle} placeholder="Nome da nova trilha fixa (ex: Entrada da Plataforma)" />
+          <button type="submit" style=${{...btnGhost, padding:'8px 14px', fontSize:'11.5px', whiteSpace:'nowrap'}}>➕ Adicionar</button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
 function youtubeSearchUrl(query) { return 'https://www.youtube.com/results?search_query=' + encodeURIComponent(query); }
 function weekDateSuffix() {
   const sat = keyToDate(getSaturdaysForMonths(1)[0]);
@@ -1660,6 +1761,22 @@ function MediaSearchField({ media, onChange, searchKey }) {
     onChange(payload);
   };
 
+  // Escolher uma sugestão da MEDIA_LIBRARY (25/09, corrigido): os itens "dinâmicos" (Provai e Vede,
+  // Informativo, Vida e Saúde) já têm um vídeo/playlist real vinculado e tocam na hora. Os outros só
+  // tinham uma "query" de busca — clicar neles antes abria direto a URL de BUSCA do YouTube (sem
+  // nenhum vídeo selecionado), que é exatamente o bug relatado pelo Paulo ("abre o YouTube com a
+  // busca, mas não o vídeo selecionado"). Agora, pra esses, a gente já faz a busca de verdade aqui
+  // mesmo e mostra os resultados reais pra escolher — igual clicar em "🔍 Buscar".
+  const pickLibrary = async (m) => {
+    if (m.dynamic) { pick({ title: m.title + ' ('+weekDateSuffix()+')', url: mediaLibraryUrl(m), playlistId: m.playlistId || null }); return; }
+    setQ(m.title);
+    setSearching(true);
+    const result = await searchYoutubeServer(m.query);
+    setSearching(false);
+    if (result && result.length) { setVideos(result); return; }
+    window.open(youtubeSearchUrl(m.query), '_blank', 'noopener');
+  };
+
   if (media && media.title) {
     return html`
       <div style=${{display:'flex', alignItems:'center', gap:'8px', padding:'8px 10px', borderRadius:'10px', background:'rgba(99,102,241,0.1)'}}>
@@ -1680,7 +1797,7 @@ function MediaSearchField({ media, onChange, searchKey }) {
       ${matches.length > 0 && html`
         <div style=${{display:'grid', gap:'4px'}}>
           ${matches.map(m => html`
-            <button key=${m.title} type="button" onClick=${()=>pick({ title: m.title + (m.dynamic ? ' ('+weekDateSuffix()+')' : ''), url: mediaLibraryUrl(m), playlistId: m.playlistId || null })} style=${{textAlign:'left', padding:'7px 10px', borderRadius:'8px', border:'1px solid var(--border-soft)', background:'transparent', fontSize:'11.5px', color:'var(--text-mid)'}}>🎵 ${m.title}${m.dynamic ? ' 📅' : ''}</button>
+            <button key=${m.title} type="button" onClick=${()=>pickLibrary(m)} disabled=${searching} style=${{textAlign:'left', padding:'7px 10px', borderRadius:'8px', border:'1px solid var(--border-soft)', background:'transparent', fontSize:'11.5px', color:'var(--text-mid)'}}>🎵 ${m.title}${m.dynamic ? ' 📅' : ''}</button>
           `)}
         </div>
       `}
@@ -1915,32 +2032,47 @@ function ChurchHeader({ church, tab, setTab, onLogout }) {
 function ProjectButton({ churchId, media, itemKey }) {
   if (!media || !media.title) return '';
 
-  const send = (scr) => {
+  const send = (scr, mute) => {
     try {
-      sendToScreenObj(scr, 'media', media);
+      sendToScreenObj(scr, 'media', media, { mute });
     } catch (e) {
       alert('Erro ao projetar: ' + (e && e.message ? e.message : e));
     }
   };
 
-  const handleClick = () => {
+  // Pedido do Paulo (25/09): dois botões em vez de um só — "Operador" manda pra tela do próprio
+  // operador SEM som (pra ele acompanhar sem incomodar quem está do lado), e "Projetor" manda pra
+  // tela configurada como projetor COM som (o público ouve). "Projetor" usa a(s) tela(s) marcada(s)
+  // como projetor em "Telas"; sem nenhuma marcada (configuração antiga, só uma tela), cai na mesma
+  // lógica de sempre (preferência salva pra esse item, ou todas as telas habilitadas).
+  const projectTo = (which) => {
     try {
       const enabled = loadEnabledScreens(churchId);
       if (enabled.length === 0) {
         alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.');
         return;
       }
-      // Manda pra tela escolhida e salva pra esse item (🖥️ ao lado) — ou, sem preferência salva,
-      // pra todas as telas habilitadas de uma vez, já em tela cheia e reproduzindo.
-      pickTargetScreens(churchId, itemKey, enabled).forEach(scr => send(scr));
+      let targets;
+      if (which === 'projetor') {
+        const projectors = enabled.filter(s => s.isProjector);
+        targets = projectors.length > 0 ? projectors : pickTargetScreens(churchId, itemKey, enabled);
+      } else {
+        targets = enabled.filter(s => !s.isProjector);
+        if (targets.length === 0) {
+          alert('Nenhuma tela de operador configurada ainda. Vá na aba "Telas", habilite uma tela a mais (sem marcar como Projetor) pra usar esse botão sem som.');
+          return;
+        }
+      }
+      targets.forEach(scr => send(scr, which === 'operador'));
     } catch (e) {
       alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
     }
   };
 
   return html`
-    <div style=${{display:'flex', alignItems:'center', gap:'4px'}}>
-      <button type="button" onClick=${handleClick} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Projetar">📽️ Projetar</button>
+    <div style=${{display:'flex', alignItems:'center', gap:'4px', flexWrap:'wrap'}}>
+      <button type="button" onClick=${()=>projectTo('operador')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Projetar só na tela do operador, sem som">🎧 Operador</button>
+      <button type="button" onClick=${()=>projectTo('projetor')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Projetar no projetor, com som">🔊 Projetor</button>
       ${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`}
     </div>
   `;
@@ -2023,7 +2155,7 @@ function LocalVideoProjectButton({ churchId, item, itemKey, onProjected }) {
   `;
 }
 
-function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, idx, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
+function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWeekly, fixedTracks, churchId, idx, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(act.name);
@@ -2033,7 +2165,12 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
   const [media, setMedia] = useState(act.media || null);
   const [sermaoExpanded, setSermaoExpanded] = useState(false);
   const [idleSeconds, setIdleSeconds] = useState(typeof act.idleSeconds === 'number' ? act.idleSeconds : '');
-  const needsMedia = category === 'mensagem_musical' || category === 'louvor';
+  // Antes só liberava a busca de vídeo/música pra "mensagem_musical"/"louvor" — mas os exemplos do
+  // Paulo (música das ofertas, entrada/saída das crianças, entrada da plataforma) caem em outras
+  // categorias (ofertas, infantil, abertura, vídeo...). Liberado pra qualquer categoria, exceto
+  // oração e sermão (que já tem seu próprio fluxo de arquivos, na aba Mensagem).
+  const needsMedia = category !== 'oracao' && category !== 'sermao';
+  const weeklyTrack = act.weeklyFixed ? findFixedTrack(fixedTracks, act.name) : null;
 
   const save = () => {
     onEdit({ ...act, name: name.trim() || act.name, responsible: responsible.trim() || 'A definir', category, time: time || '--:--', media: media || null, idleSeconds: idleSeconds === '' ? null : Math.max(0, Number(idleSeconds) || 0) });
@@ -2051,7 +2188,8 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
           </select>
         </div>
         <input type="time" value=${time} onChange=${e=>setTime(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
-        ${needsMedia && html`<${MediaSearchField} media=${media} onChange=${setMedia} searchKey=${act.id} />`}
+        ${needsMedia && act.weeklyFixed && html`<div style=${{fontSize:'10.5px', color:'var(--text-dim)', padding:'6px 2px'}}>📅 Marcada como "todo sábado" — o vídeo/música vem do cadastro em Gestão &gt; Trilhas Fixas (destranque o 📅 aqui do lado pra escolher manualmente).</div>`}
+        ${needsMedia && !act.weeklyFixed && html`<${MediaSearchField} media=${media} onChange=${setMedia} searchKey=${act.id} />`}
         ${needsMedia && html`
           <div style=${{display:'flex', alignItems:'center', gap:'6px'}}>
             <input type="number" min="0" placeholder="padrão" value=${idleSeconds} onChange=${e=>setIdleSeconds(e.target.value)} style=${{...inputStyle, fontSize:'12px', width:'70px'}} />
@@ -2075,6 +2213,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
           <div style=${{fontWeight:700, fontSize:'13.5px', textDecoration: act.done ? 'line-through' : 'none'}}>${act.name}</div>
           <div style=${{fontSize:'11px', color:'var(--text-mid)', marginTop:'2px'}}>${act.responsible} • ${act.time}</div>
         </div>
+        ${needsMedia && onToggleWeekly && html`<button onClick=${()=>onToggleWeekly(act.id)} style=${{background:'transparent', border:'none', color: act.weeklyFixed ? 'var(--highlight)' : 'var(--text-dim)', fontSize:'16px', padding:'4px 6px', borderRadius:'8px'}} title=${act.weeklyFixed ? 'Acontece todo sábado — usa o vídeo/música fixo cadastrado em Gestão (toca pra desmarcar)' : 'Marcar como algo que acontece todo sábado, com vídeo/música fixo'}>${act.weeklyFixed ? '📅' : '🗓️'}</button>`}
         <button onClick=${()=>onToggleFix(act.id)} style=${{background:'transparent', border:'none', color: act.fixed ? 'var(--highlight)' : 'var(--text-dim)', fontSize:'16px', padding:'4px 6px', borderRadius:'8px'}} title=${act.fixed ? 'Trancada — toca pra destrancar' : 'Trancar (impede editar/remover)'}>${act.fixed ? '🔒' : '🔓'}</button>
         <button onClick=${()=>!act.fixed && setEditing(true)} disabled=${act.fixed} style=${{background:'transparent', border:'none', color: act.fixed ? 'var(--border-soft)' : 'var(--text-dim)', fontSize:'14px', padding:'4px 6px', borderRadius:'8px', cursor: act.fixed ? 'not-allowed' : 'pointer'}} title=${act.fixed ? 'Trancada — destranque (🔒) pra editar' : 'Editar'}>✏️</button>
         <button onClick=${()=>!act.fixed && onDelete(act.id)} disabled=${act.fixed} style=${{background:'transparent', border:'none', color: act.fixed ? 'var(--border-soft)' : 'var(--text-dim)', fontSize:'16px', padding:'4px 8px', borderRadius:'8px', cursor: act.fixed ? 'not-allowed' : 'pointer'}} title=${act.fixed ? 'Trancada — destranque (🔒) pra remover' : 'Remover'}>✕</button>
@@ -2084,6 +2223,8 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, churchId, 
           <div style=${{flex:1, minWidth:0}}>
             ${act.fixed
               ? html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>${media && media.title ? '🎬 '+media.title : '🔒 trancado'}</div>`
+              : act.weeklyFixed
+              ? html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>${weeklyTrack && weeklyTrack.videoId ? '📅 '+(media && media.title ? media.title : weeklyTrack.name)+' (fixo — editar em Gestão)' : '📅 Fixo semanal — cadastre a URL em Gestão › Trilhas Fixas ("'+act.name+'")'}</div>`
               : needsMedia
               ? html`<${MediaSearchField} media=${media} onChange=${(m)=>{ setMedia(m); onEdit({...act, media: m || null}); }} searchKey=${act.id} />`
               : html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>🎬 ${media.title}</div>`}
@@ -2126,14 +2267,15 @@ function AddActivityForm({ defaultSection, activities, onAddAt, onClose }) {
   const [position, setPosition] = useState('depois');
   const [refId, setRefId] = useState('');
   const [media, setMedia] = useState(null);
-  const needsMedia = category === 'mensagem_musical' || category === 'louvor';
+  const [weeklyFixed, setWeeklyFixed] = useState(false);
+  const needsMedia = category !== 'oracao' && category !== 'sermao';
 
   const sectionItems = activities.filter(a => a.section === section);
 
   const submit = (e) => {
     e.preventDefault();
     if (!name.trim()) return;
-    const newAct = { id:'act-'+Date.now(), name:name.trim(), section, category, responsible: responsible.trim()||'A definir', time:'--:--', done:false, media: media || null };
+    const newAct = { id:'act-'+Date.now(), name:name.trim(), section, category, responsible: responsible.trim()||'A definir', time:'--:--', done:false, media: (needsMedia && weeklyFixed) ? null : (media || null), weeklyFixed: needsMedia && weeklyFixed };
     onAddAt(newAct, refId || null, position);
     onClose();
   };
@@ -2153,7 +2295,14 @@ function AddActivityForm({ defaultSection, activities, onAddAt, onClose }) {
         </select>
       </div>
 
-      ${needsMedia && html`<${MediaSearchField} media=${media} onChange=${setMedia} searchKey="nova-atividade" />`}
+      ${needsMedia && html`
+        <label style=${{display:'flex', alignItems:'center', gap:'8px', fontSize:'11.5px', color:'var(--text-mid)', padding:'2px'}}>
+          <input type="checkbox" checked=${weeklyFixed} onChange=${e=>setWeeklyFixed(e.target.checked)} />
+          📅 Acontece todo sábado (usa um vídeo/música fixo, cadastrado em Gestão &gt; Trilhas Fixas)
+        </label>
+      `}
+      ${needsMedia && !weeklyFixed && html`<${MediaSearchField} media=${media} onChange=${setMedia} searchKey="nova-atividade" />`}
+      ${needsMedia && weeklyFixed && html`<div style=${{fontSize:'10.5px', color:'var(--text-dim)', padding:'2px'}}>Um espaço vai ser criado em Gestão &gt; Trilhas Fixas com o nome "${name.trim() || '...'}" pra você colar a URL.</div>`}
 
       <div style=${{display:'grid', gridTemplateColumns:'110px 1fr', gap:'10px'}}>
         <select value=${position} onChange=${e=>setPosition(e.target.value)} style=${inputStyle}>
@@ -2375,6 +2524,8 @@ function DefaultLiturgyEditor({ initialList, password, onSave, onClose, churchId
   const remove = (id) => setList(l => l.filter(a => a.id !== id));
   const edit = (updated) => setList(l => l.map(a => a.id === updated.id ? updated : a));
   const toggleFix = (id) => setList(l => l.map(a => a.id===id ? {...a, fixed: !a.fixed} : a));
+  const toggleWeekly = (id) => setList(l => l.map(a => a.id===id ? {...a, weeklyFixed: !a.weeklyFixed} : a));
+  const [fixedTracksRef] = useState(() => loadFixedTracks(churchId));
   const addAt = (act, refId, position) => {
     setList(l => {
       if (!refId) return [...l, act];
@@ -2410,7 +2561,7 @@ function DefaultLiturgyEditor({ initialList, password, onSave, onClose, churchId
               <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 10px 4px'}}>${SECTION_LABELS[sec]}</h3>
               <div style=${{display:'grid', gap:'8px'}}>
                 ${items.length === 0 && html`<div style=${{color:'var(--text-dim)', fontSize:'12.5px', padding:'8px 4px'}}>Nenhuma atividade no padrão ainda.</div>`}
-                ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} churchId=${churchId} />`)}
+                ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} onToggleWeekly=${toggleWeekly} fixedTracks=${fixedTracksRef} churchId=${churchId} />`)}
               </div>
             </div>
           `;
@@ -2688,7 +2839,7 @@ function projectionShellHtml() {
       + 'var overlay=document.getElementById("gc-overlay");'
       + 'var overlayTimer=null,overlayClearTimer=null;'
       + 'var fsBtn=document.getElementById("fs-fallback");'
-      + 'var ytPlayer=null,fading=false;var localVideoEl=null;'
+      + 'var ytPlayer=null,fading=false;var localVideoEl=null;var lastMute=false;'
       + 'function tryFullscreen(){'
         + 'try{'
           + 'if(document.fullscreenElement){fsBtn.style.display="none";return;}'
@@ -2706,7 +2857,7 @@ function projectionShellHtml() {
       // Programação Automática do Modo Ao Vivo pra nunca cortar um vídeo no meio, esperando o fim de
       // verdade em vez de um tempo fixo "no chute".
       + 'function notifyMediaEnded(){try{if(window.opener&&!window.opener.closed)window.opener.postMessage({gcType:"gc_media_ended"},"*");}catch(e){}}'
-      + 'function renderLocalVideo(item){stage.innerHTML="";fading=false;ytPlayer=null;var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;v.addEventListener("ended",notifyMediaEnded);stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
+      + 'function renderLocalVideo(item,mute){stage.innerHTML="";fading=false;ytPlayer=null;var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;v.muted=!!mute;v.addEventListener("ended",notifyMediaEnded);stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
       // Pausa/retoma o vídeo (local ou do YouTube) que estiver tocando agora — usado pelo controle
       // miniatura na janela principal. Sem vídeo nenhum tocando, não faz nada.
       + 'function togglePause(){'
@@ -2747,7 +2898,7 @@ function projectionShellHtml() {
         + 'var fadeMs=500;overlay.style.transition="opacity "+fadeMs+"ms ease";overlay.style.opacity="0";'
         + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";closeIfStageEmpty();},fadeMs);'
       + '}'
-      + 'function bindYt(){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onStateChange:function(e){if(e.data===0){fadeOutEnd();notifyMediaEnded();}}}});}catch(e){}}}'
+      + 'function bindYt(mute){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onReady:function(){try{if(mute)ytPlayer.mute();else ytPlayer.unMute();}catch(e){}},onStateChange:function(e){if(e.data===0){fadeOutEnd();notifyMediaEnded();}}}});}catch(e){}}}'
       + 'function fadeOutEnd(){'
         + 'if(fading||!ytPlayer)return;fading=true;'
         + 'var startVol=100;try{startVol=ytPlayer.getVolume();}catch(e){}'
@@ -2758,23 +2909,23 @@ function projectionShellHtml() {
           + 'if(n>=steps){clearInterval(iv);try{ytPlayer.pauseVideo();}catch(e){}}'
         + '},110);'
       + '}'
-      + 'function renderVideo(media){'
+      + 'function renderVideo(media,mute){'
         + 'stage.innerHTML="";fading=false;ytPlayer=null;localVideoEl=null;'
-        + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1&mute=0";'
+        + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1&mute="+(mute?1:0);'
         + 'var src=media&&media.videoId?("https://www.youtube-nocookie.com/embed/"+media.videoId+"?"+params)'
           + ':media&&media.playlistId?("https://www.youtube-nocookie.com/embed/videoseries?list="+media.playlistId+"&"+params):null;'
         + 'if(!src){if(media&&media.url)window.location.href=media.url;return;}'
         + 'var iframe=document.createElement("iframe");iframe.id="gc-player";iframe.src=src;'
         + 'iframe.allow="autoplay; encrypted-media; fullscreen";iframe.allowFullscreen=true;'
-        + 'stage.appendChild(iframe);bindYt();'
+        + 'stage.appendChild(iframe);bindYt(mute);'
       + '}'
-      + 'window.onYouTubeIframeAPIReady=function(){if(document.getElementById("gc-player"))bindYt();};'
+      + 'window.onYouTubeIframeAPIReady=function(){if(document.getElementById("gc-player"))bindYt(lastMute);};'
       + 'var ytScript=document.createElement("scr"+"ipt");ytScript.src="https://www.youtube.com/iframe_api";document.head.appendChild(ytScript);'
       + 'window.addEventListener("message",function(ev){'
         + 'var d=ev.data;if(!d||typeof d!=="object")return;'
-        + 'if(d.gcType==="media")renderVideo(d.media);'
+        + 'if(d.gcType==="media"){lastMute=!!d.mute;renderVideo(d.media,d.mute);}'
         + 'else if(d.gcType==="imagem")renderImage(d.item);'
-        + 'else if(d.gcType==="localvideo")renderLocalVideo(d.item);'
+        + 'else if(d.gcType==="localvideo")renderLocalVideo(d.item,d.mute);'
         + 'else if(d.gcType==="texto")renderText(d.text);'
         + 'else if(d.gcType==="overlay_texto")renderOverlayText(d.item);'
         + 'else if(d.gcType==="overlay_limpar")clearOverlayText();'
@@ -2789,7 +2940,7 @@ function projectionShellHtml() {
     + '</body></html>';
 }
 
-async function sendToScreenObj(scr, kind, payload) {
+async function sendToScreenObj(scr, kind, payload, opts) {
   try {
     const sig = screenSig(scr);
     const features = 'left='+scr.left+',top='+scr.top+',width='+scr.width+',height='+scr.height;
@@ -2843,10 +2994,11 @@ async function sendToScreenObj(scr, kind, payload) {
       try { setTimeout(tryFs, 300); } catch(e) {}
     }
 
+    const mute = !!(opts && opts.mute);
     const msg = kind === 'media'
-      ? { gcType:'media', media: (payload && typeof payload === 'object') ? payload : { url: payload } }
+      ? { gcType:'media', media: (payload && typeof payload === 'object') ? payload : { url: payload }, mute }
       : kind === 'imagem' ? { gcType:'imagem', item: payload || {} }
-      : kind === 'localvideo' ? { gcType:'localvideo', item: payload || {} }
+      : kind === 'localvideo' ? { gcType:'localvideo', item: payload || {}, mute }
       : kind === 'texto' ? { gcType:'texto', text: payload || '' }
       : kind === 'overlay_texto' ? { gcType:'overlay_texto', item: payload || {} }
       : kind === 'overlay_limpar' ? { gcType:'overlay_limpar' }
@@ -5166,12 +5318,61 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     });
   }, [churchId]);
 
+  // Trilhas Fixas (25/09) — vídeos/músicas de toda semana (música das ofertas, entrada/saída das
+  // crianças, entrada da plataforma etc), cadastrados em Gestão. Mesmo padrão de sincronização com a
+  // nuvem já usado pra activities acima.
+  const [fixedTracks, setFixedTracks] = useState(() => (church && church.fixedTracks) ? church.fixedTracks : loadFixedTracks(churchId));
+  const skipFirstFixedTracksSync = useRef(!!(church && church.fixedTracks !== undefined));
+  useEffect(() => {
+    saveFixedTracks(churchId, fixedTracks);
+    if (skipFirstFixedTracksSync.current) { skipFirstFixedTracksSync.current = false; return; }
+    if (docId) fbUpdateChurchFields(docId, { fixedTracks });
+    if (onUpdateChurch) onUpdateChurch({ fixedTracks });
+  }, [fixedTracks, churchId]);
+
+  // Garante que toda atividade marcada como "acontece todo sábado" (📅) tenha um espaço criado em
+  // Gestão > Trilhas Fixas pra receber a URL — mesmo que ainda esteja vazio.
+  useEffect(() => {
+    const weeklyNames = activities.filter(a => a.weeklyFixed && a.name && a.name.trim()).map(a => a.name.trim());
+    if (weeklyNames.length === 0) return;
+    setFixedTracks(list => {
+      let changed = false;
+      const next = [...list];
+      weeklyNames.forEach(name => {
+        if (!findFixedTrack(next, name)) { changed = true; next.push({ id:'fx-'+Date.now()+'-'+Math.random().toString(36).slice(2,7), name, url:'', videoId:null }); }
+      });
+      return changed ? next : list;
+    });
+  }, [activities]);
+
+  // Mantém a mídia das atividades "todo sábado" sempre igual ao que está cadastrado em Trilhas
+  // Fixas — se o Paulo trocar o link lá, a atividade já reflete sozinha, do mesmo jeito que já
+  // acontece com Provai e Vede/Informativo (dinâmicos).
+  useEffect(() => {
+    setActivities(list => {
+      let changed = false;
+      const next = list.map(a => {
+        if (!a.weeklyFixed) return a;
+        const track = findFixedTrack(fixedTracks, a.name);
+        if (!track || !track.videoId) {
+          if (a.media && a.media.fromFixedTrack) { changed = true; return { ...a, media: null }; }
+          return a;
+        }
+        if (a.media && a.media.fromFixedTrack && a.media.videoId === track.videoId) return a;
+        changed = true;
+        return { ...a, media: { title: a.name, url: track.url, videoId: track.videoId, fromFixedTrack: true } };
+      });
+      return changed ? next : list;
+    });
+  }, [fixedTracks]);
+
   const toggle = (id) => setActivities(list => list.map(a => a.id===id ? {...a, done: !a.done} : a));
   const markDone = (id) => setActivities(list => list.map(a => a.id===id ? {...a, done:true} : a));
   const [liveMode, setLiveMode] = useState(false);
   const remove = (id) => setActivities(list => list.filter(a => a.id !== id));
   const edit = (updated) => setActivities(list => list.map(a => a.id === updated.id ? updated : a));
   const toggleFix = (id) => setActivities(list => list.map(a => a.id===id ? {...a, fixed: !a.fixed} : a));
+  const toggleWeekly = (id) => setActivities(list => list.map(a => a.id===id ? {...a, weeklyFixed: !a.weeklyFixed} : a));
   // Zera de verdade: remove (apaga) toda atividade que NÃO está trancada, como se fosse começar
   // a liturgia do zero. O que está trancado (🔒) continua exatamente como está.
   const zerarProgramacao = () => {
@@ -5337,7 +5538,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
             <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 10px 4px'}}>${SECTION_LABELS[sec]}</h3>
             <div style=${{display:'grid', gap:'8px'}}>
               ${items.length === 0 && html`<div style=${{color:'var(--text-dim)', fontSize:'12.5px', padding:'8px 4px'}}>Nenhuma atividade cadastrada ainda.</div>`}
-              ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} churchId=${churchId} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />`)}
+              ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} onToggleWeekly=${toggleWeekly} fixedTracks=${fixedTracks} churchId=${churchId} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />`)}
             </div>
           </div>
         `;
@@ -6139,6 +6340,16 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
     if (docId) fbUpdateChurchFields(docId, { functionsList });
     if (onUpdateChurch) onUpdateChurch({ functionsList });
   }, [functionsList, churchId]);
+
+  // Trilhas Fixas (25/09) — mesmo padrão de sincronização usado acima pra teams/functionsList.
+  const [fixedTracks, setFixedTracks] = useState(() => (church && church.fixedTracks) ? church.fixedTracks : loadFixedTracks(churchId));
+  const skipFirstFixedTracksSync = useRef(!!(church && church.fixedTracks !== undefined));
+  useEffect(() => {
+    saveFixedTracks(churchId, fixedTracks);
+    if (skipFirstFixedTracksSync.current) { skipFirstFixedTracksSync.current = false; return; }
+    if (docId) fbUpdateChurchFields(docId, { fixedTracks });
+    if (onUpdateChurch) onUpdateChurch({ fixedTracks });
+  }, [fixedTracks, churchId]);
   useEffect(() => {
     if (!activeLouvorId && teams.louvorTeams.length > 0) setActiveLouvorId(teams.louvorTeams[0].id);
   }, [teams.louvorTeams, activeLouvorId]);
@@ -6220,7 +6431,7 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
     resetQuickAdd();
   };
 
-  const SECTIONS = [['sonoplastia','🎚️ Sonoplastia'],['louvor','🎤 Louvor'],['midia','🎬 Mídia'],['anuncios','📣 Anúncios'],['editar','✏️ Editar Equipes'],['config','⚙️ Equipes & Funções'],['padrao','🔒 Liturgia Padrão'],['lembretes','🔔 Lembretes Automáticos']];
+  const SECTIONS = [['sonoplastia','🎚️ Sonoplastia'],['louvor','🎤 Louvor'],['midia','🎬 Mídia'],['anuncios','📣 Anúncios'],['editar','✏️ Editar Equipes'],['config','⚙️ Equipes & Funções'],['padrao','🔒 Liturgia Padrão'],['trilhas','🎬 Trilhas Fixas'],['lembretes','🔔 Lembretes Automáticos']];
   const [editTeamKey, setEditTeamKey] = useState(null);
   const activeLouvorIdx = teams.louvorTeams.findIndex(lt => lt.id === activeLouvorId);
   const activeLouvorTeam = activeLouvorIdx >= 0 ? teams.louvorTeams[activeLouvorIdx] : null;
@@ -6391,6 +6602,8 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
       `}
 
       ${section === 'anuncios' && html`<${AnunciosTool} churchId=${churchId} />`}
+
+      ${section === 'trilhas' && html`<${TrilhasFixasTool} fixedTracks=${fixedTracks} onChange=${setFixedTracks} />`}
 
       ${section === 'lembretes' && html`<${LembretesAutomaticosTool} churchId=${churchId} church=${church} docId=${docId} onUpdateChurch=${onUpdateChurch} />`}
 
@@ -6922,6 +7135,9 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
           // (25/09) — sem cache local próprio, é só exibição, então basta refletir na sessão.
           if (data.lembretesAtivo !== undefined) patch.lembretesAtivo = data.lembretesAtivo;
           if (data.lembretesStatus) patch.lembretesStatus = data.lembretesStatus;
+          // Trilhas Fixas (25/09): vídeos/músicas fixos cadastrados em Gestão, usados pelas
+          // atividades da Liturgia marcadas como "acontece todo sábado" (📅).
+          if (data.fixedTracks) { patch.fixedTracks = data.fixedTracks; saveFixedTracks(church.id, data.fixedTracks); }
           onUpdateChurch(patch);
         }, () => {});
       } catch(e) { return () => {}; }
