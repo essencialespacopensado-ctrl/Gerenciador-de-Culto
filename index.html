@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-24.40';
+const APP_VERSION = '2026-09-25.41';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -350,7 +350,7 @@ function useSyncedChurches() {
       // aparelho novo — ou depois de limpar o cache — ela nasce sem saber que já existe algo salvo na
       // nuvem, assume que está "vazia" e pode acabar regravando por cima do que já tinha, apagando de
       // verdade o que a pessoa cadastrou. Corrigido em 24/09.
-      const CONTENT_FIELDS = ['activities', 'defaultLiturgy', 'archive', 'teams', 'functionsList', 'schedules', 'churchLocation', 'presence'];
+      const CONTENT_FIELDS = ['activities', 'defaultLiturgy', 'archive', 'teams', 'functionsList', 'schedules', 'churchLocation', 'presence', 'lembretesAtivo', 'lembretesStatus'];
       remoteByLogin.forEach((rc, loginLower) => {
         if (!currentLogins.has(loginLower)) {
           const entry = {
@@ -6035,6 +6035,69 @@ function AnunciosTool({ churchId }) {
   `;
 }
 
+// Lembretes automáticos por WhatsApp (25/09): liga/desliga o envio automático, feito por um
+// programinha à parte que roda no computador de quem administra (conectado ao WhatsApp Web,
+// não é a API oficial). O app só guarda aqui a preferência (lembretesAtivo) e mostra o status
+// que esse programinha vai reportando (lembretesStatus) — o app em si NUNCA manda mensagem
+// sozinho, só combina com o programinha externo quando enviar.
+function timeAgoPtBr(iso) {
+  if (!iso) return null;
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (isNaN(diffMs)) return null;
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return 'agora mesmo';
+  if (min < 60) return 'há ' + min + ' min';
+  const h = Math.floor(min / 60);
+  if (h < 24) return 'há ' + h + (h === 1 ? ' hora' : ' horas');
+  const d = Math.floor(h / 24);
+  return 'há ' + d + (d === 1 ? ' dia' : ' dias');
+}
+function LembretesAutomaticosTool({ churchId, church, docId, onUpdateChurch }) {
+  const ativo = !!(church && church.lembretesAtivo);
+  const status = (church && church.lembretesStatus) || null;
+  const ultimaChecagem = status && status.ultimaChecagem;
+  const ultimoEnvio = status && status.ultimoEnvio;
+  const minutosDesdeChecagem = ultimaChecagem ? (Date.now() - new Date(ultimaChecagem).getTime()) / 60000 : null;
+  const conectado = minutosDesdeChecagem !== null && minutosDesdeChecagem < 120;
+
+  const toggle = () => {
+    const next = !ativo;
+    if (docId) fbUpdateChurchFields(docId, { lembretesAtivo: next });
+    if (onUpdateChurch) onUpdateChurch({ lembretesAtivo: next });
+  };
+
+  return html`
+    <div style=${{display:'grid', gap:'12px'}}>
+      <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:0}}>🔔 Lembretes Automáticos (WhatsApp)</h3>
+      <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Manda sozinho, sem precisar clicar em nada, um lembrete no WhatsApp de quem está escalado (Sonoplastia, Mídia e Louvor) — um dia antes e no próprio dia do compromisso.</div>
+
+      <div class="glass fade-up" style=${{padding:'14px 16px', borderRadius:'16px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px', flexWrap:'wrap'}}>
+        <div>
+          <div style=${{fontSize:'12.5px', fontWeight:700}}>Enviar lembretes automáticos</div>
+          <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginTop:'2px'}}>Só funciona com o programinha instalado e aberto em algum computador. Sem ele, isso fica desligado na prática mesmo que ative aqui.</div>
+        </div>
+        <button onClick=${toggle} style=${{
+          width:'52px', height:'30px', borderRadius:'999px', border:'none', cursor:'pointer', position:'relative',
+          background: ativo ? 'linear-gradient(90deg,var(--accent-1),var(--accent-2))' : 'var(--glass-bg)', flexShrink:0
+        }} title=${ativo ? 'Desligar' : 'Ligar'}>
+          <span style=${{position:'absolute', top:'3px', left: ativo ? '25px' : '3px', width:'24px', height:'24px', borderRadius:'50%', background:'#fff', transition:'left .15s', boxShadow:'0 1px 4px rgba(0,0,0,0.3)'}}></span>
+        </button>
+      </div>
+
+      <div class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', fontSize:'11.5px', display:'grid', gap:'4px'}}>
+        ${!ultimaChecagem && html`<div style=${{color:'var(--text-dim)'}}>🔴 O programinha ainda nunca avisou que está rodando. Sem ele instalado e aberto, nenhum lembrete automático sai.</div>`}
+        ${ultimaChecagem && conectado && html`<div style=${{color:'var(--accent-1)', fontWeight:700}}>🟢 Conectado — última verificação ${timeAgoPtBr(ultimaChecagem)}</div>`}
+        ${ultimaChecagem && !conectado && html`<div style=${{color:'var(--highlight)', fontWeight:700}}>🟡 Sem notícias do programinha ${timeAgoPtBr(ultimaChecagem)} — confira se o computador onde ele roda está ligado e conectado à internet.</div>`}
+        ${ultimoEnvio && html`<div style=${{color:'var(--text-dim)'}}>Último lembrete enviado ${timeAgoPtBr(ultimoEnvio)}.</div>`}
+      </div>
+
+      <div class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', fontSize:'11px', color:'var(--text-dim)'}}>
+        ⚠️ Isso usa o WhatsApp comum (como o WhatsApp Web), não o WhatsApp Business oficial — então precisa de um número de celular de verdade conectado, e enviar em excesso pode fazer o WhatsApp bloquear o número. Peça pra quem for configurar o programinha seguir as instruções que vêm junto com ele.
+      </div>
+    </div>
+  `;
+}
+
 // Equipes e funções (Gestão) — antes só ficavam salvas no armazenamento local do navegador (por
 // aparelho/navegador), então "sumiam" pra quem abria em outro computador, celular ou depois de
 // limpar os dados do navegador. Corrigido (23/09): igual já acontecia com Dados da Igreja e os
@@ -6146,7 +6209,7 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
     resetQuickAdd();
   };
 
-  const SECTIONS = [['sonoplastia','🎚️ Sonoplastia'],['louvor','🎤 Louvor'],['midia','🎬 Mídia'],['anuncios','📣 Anúncios'],['editar','✏️ Editar Equipes'],['config','⚙️ Equipes & Funções'],['padrao','🔒 Liturgia Padrão']];
+  const SECTIONS = [['sonoplastia','🎚️ Sonoplastia'],['louvor','🎤 Louvor'],['midia','🎬 Mídia'],['anuncios','📣 Anúncios'],['editar','✏️ Editar Equipes'],['config','⚙️ Equipes & Funções'],['padrao','🔒 Liturgia Padrão'],['lembretes','🔔 Lembretes Automáticos']];
   const [editTeamKey, setEditTeamKey] = useState(null);
   const activeLouvorIdx = teams.louvorTeams.findIndex(lt => lt.id === activeLouvorId);
   const activeLouvorTeam = activeLouvorIdx >= 0 ? teams.louvorTeams[activeLouvorIdx] : null;
@@ -6317,6 +6380,8 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
       `}
 
       ${section === 'anuncios' && html`<${AnunciosTool} churchId=${churchId} />`}
+
+      ${section === 'lembretes' && html`<${LembretesAutomaticosTool} churchId=${churchId} church=${church} docId=${docId} onUpdateChurch=${onUpdateChurch} />`}
 
     </div>
   `;
@@ -6842,6 +6907,10 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
             patch.presence = data.presence;
             Object.keys(data.presence).forEach(k => savePresence(church.id, k, data.presence[k]));
           }
+          // Preferência de lembretes automáticos e status reportado pelo programinha externo
+          // (25/09) — sem cache local próprio, é só exibição, então basta refletir na sessão.
+          if (data.lembretesAtivo !== undefined) patch.lembretesAtivo = data.lembretesAtivo;
+          if (data.lembretesStatus) patch.lembretesStatus = data.lembretesStatus;
           onUpdateChurch(patch);
         }, () => {});
       } catch(e) { return () => {}; }
