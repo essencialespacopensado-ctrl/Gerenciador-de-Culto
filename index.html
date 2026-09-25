@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.44';
+const APP_VERSION = '2026-09-25.45';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1978,6 +1978,21 @@ async function shareAppLink() {
   }
 }
 
+// Igual ao shareAppLink, mas pra um link específico (não o da página atual) — usado pelos links
+// públicos de cadastro (Momentos de Louvor / Mensagem Musical) que Paulo manda pra quem vai cantar
+// ou reger, sem precisar entrar no app.
+async function shareLinkUrl(url, title) {
+  try {
+    if (navigator.share) { await navigator.share({ title, url }); return; }
+  } catch(e) { if (e && e.name === 'AbortError') return; }
+  try {
+    await navigator.clipboard.writeText(url);
+    alert('Link copiado! Agora é só colar (Ctrl+V ou manter apertado e colar) onde quiser mandar.');
+  } catch(e) {
+    window.prompt('Copie o link abaixo:', url);
+  }
+}
+
 function ChurchHeader({ church, tab, setTab, onLogout }) {
   const [clock, setClock] = useState('');
   const [navOpen, setNavOpen] = useState(false);
@@ -3398,9 +3413,13 @@ function NumberDrawTool({ churchId }) {
 // Ligado direto às atividades de categoria "mensagem_musical" da liturgia da semana (mesmo
 // armazenamento usado pela aba Liturgia) — a pessoa só escolhe o vídeo, o horário já vem pronto.
 // Pensado pra ser preenchido pelo celular, por quem vai cantar/tocar, sem precisar mexer na liturgia inteira.
-function MensagensMusicaisTool({ churchId, church, onUpdateChurch }) {
+function MensagensMusicaisTool({ churchId, church, onUpdateChurch, shareUrl }) {
   const docId = church && (church.fbDocId || church.docId);
   const [activities, setActivities] = useState(() => (church && church.activities) || loadActivities(churchId));
+  // Reagir quando "church.activities" chega/muda depois da montagem (por exemplo, na página pública
+  // de cadastro, onde o documento vem do Firestore de forma assíncrona) — sem isso a lista ficava
+  // presa no valor de quando o componente montou. Mesma causa raiz do bug já corrigido no ActivityCard.
+  useEffect(() => { if (church && church.activities) setActivities(church.activities); }, [church && church.activities]);
   const items = activities.filter(a => a.category === 'mensagem_musical');
 
   const setMediaFor = (actId, media) => {
@@ -3417,6 +3436,7 @@ function MensagensMusicaisTool({ churchId, church, onUpdateChurch }) {
     <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
       <div style=${{fontWeight:800, fontSize:'13px'}}>🎙️ Mensagens Musicais</div>
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Feito pra usar pelo celular: escolha qual mensagem musical da semana é a sua e busque o vídeo — o horário já vem certo. Isso atualiza na hora a liturgia do sábado.</div>
+      ${shareUrl && html`<button type="button" onClick=${()=>shareLinkUrl(shareUrl, 'Cadastro de Mensagem Musical')} style=${{...btnGhost, fontSize:'11px', padding:'8px 12px', justifySelf:'start'}}>🔗 Copiar link pra quem vai cantar</button>`}
 
       <div style=${{display:'grid', gap:'10px'}}>
         ${items.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhuma mensagem musical na liturgia desta semana ainda. Vá na aba Liturgia pra criar a atividade primeiro.</div>`}
@@ -3494,6 +3514,12 @@ function CatalogoMusicasTool({ churchId }) {
 
 function MusicasView({ churchId, church, onUpdateChurch }) {
   const [selected, setSelected] = useState(null);
+  // Links públicos (sem login) pra mandar direto pros regentes da equipe de louvor e pra quem vai
+  // cantar a mensagem musical — cada um só vê e edita o campo da música dele, nada do resto do app.
+  const docId = church && (church.fbDocId || church.docId);
+  const baseUrl = window.location.origin + window.location.pathname;
+  const louvorShareUrl = docId ? baseUrl + '?cad=louvor&id=' + docId : null;
+  const mensagemShareUrl = docId ? baseUrl + '?cad=mensagem&id=' + docId : null;
   const tabs = [
     { key:'louvor', label:'🎤 Momentos de Louvor' },
     { key:'mensagens', label:'🎙️ Mensagens Musicais' },
@@ -3511,10 +3537,72 @@ function MusicasView({ churchId, church, onUpdateChurch }) {
       <div style=${{display:'flex', gap:'8px', flexWrap:'wrap'}}>
         ${tabs.map((t,i) => html`<${TabTile} key=${t.key} text=${t.label} idx=${i} delay=${i} active=${selected===t.key} onClick=${()=>setSelected(s => s===t.key ? null : t.key)} />`)}
       </div>
-      ${selected === 'louvor' && html`<${MomentosLouvorTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} />`}
-      ${selected === 'mensagens' && html`<${MensagensMusicaisTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} />`}
+      ${selected === 'louvor' && html`<${MomentosLouvorTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} shareUrl=${louvorShareUrl} />`}
+      ${selected === 'mensagens' && html`<${MensagensMusicaisTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} shareUrl=${mensagemShareUrl} />`}
       ${selected === 'catalogo' && html`<${CatalogoMusicasTool} churchId=${churchId} />`}
       ${selected && selected.startsWith('col:') && html`<${ColetaneasCategoryGrid} churchId=${churchId} category=${selected.slice(4)} />`}
+    </div>
+  `;
+}
+
+// Lê "?cad=louvor&id=<docId>" ou "?cad=mensagem&id=<docId>" da URL — os links públicos de cadastro
+// (pedido do Paulo em 25/09: um link pros regentes da equipe de louvor, outro pra quem vai cantar a
+// mensagem musical, sem acesso ao resto do app). Lido uma única vez, direto da URL: não muda durante
+// a sessão, então não tem problema de regra dos hooks em App() decidir o "return" antes dos hooks dela.
+function getPublicCadastroParams() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const cad = params.get('cad');
+    const id = params.get('id');
+    if ((cad === 'louvor' || cad === 'mensagem') && id) return { tipo: cad, docId: id };
+  } catch(e) {}
+  return null;
+}
+
+// Página pública e sem login: a pessoa abre o link, vê só o nome da igreja e a ferramenta certa
+// (Momentos de Louvor ou Mensagem Musical) pra escolher a música dela — nada do resto do app. Lê a
+// igreja direto do Firestore pelo docId (sem passar pela lista de login), então funciona em qualquer
+// aparelho, mesmo sem nunca ter aberto o app antes.
+function PublicCadastroPage({ tipo, docId }) {
+  const [church, setChurch] = useState(null);
+  const [status, setStatus] = useState('loading'); // loading | ok | notfound
+
+  useEffect(() => { applyTheme(loadTheme()); }, []);
+
+  useEffect(() => {
+    let stopped = false;
+    const unsub = fbListenWhenReady(() => {
+      try {
+        const { doc, onSnapshot } = window.__fb.helpers;
+        return onSnapshot(doc(window.__fb.db, 'igrejas', docId), snap => {
+          if (stopped) return;
+          if (!snap.exists()) { setStatus('notfound'); return; }
+          const data = snap.data() || {};
+          setChurch({ id: data.churchId || docId, fbDocId: docId, name: data.name || 'Igreja', activities: data.activities || [] });
+          setStatus('ok');
+        }, () => { if (!stopped) setStatus('notfound'); });
+      } catch(e) { setStatus('notfound'); return () => {}; }
+    });
+    return () => { stopped = true; try { unsub(); } catch(e) {} };
+  }, [docId]);
+
+  if (status === 'loading') {
+    return html`<div style=${{minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--text-dim)', fontSize:'13px'}}>Carregando...</div>`;
+  }
+  if (status === 'notfound' || !church) {
+    return html`<div style=${{minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--text-dim)', fontSize:'13px', textAlign:'center', padding:'24px'}}>Link inválido ou não encontrado.<br/>Peça um link novo pra quem cuida da sonoplastia.</div>`;
+  }
+
+  const Tool = tipo === 'louvor' ? MomentosLouvorTool : MensagensMusicaisTool;
+
+  return html`
+    <div style=${{minHeight:'100vh', maxWidth:'560px', margin:'0 auto', padding:'28px 16px 60px'}}>
+      <div style=${{textAlign:'center', marginBottom:'20px'}}>
+        <div style=${{fontSize:'22px', marginBottom:'4px'}}>${tipo === 'louvor' ? '🎤' : '🎙️'}</div>
+        <div style=${{fontSize:'11px', color:'var(--text-dim)', fontWeight:700, letterSpacing:'0.5px', textTransform:'uppercase'}}>${church.name}</div>
+        <div style=${{fontSize:'16px', fontWeight:800, marginTop:'4px'}}>${tipo === 'louvor' ? 'Cadastro de Momento de Louvor' : 'Cadastro de Mensagem Musical'}</div>
+      </div>
+      <${Tool} churchId=${church.id} church=${church} onUpdateChurch=${(patch)=>setChurch(c=>({...c, ...patch}))} />
     </div>
   `;
 }
@@ -3976,9 +4064,12 @@ function ColetaneasCategoryGrid({ churchId, category }) {
 // Ligado direto às atividades de categoria "louvor" da liturgia da semana (mesmo armazenamento
 // usado pela aba Liturgia) — a equipe só escolhe qual louvor é o seu (1, 2 ou 3) e busca o vídeo;
 // o horário já vem pronto. Pensado pra ser preenchido pelo celular, sem precisar mexer na liturgia inteira.
-function MomentosLouvorTool({ churchId, church, onUpdateChurch }) {
+function MomentosLouvorTool({ churchId, church, onUpdateChurch, shareUrl }) {
   const docId = church && (church.fbDocId || church.docId);
   const [activities, setActivities] = useState(() => (church && church.activities) || loadActivities(churchId));
+  // Mesma correção aplicada em MensagensMusicaisTool: reagir a "church.activities" chegando depois
+  // da montagem (página pública de cadastro, onde o Firestore responde de forma assíncrona).
+  useEffect(() => { if (church && church.activities) setActivities(church.activities); }, [church && church.activities]);
   const items = activities.filter(a => a.category === 'louvor');
 
   const setMediaFor = (actId, media) => {
@@ -3995,6 +4086,7 @@ function MomentosLouvorTool({ churchId, church, onUpdateChurch }) {
     <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
       <div style=${{fontWeight:800, fontSize:'13px'}}>🎤 Momentos de Louvor</div>
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Feito pra usar pelo celular: escolha qual louvor da semana é o seu (Louvor 1, 2 ou 3) e busque o vídeo — o horário já vem certo. Isso atualiza na hora a liturgia do sábado.</div>
+      ${shareUrl && html`<button type="button" onClick=${()=>shareLinkUrl(shareUrl, 'Cadastro de Momento de Louvor')} style=${{...btnGhost, fontSize:'11px', padding:'8px 12px', justifySelf:'start'}}>🔗 Copiar link pros regentes</button>`}
 
       <div style=${{display:'grid', gap:'10px'}}>
         ${items.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhum momento de louvor na liturgia desta semana ainda. Vá na aba Liturgia pra criar a atividade primeiro.</div>`}
@@ -7302,6 +7394,14 @@ function readStoredSession() {
 }
 
 function App() {
+  // Link público de cadastro (Momentos de Louvor / Mensagem Musical) — vem fixo na URL, não muda
+  // durante a sessão desta aba, então decidir o "return" aqui, antes dos hooks de sessão/login, não
+  // causa problema de ordem de hooks pra esta instância de App().
+  const publicCadastro = getPublicCadastroParams();
+  if (publicCadastro) {
+    return html`<${PublicCadastroPage} tipo=${publicCadastro.tipo} docId=${publicCadastro.docId} />`;
+  }
+
   useChurchBackfillSync();
   const initialStored = useRef(null);
   if (!initialStored.current) initialStored.current = readStoredSession();
