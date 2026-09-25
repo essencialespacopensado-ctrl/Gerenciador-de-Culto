@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.48';
+const APP_VERSION = '2026-09-25.50';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2044,7 +2044,39 @@ function ChurchHeader({ church, tab, setTab, onLogout }) {
   `;
 }
 
+// Fileira "Mostrar/Projetar em" reaproveitada pelo ProjectButton (mídia) e pelo CronometroAtividadeButton
+// (cronômetro) — pedido do Paulo (25/09) de organizar o layout tanto no PC quanto no celular: no PC
+// os botões ficam numa linha só; no celular viram uma gradezinha de 2 colunas, com toque maior, em
+// vez de um monte de botão espremido quebrando linha de qualquer jeito.
+function ScreenSendRow({ isMobile, label, buttons, extra }) {
+  const btnStyle = { ...btnGhost, padding: isMobile ? '10px 8px' : '6px 10px', fontSize: isMobile ? '12px' : '11px', textAlign:'center', width: isMobile ? '100%' : 'auto' };
+  return html`
+    <div style=${{display:'grid', gap:'6px'}}>
+      ${label && html`<div style=${{fontSize:'9.5px', color:'var(--text-dim)', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.05em'}}>${label}</div>`}
+      <div style=${isMobile ? {display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px'} : {display:'flex', flexWrap:'wrap', gap:'6px', alignItems:'center'}}>
+        ${buttons.map((b,i) => html`<button key=${i} type="button" onClick=${b.onClick} style=${{...btnStyle, ...(b.style||{})}} title=${b.title||''}>${b.text}</button>`)}
+      </div>
+      ${extra && html`<div style=${{display:'flex', flexWrap:'wrap', gap:'8px', alignItems:'center'}}>${extra}</div>`}
+    </div>
+  `;
+}
+
+// Botõezinhos "🖥️ Tela 1", "Tela 2"... um pra cada tela habilitada — pedido do Paulo (25/09) pra
+// poder mandar direto pra uma tela específica (numeradas na mesma ordem de "Telas"), sem precisar
+// abrir o seletor. Só aparece com 2+ telas habilitadas (com 0 ou 1 não tem o que escolher). Devolve
+// uma lista de botões prontos (não o JSX em si) pra poder entrar na mesma grade do ScreenSendRow.
+function screenQuickButtonDefs(churchId, onSendToScreen) {
+  const enabled = loadEnabledScreens(churchId);
+  if (enabled.length < 2) return [];
+  return enabled.map((scr, i) => ({
+    text: '🖥️ Tela ' + (i+1),
+    title: scr.label + (scr.isProjector ? ' (projetor)' : ''),
+    onClick: () => onSendToScreen(scr),
+  }));
+}
+
 function ProjectButton({ churchId, media, itemKey }) {
+  const isMobile = useIsMobile();
   if (!media || !media.title) return '';
 
   const send = (scr, mute) => {
@@ -2084,27 +2116,13 @@ function ProjectButton({ churchId, media, itemKey }) {
     }
   };
 
-  return html`
-    <div style=${{display:'flex', alignItems:'center', gap:'4px', flexWrap:'wrap'}}>
-      <button type="button" onClick=${()=>projectTo('operador')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Projetar só na tela do operador, sem som">🎧 Operador</button>
-      <button type="button" onClick=${()=>projectTo('projetor')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Projetar no projetor, com som">🔊 Projetor</button>
-      <${ScreenQuickButtons} churchId=${churchId} onSendToScreen=${(scr)=>send(scr, false)} />
-      ${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`}
-    </div>
-  `;
-}
+  const buttons = [
+    { text:'🎧 Operador', title:'Projetar só na tela do operador, sem som', onClick:()=>projectTo('operador') },
+    { text:'🔊 Projetor', title:'Projetar no projetor, com som', onClick:()=>projectTo('projetor') },
+    ...screenQuickButtonDefs(churchId, (scr)=>send(scr, false)),
+  ];
 
-// Botõezinhos "🖥️ Tela 1", "Tela 2"... um pra cada tela habilitada — pedido do Paulo (25/09) pra
-// poder mandar direto pra uma tela específica (numeradas na mesma ordem de "Telas"), sem precisar
-// abrir o seletor. Só aparece com 2+ telas habilitadas (com 0 ou 1 não tem o que escolher).
-function ScreenQuickButtons({ churchId, onSendToScreen }) {
-  const enabled = loadEnabledScreens(churchId);
-  if (enabled.length < 2) return '';
-  return html`
-    ${enabled.map((scr, i) => html`
-      <button key=${screenSig(scr)} type="button" onClick=${()=>onSendToScreen(scr)} style=${{...btnGhost, padding:'6px 8px', fontSize:'10.5px'}} title=${scr.label + (scr.isProjector ? ' (projetor)' : '')}>🖥️ Tela ${i+1}</button>
-    `)}
-  `;
+  return html`<${ScreenSendRow} isMobile=${isMobile} buttons=${buttons} extra=${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`} />`;
 }
 
 // Cronômetro REGRESSIVO (contagem decrescente) pra atividades que NÃO têm vídeo/música (oração,
@@ -2116,7 +2134,27 @@ function ScreenQuickButtons({ churchId, onSendToScreen }) {
 // sempre o mesmo tempo que o sistema realmente vai esperar antes de passar pra próxima etapa.
 // O tempo roda aqui no painel (a tela recalcula sozinha a partir de startedAt+remainingMs, então
 // sobrevive a uma tela travando/recarregando) e só manda mensagem pra tela quando muda de estado.
+// Controla qual cronômetro está "flutuando" na tela no momento — só um por vez, pra não empilhar
+// janelinhas. Qualquer CronometroAtividadeButton pode abrir a sua; abrir uma fecha a anterior.
+let _cronoFloatKey = null;
+let _cronoFloatListeners = [];
+function setCronoFloatOpen(key) {
+  _cronoFloatKey = key;
+  _cronoFloatListeners.forEach(fn => { try { fn(key); } catch(e) {} });
+}
+function useCronoFloatOpen(key) {
+  const [openKey, setOpenKey] = useState(_cronoFloatKey);
+  useEffect(() => {
+    const fn = (k) => setOpenKey(k);
+    _cronoFloatListeners.push(fn);
+    return () => { _cronoFloatListeners = _cronoFloatListeners.filter(f => f !== fn); };
+  }, []);
+  return [openKey === key, () => setCronoFloatOpen(key), () => setCronoFloatOpen(null)];
+}
+
 function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time, plannedSeconds, onChangeDuration }) {
+  const isMobile = useIsMobile();
+  const [isFloating, openFloat, closeFloat] = useCronoFloatOpen(itemKey);
   const initialMin = plannedSeconds && plannedSeconds > 0 ? Math.max(1, Math.round(plannedSeconds / 60)) : 5;
   const [durationMin, setDurationMin] = useState(initialMin);
   const [remainingMs, setRemainingMs] = useState(initialMin * 60000);
@@ -2164,6 +2202,10 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
       if (which === 'projetor') {
         const projectors = enabled.filter(s => s.isProjector);
         scrs = projectors.length > 0 ? projectors : pickTargetScreens(churchId, itemKey, enabled);
+      } else if (which === 'retorno') {
+        const ret = enabled.filter(s => s.isReturnScreen);
+        if (ret.length === 0) { alert('Nenhuma tela de retorno configurada ainda. Vá na aba "Telas" e marque uma tela como "Definir como Retorno".'); return; }
+        scrs = ret;
       } else {
         scrs = enabled.filter(s => !s.isProjector);
         if (scrs.length === 0) { alert('Nenhuma tela de operador configurada ainda. Vá na aba "Telas", habilite uma tela a mais (sem marcar como Projetor) pra usar esse botão sem som.'); return; }
@@ -2201,20 +2243,55 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
   };
   const done = remainingMs <= 0;
 
+  const playButtons = [
+    { text: running ? '⏸ Pausar' : (done ? '▶ Reiniciar' : '▶ Iniciar'), onClick: ()=>{ if (!running) openFloat(); setRunning(r=>!r); }, style: running ? { color:'var(--highlight)', borderColor:'var(--highlight)' } : {} },
+    { text: '↺ Zerar', onClick: reset },
+  ];
+  const screenButtons = [
+    { text:'🎧 Operador', title:'Mostrar o cronômetro só na tela do operador, sem som', onClick:()=>sendTo('operador') },
+    { text:'🔊 Projetor', title:'Mostrar o cronômetro no projetor', onClick:()=>sendTo('projetor') },
+    { text:'📺 Retorno', title:'Mostrar o cronômetro na tela de retorno (voltada pra quem está falando)', onClick:()=>sendTo('retorno') },
+    ...screenQuickButtonDefs(churchId, (scr)=>sendToMany([scr])),
+  ];
+  const statusExtra = html`
+    <${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />
+    ${targets.length > 0 && html`<span style=${{fontSize:'10px', color:'var(--success-1)', fontWeight:700}}>● cronômetro na tela</span>`}
+  `;
+
+  // Chip compacto — sempre presente no card da atividade, sem ocupar espaço. Clicar abre a janelinha
+  // flutuante com os controles completos (só uma flutuante por vez, ver useCronoFloatOpen).
+  const chip = html`
+    <button type="button" onClick=${openFloat} style=${{...btnGhost, display:'flex', alignItems:'center', gap:'6px', padding:'6px 12px', fontSize:'12px', fontWeight:700, fontVariantNumeric:'tabular-nums', width: isMobile ? '100%' : 'auto', justifyContent:'center', color: done ? 'var(--danger)' : (running ? 'var(--highlight)' : 'inherit'), borderColor: running ? 'var(--highlight)' : 'var(--border-soft)'}}>
+      ${running ? '⏳' : '⏱️'} ${format(remainingMs)} ${running ? html`<span style=${{fontSize:'9px', opacity:0.8}}>rodando</span>` : ''}
+    </button>
+  `;
+
+  const floatPanel = isFloating && html`
+    <div style=${{position:'fixed', zIndex:9999, ...(isMobile ? {left:'8px', right:'8px', bottom:'8px'} : {right:'16px', bottom:'16px', width:'300px'})}}>
+      <div class="glass fade-up" style=${{padding:'12px', borderRadius:'14px', display:'grid', gap:'10px', boxShadow:'0 8px 28px rgba(0,0,0,0.35)', border:'1.5px solid var(--accent-1)'}}>
+        <div style=${{display:'flex', alignItems:'center', gap:'8px'}}>
+          <div style=${{flex:1, fontSize:'11px', fontWeight:700, color:'var(--text-dim)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title=${title}>⏱️ ${title || 'Cronômetro'}</div>
+          <button type="button" onClick=${closeFloat} title="Minimizar (o cronômetro continua rodando)" style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'14px', padding:'2px 4px', cursor:'pointer'}}>─</button>
+        </div>
+        <div style=${{display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap'}}>
+          <div style=${{fontSize:'22px', fontWeight:800, fontVariantNumeric:'tabular-nums', color: done ? 'var(--danger)' : 'inherit'}}>⏳ ${format(remainingMs)}</div>
+          ${!running && html`
+            <div style=${{display:'flex', alignItems:'center', gap:'4px'}}>
+              <input type="number" min="1" value=${durationMin} onChange=${e=>changeDuration(e.target.value)} onBlur=${commitDuration} title="Duração planejada — também usada pra avançar sozinho na Programação Automática" style=${{...inputStyle, width:'54px', padding:'6px 7px', fontSize:'12px', textAlign:'center'}} />
+              <span style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>min planejados</span>
+            </div>
+          `}
+        </div>
+        <${ScreenSendRow} isMobile=${isMobile} buttons=${playButtons} />
+        <${ScreenSendRow} isMobile=${isMobile} label="Mostrar em" buttons=${screenButtons} extra=${itemKey && statusExtra} />
+      </div>
+    </div>
+  `;
+
   return html`
-    <div style=${{display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>
-      <div style=${{fontSize:'13px', fontWeight:800, fontVariantNumeric:'tabular-nums', minWidth:'50px', color: done ? 'var(--danger)' : 'inherit'}}>⏳ ${format(remainingMs)}</div>
-      ${!running && html`
-        <input type="number" min="1" value=${durationMin} onChange=${e=>changeDuration(e.target.value)} onBlur=${commitDuration} title="Duração planejada — também usada pra avançar sozinho na Programação Automática" style=${{...inputStyle, width:'50px', padding:'5px 6px', fontSize:'11px', textAlign:'center'}} />
-      `}
-      ${!running && html`<span style=${{fontSize:'10px', color:'var(--text-dim)'}}>min</span>`}
-      <button type="button" onClick=${()=>setRunning(r=>!r)} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}}>${running ? '⏸ Pausar' : (done ? '▶ Reiniciar' : '▶ Iniciar')}</button>
-      <button type="button" onClick=${reset} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}}>↺ Zerar</button>
-      <button type="button" onClick=${()=>sendTo('operador')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Mostrar o cronômetro só na tela do operador, sem som">🎧 Operador</button>
-      <button type="button" onClick=${()=>sendTo('projetor')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Mostrar o cronômetro no projetor">🔊 Projetor</button>
-      <${ScreenQuickButtons} churchId=${churchId} onSendToScreen=${(scr)=>sendToMany([scr])} />
-      ${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`}
-      ${targets.length > 0 && html`<span style=${{fontSize:'10px', color:'var(--success-1)', fontWeight:700}}>● na tela</span>`}
+    <div style=${{display:'contents'}}>
+      ${chip}
+      ${floatPanel}
     </div>
   `;
 }
@@ -2337,8 +2414,8 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
         ${needsMedia && act.weeklyFixed && html`<div style=${{fontSize:'10.5px', color:'var(--text-dim)', padding:'6px 2px'}}>📅 Marcada como "todo sábado" — o vídeo/música vem do cadastro em Gestão &gt; Trilhas Fixas (destranque o 📅 aqui do lado pra escolher manualmente).</div>`}
         ${needsMedia && !act.weeklyFixed && html`<${MediaSearchField} media=${media} onChange=${setMedia} searchKey=${act.id} />`}
         ${needsMedia && html`
-          <div style=${{display:'flex', alignItems:'center', gap:'6px'}}>
-            <input type="number" min="0" placeholder="padrão" value=${idleSeconds} onChange=${e=>setIdleSeconds(e.target.value)} style=${{...inputStyle, fontSize:'12px', width:'70px'}} />
+          <div style=${{display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>
+            <input type="number" min="0" placeholder="padrão" value=${idleSeconds} onChange=${e=>setIdleSeconds(e.target.value)} style=${{...inputStyle, fontSize:'12px', width:'70px', flexShrink:0}} />
             <span style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>seg. ocioso após o vídeo/música terminar, na Programação Automática (vazio = usa o padrão)</span>
           </div>
         `}
@@ -2858,6 +2935,12 @@ function saveManualScreens(churchId, list) {
 function getProjectorScreen(churchId) {
   const list = loadEnabledScreens(churchId);
   return list.find(s => s.isProjector) || (list.length === 1 ? list[0] : null);
+}
+// Tela de Retorno — monitor voltado pra quem está na frente (pregador, apresentador), separado do
+// projetor que a congregação vê. Usada pelo cronômetro pra mostrar a contagem pra quem está falando.
+function getReturnScreen(churchId) {
+  const list = loadEnabledScreens(churchId);
+  return list.find(s => s.isReturnScreen) || null;
 }
 
 // Guarda, por item (uma atividade, um anúncio, um vídeo da semana), pra qual tela ele deve ir
@@ -4557,6 +4640,7 @@ function BuscasSemanaisView({ churchId }) {
 // "slot" configurado antes mesmo de plugar o aparelho. Left/Top/Largura/Altura são em pixels, do
 // jeito que aparecem em Configurações de Tela do Windows (Configurações > Sistema > Tela).
 function AddManualScreenForm({ onAdd, onClose, suggestedLeft }) {
+  const isMobile = useIsMobile();
   const [label, setLabel] = useState('');
   const [left, setLeft] = useState(suggestedLeft || 0);
   const [top, setTop] = useState(0);
@@ -4570,7 +4654,7 @@ function AddManualScreenForm({ onAdd, onClose, suggestedLeft }) {
       <div style=${{fontWeight:800, fontSize:'12.5px'}}>➕ Adicionar Tela Manualmente</div>
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Preencha a posição e o tamanho — dá pra ver esses números em Configurações de Tela do Windows (Sistema &gt; Tela). Depois de adicionar, use "🧪 Testar" pra conferir se abriu no monitor certo antes de habilitar.</div>
       <input placeholder="Nome (ex: Telão do Salão, Tela da Recepção)" value=${label} onChange=${e=>setLabel(e.target.value)} style=${{...inputStyle, fontSize:'12.5px'}} autoFocus />
-      <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:'6px'}}>
+      <div style=${{display:'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : '1fr 1fr 1fr 1fr', gap:'6px'}}>
         <div>
           <div style=${{fontSize:'9.5px', color:'var(--text-dim)', marginBottom:'2px'}}>Posição X (left)</div>
           <input type="number" value=${left} onChange=${e=>setLeft(Number(e.target.value)||0)} style=${{...inputStyle, fontSize:'12px', padding:'6px 8px'}} />
@@ -4650,6 +4734,15 @@ function TelasView({ churchId }) {
       return next;
     });
   };
+  const setReturnScreen = (sig) => {
+    setEnabled(list => {
+      // Toggle exclusivo: se essa tela já era a de retorno, desmarca; senão, marca só essa.
+      const wasOn = (list.find(s => screenSig(s) === sig) || {}).isReturnScreen;
+      const next = list.map(s => ({ ...s, isReturnScreen: wasOn ? false : (screenSig(s) === sig) }));
+      saveEnabledScreens(churchId, next);
+      return next;
+    });
+  };
 
   // Adiciona uma tela "na mão" — pra quando o navegador não detecta um monitor/projetor sozinho, ou
   // pra já deixar um slot configurado antes mesmo de plugar o aparelho. O Paulo digita a posição e o
@@ -4714,14 +4807,17 @@ function TelasView({ churchId }) {
               const enabledObj = enabled.find(s => screenSig(s) === sig);
               const numLabel = isOn ? 'Tela ' + (enabledSigs.indexOf(sig)+1) : '';
               return html`
-                <div key=${sig} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'12px', border: isOn ? '1.5px solid var(--accent-1)' : '1px solid var(--border-soft)'}}>
-                  <input type="checkbox" checked=${isOn} onChange=${()=>toggleEnabled(scr)} style=${{width:'18px', height:'18px'}} />
-                  <div style=${{flex:1}}>
-                    <div style=${{fontWeight:700, fontSize:'13px', display:'flex', alignItems:'center', gap:'6px'}}>${scr.label} ${numLabel && html`<span style=${{fontSize:'9.5px', fontWeight:700, padding:'2px 6px', borderRadius:'999px', background:'rgba(99,102,241,0.16)', color:'var(--accent-1)'}}>${numLabel}</span>`}</div>
+                <div key=${sig} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', border: isOn ? '1.5px solid var(--accent-1)' : '1px solid var(--border-soft)'}}>
+                  <input type="checkbox" checked=${isOn} onChange=${()=>toggleEnabled(scr)} style=${{width:'18px', height:'18px', flexShrink:0}} />
+                  <div style=${{flex:'1 1 160px', minWidth:'160px'}}>
+                    <div style=${{fontWeight:700, fontSize:'13px', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>${scr.label} ${numLabel && html`<span style=${{fontSize:'9.5px', fontWeight:700, padding:'2px 6px', borderRadius:'999px', background:'rgba(99,102,241,0.16)', color:'var(--accent-1)'}}>${numLabel}</span>`}</div>
                     <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Posição: ${scr.left},${scr.top}</div>
                   </div>
                   ${isOn && html`
-                    <button onClick=${()=>setProjector(sig)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isProjector ? '📽️ Projetor' : 'Definir como Projetor'}</button>
+                    <div style=${{display:'flex', gap:'8px', flexWrap:'wrap', flexShrink:0}}>
+                      <button onClick=${()=>setProjector(sig)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isProjector ? '📽️ Projetor' : 'Definir como Projetor'}</button>
+                      <button onClick=${()=>setReturnScreen(sig)} title="Tela voltada pra quem está na frente (pregador/apresentador), pra ele ver o cronômetro" style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isReturnScreen ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isReturnScreen ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isReturnScreen ? '📺 Retorno' : 'Definir como Retorno'}</button>
+                    </div>
                   `}
                 </div>
               `;
@@ -4739,15 +4835,18 @@ function TelasView({ churchId }) {
                 const enabledObj = enabled.find(s => screenSig(s) === sig);
                 const numLabel = isOn ? 'Tela ' + (enabledSigs.indexOf(sig)+1) : '';
                 return html`
-                  <div key=${sig} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'12px', border: isOn ? '1.5px solid var(--accent-1)' : '1px solid var(--border-soft)'}}>
-                    <input type="checkbox" checked=${isOn} onChange=${()=>toggleEnabled(scr)} style=${{width:'18px', height:'18px'}} />
-                    <div style=${{flex:1}}>
-                      <div style=${{fontWeight:700, fontSize:'13px', display:'flex', alignItems:'center', gap:'6px'}}>${scr.label} ${numLabel && html`<span style=${{fontSize:'9.5px', fontWeight:700, padding:'2px 6px', borderRadius:'999px', background:'rgba(99,102,241,0.16)', color:'var(--accent-1)'}}>${numLabel}</span>`}</div>
+                  <div key=${sig} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', border: isOn ? '1.5px solid var(--accent-1)' : '1px solid var(--border-soft)'}}>
+                    <input type="checkbox" checked=${isOn} onChange=${()=>toggleEnabled(scr)} style=${{width:'18px', height:'18px', flexShrink:0}} />
+                    <div style=${{flex:'1 1 160px', minWidth:'160px'}}>
+                      <div style=${{fontWeight:700, fontSize:'13px', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>${scr.label} ${numLabel && html`<span style=${{fontSize:'9.5px', fontWeight:700, padding:'2px 6px', borderRadius:'999px', background:'rgba(99,102,241,0.16)', color:'var(--accent-1)'}}>${numLabel}</span>`}</div>
                       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Posição: ${scr.left},${scr.top} • ${scr.width}x${scr.height}</div>
                     </div>
-                    ${isOn && html`<button onClick=${()=>setProjector(sig)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isProjector ? '📽️ Projetor' : 'Definir como Projetor'}</button>`}
-                    <button onClick=${()=>testScreen(scr)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px'}} title="Abre essa tela mostrando o nome dela, pra você arrastar/conferir se caiu no monitor certo">🧪 Testar</button>
-                    <button onClick=${()=>removeManualScreen(sig)} style=${{background:'transparent', border:'none', color:'var(--danger)', fontSize:'15px', padding:'4px 6px'}} title="Remover essa tela">✕</button>
+                    <div style=${{display:'flex', gap:'8px', flexWrap:'wrap', flexShrink:0}}>
+                      ${isOn && html`<button onClick=${()=>setProjector(sig)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isProjector ? '📽️ Projetor' : 'Definir como Projetor'}</button>`}
+                      ${isOn && html`<button onClick=${()=>setReturnScreen(sig)} title="Tela voltada pra quem está na frente (pregador/apresentador), pra ele ver o cronômetro" style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isReturnScreen ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isReturnScreen ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isReturnScreen ? '📺 Retorno' : 'Definir como Retorno'}</button>`}
+                      <button onClick=${()=>testScreen(scr)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px'}} title="Abre essa tela mostrando o nome dela, pra você arrastar/conferir se caiu no monitor certo">🧪 Testar</button>
+                      <button onClick=${()=>removeManualScreen(sig)} style=${{background:'transparent', border:'none', color:'var(--danger)', fontSize:'15px', padding:'4px 6px'}} title="Remover essa tela">✕</button>
+                    </div>
                   </div>
                 `;
               })}
@@ -4764,7 +4863,7 @@ function TelasView({ churchId }) {
                 const choice = choices[sig] || { type:'blank' };
                 return html`
                   <div key=${sig} class="glass fade-up" style=${{padding:'14px', borderRadius:'14px', display:'grid', gap:'8px'}}>
-                    <div style=${{fontWeight:700, fontSize:'12.5px'}}>Tela ${enabledSigs.indexOf(sig)+1} — ${scr.label}${scr.isProjector ? ' 📽️' : ''}</div>
+                    <div style=${{fontWeight:700, fontSize:'12.5px'}}>Tela ${enabledSigs.indexOf(sig)+1} — ${scr.label}${scr.isProjector ? ' 📽️' : ''}${scr.isReturnScreen ? ' 📺' : ''}</div>
                     <select value=${choice.type} onChange=${e=>setChoice(sig, {type:e.target.value})} style=${{...inputStyle, fontSize:'12px'}}>
                       <option value="blank">⬛ Tela Preta</option>
                       <option value="media">🎬 Vídeo/Música da Liturgia</option>
