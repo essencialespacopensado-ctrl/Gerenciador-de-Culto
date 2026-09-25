@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.43';
+const APP_VERSION = '2026-09-25.44';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2171,6 +2171,11 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
   // oração e sermão (que já tem seu próprio fluxo de arquivos, na aba Mensagem).
   const needsMedia = category !== 'oracao' && category !== 'sermao';
   const weeklyTrack = act.weeklyFixed ? findFixedTrack(fixedTracks, act.name) : null;
+
+  // Quando é "fixo semanal", a mídia é atualizada de fora (pela Trilhas Fixas, em Gestão) — sem isso,
+  // o estado local `media` (que só reflete o valor de quando o card foi montado) ficava desatualizado
+  // e o botão de Projetar nunca aparecia mesmo depois de cadastrar a URL.
+  useEffect(() => { if (act.weeklyFixed) setMedia(act.media || null); }, [act.weeklyFixed, act.media]);
 
   const save = () => {
     onEdit({ ...act, name: name.trim() || act.name, responsible: responsible.trim() || 'A definir', category, time: time || '--:--', media: media || null, idleSeconds: idleSeconds === '' ? null : Math.max(0, Number(idleSeconds) || 0) });
