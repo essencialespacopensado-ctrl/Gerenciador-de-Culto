@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.45';
+const APP_VERSION = '2026-09-25.46';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -3443,8 +3443,9 @@ function MensagensMusicaisTool({ churchId, church, onUpdateChurch, shareUrl }) {
         ${items.map((a,i) => html`
           <div key=${a.id} class="glass" style=${{padding:'12px', borderRadius:'14px', border:'1px solid var(--border-soft)', display:'grid', gap:'8px'}}>
             <div>
+              <div style=${{display:'inline-flex', alignItems:'center', gap:'5px', padding:'3px 9px', borderRadius:'999px', background:'rgba(99,102,241,0.15)', color:'var(--accent-1)', fontWeight:800, fontSize:'10.5px', marginBottom:'6px'}}>🕐 ${a.time} · ${SECTION_LABELS[a.section] || a.section}</div>
               <div style=${{fontWeight:700, fontSize:'12.5px'}}>${items.length > 1 ? 'Mensagem Musical '+(i+1)+' — ' : ''}${a.name}</div>
-              <div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${a.responsible} • ${a.time} • ${SECTION_LABELS[a.section]}</div>
+              <div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${a.responsible}</div>
             </div>
             <${MediaSearchField} media=${a.media} onChange=${(m)=>setMediaFor(a.id, m)} searchKey=${a.id} />
           </div>
@@ -4093,8 +4094,9 @@ function MomentosLouvorTool({ churchId, church, onUpdateChurch, shareUrl }) {
         ${items.map((a,i) => html`
           <div key=${a.id} class="glass" style=${{padding:'12px', borderRadius:'14px', border:'1px solid var(--border-soft)', display:'grid', gap:'8px'}}>
             <div>
+              <div style=${{display:'inline-flex', alignItems:'center', gap:'5px', padding:'3px 9px', borderRadius:'999px', background:'rgba(99,102,241,0.15)', color:'var(--accent-1)', fontWeight:800, fontSize:'10.5px', marginBottom:'6px'}}>🕐 ${a.time} · ${SECTION_LABELS[a.section] || a.section}</div>
               <div style=${{fontWeight:700, fontSize:'12.5px'}}>Louvor ${i+1} — ${a.name}</div>
-              <div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${a.responsible} • ${a.time} • ${SECTION_LABELS[a.section]}</div>
+              <div style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>${a.responsible}</div>
             </div>
             <${MediaSearchField} media=${a.media} onChange=${(m)=>setMediaFor(a.id, m)} searchKey=${a.id} />
           </div>
