@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.47';
+const APP_VERSION = '2026-09-25.48';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2088,43 +2088,73 @@ function ProjectButton({ churchId, media, itemKey }) {
     <div style=${{display:'flex', alignItems:'center', gap:'4px', flexWrap:'wrap'}}>
       <button type="button" onClick=${()=>projectTo('operador')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Projetar só na tela do operador, sem som">🎧 Operador</button>
       <button type="button" onClick=${()=>projectTo('projetor')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Projetar no projetor, com som">🔊 Projetor</button>
+      <${ScreenQuickButtons} churchId=${churchId} onSendToScreen=${(scr)=>send(scr, false)} />
       ${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`}
     </div>
   `;
 }
 
-// Cronômetro pra atividades que NÃO têm vídeo/música (oração, sermão, avisos, momento de dízimo
-// falado, etc.) — pedido do Paulo (25/09): poder escolher em que tela projetar, e a tela mostrar o
-// que já está cadastrado na Liturgia (nome da atividade + responsável/horário) junto com o relógio.
-// O tempo roda aqui no painel (pra continuar contando mesmo se a tela de projeção travar/recarregar,
-// já que ela recalcula sozinha a partir de startedAt+pausedMs) e só manda mensagem pra tela quando
-// muda de estado (Iniciar/Pausar/Zerar ou troca de tela) — não fica mandando a cada segundo.
-function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time }) {
-  const [ms, setMs] = useState(0);
+// Botõezinhos "🖥️ Tela 1", "Tela 2"... um pra cada tela habilitada — pedido do Paulo (25/09) pra
+// poder mandar direto pra uma tela específica (numeradas na mesma ordem de "Telas"), sem precisar
+// abrir o seletor. Só aparece com 2+ telas habilitadas (com 0 ou 1 não tem o que escolher).
+function ScreenQuickButtons({ churchId, onSendToScreen }) {
+  const enabled = loadEnabledScreens(churchId);
+  if (enabled.length < 2) return '';
+  return html`
+    ${enabled.map((scr, i) => html`
+      <button key=${screenSig(scr)} type="button" onClick=${()=>onSendToScreen(scr)} style=${{...btnGhost, padding:'6px 8px', fontSize:'10.5px'}} title=${scr.label + (scr.isProjector ? ' (projetor)' : '')}>🖥️ Tela ${i+1}</button>
+    `)}
+  `;
+}
+
+// Cronômetro REGRESSIVO (contagem decrescente) pra atividades que NÃO têm vídeo/música (oração,
+// sermão, avisos, momento de dízimo falado, etc.) — pedido do Paulo (25/09): escolher em que tela
+// projetar (incluindo uma tela específica pelo número), a tela mostrar o que já está cadastrado na
+// Liturgia (nome + responsável/horário) junto com o relógio, e a duração configurada aqui é a MESMA
+// usada pela Programação Automática do Modo Ao Vivo pra avançar essa etapa sozinha quando chegar a
+// zero (guardada em act.plannedSeconds, via onChangeDuration) — assim o tempo que aparece na tela é
+// sempre o mesmo tempo que o sistema realmente vai esperar antes de passar pra próxima etapa.
+// O tempo roda aqui no painel (a tela recalcula sozinha a partir de startedAt+remainingMs, então
+// sobrevive a uma tela travando/recarregando) e só manda mensagem pra tela quando muda de estado.
+function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time, plannedSeconds, onChangeDuration }) {
+  const initialMin = plannedSeconds && plannedSeconds > 0 ? Math.max(1, Math.round(plannedSeconds / 60)) : 5;
+  const [durationMin, setDurationMin] = useState(initialMin);
+  const [remainingMs, setRemainingMs] = useState(initialMin * 60000);
   const [running, setRunning] = useState(false);
+  const baseRef = useRef(0);
   const startRef = useRef(0);
   const [targets, setTargets] = useState([]);
 
   useEffect(() => {
     if (!running) return;
-    startRef.current = Date.now() - ms;
-    const id = setInterval(() => setMs(Date.now() - startRef.current), 200);
+    baseRef.current = remainingMs;
+    startRef.current = Date.now();
+    const id = setInterval(() => {
+      const left = Math.max(0, baseRef.current - (Date.now() - startRef.current));
+      setRemainingMs(left);
+      if (left <= 0) setRunning(false);
+    }, 200);
     return () => clearInterval(id);
   }, [running]);
 
-  const pushToTargets = (scrs, runningNow, msNow) => {
+  const pushToTargets = (scrs, runningNow, remainingNow) => {
     scrs.forEach(scr => {
       try {
-        sendToScreenObj(scr, 'cronometro', { title, responsible, time, running: runningNow, startedAt: runningNow ? (Date.now() - msNow) : null, pausedMs: msNow });
+        sendToScreenObj(scr, 'cronometro', { title, responsible, time, running: runningNow, startedAt: runningNow ? Date.now() : null, remainingMs: remainingNow });
       } catch (e) {}
     });
   };
 
   useEffect(() => {
     if (targets.length === 0) return;
-    pushToTargets(targets, running, ms);
+    pushToTargets(targets, running, remainingMs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
+
+  const sendToMany = (scrs) => {
+    setTargets(scrs);
+    pushToTargets(scrs, running, remainingMs);
+  };
 
   const sendTo = (which) => {
     try {
@@ -2138,34 +2168,51 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
         scrs = enabled.filter(s => !s.isProjector);
         if (scrs.length === 0) { alert('Nenhuma tela de operador configurada ainda. Vá na aba "Telas", habilite uma tela a mais (sem marcar como Projetor) pra usar esse botão sem som.'); return; }
       }
-      setTargets(scrs);
-      pushToTargets(scrs, running, ms);
+      sendToMany(scrs);
     } catch (e) {
       alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
     }
   };
 
+  const changeDuration = (min) => {
+    const v = Math.max(1, Number(min) || 1);
+    setDurationMin(v);
+    if (!running) {
+      const ms = v * 60000;
+      setRemainingMs(ms);
+      if (targets.length > 0) pushToTargets(targets, false, ms);
+    }
+  };
+  const commitDuration = () => { if (onChangeDuration) onChangeDuration(durationMin * 60); };
+
   const reset = () => {
     setRunning(false);
-    setMs(0);
-    if (targets.length > 0) pushToTargets(targets, false, 0);
+    const ms = durationMin * 60000;
+    setRemainingMs(ms);
+    if (targets.length > 0) pushToTargets(targets, false, ms);
   };
 
   const format = (t) => {
-    const totalSec = Math.floor(t / 1000);
+    const totalSec = Math.ceil(t / 1000);
     const h = Math.floor(totalSec / 3600);
     const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
     const s = String(totalSec % 60).padStart(2, '0');
     return h > 0 ? (h + ':' + m + ':' + s) : (m + ':' + s);
   };
+  const done = remainingMs <= 0;
 
   return html`
     <div style=${{display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>
-      <div style=${{fontSize:'13px', fontWeight:800, fontVariantNumeric:'tabular-nums', minWidth:'50px'}}>⏱️ ${format(ms)}</div>
-      <button type="button" onClick=${()=>setRunning(r=>!r)} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}}>${running ? '⏸ Pausar' : '▶ Iniciar'}</button>
+      <div style=${{fontSize:'13px', fontWeight:800, fontVariantNumeric:'tabular-nums', minWidth:'50px', color: done ? 'var(--danger)' : 'inherit'}}>⏳ ${format(remainingMs)}</div>
+      ${!running && html`
+        <input type="number" min="1" value=${durationMin} onChange=${e=>changeDuration(e.target.value)} onBlur=${commitDuration} title="Duração planejada — também usada pra avançar sozinho na Programação Automática" style=${{...inputStyle, width:'50px', padding:'5px 6px', fontSize:'11px', textAlign:'center'}} />
+      `}
+      ${!running && html`<span style=${{fontSize:'10px', color:'var(--text-dim)'}}>min</span>`}
+      <button type="button" onClick=${()=>setRunning(r=>!r)} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}}>${running ? '⏸ Pausar' : (done ? '▶ Reiniciar' : '▶ Iniciar')}</button>
       <button type="button" onClick=${reset} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}}>↺ Zerar</button>
       <button type="button" onClick=${()=>sendTo('operador')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Mostrar o cronômetro só na tela do operador, sem som">🎧 Operador</button>
       <button type="button" onClick=${()=>sendTo('projetor')} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}} title="Mostrar o cronômetro no projetor">🔊 Projetor</button>
+      <${ScreenQuickButtons} churchId=${churchId} onSendToScreen=${(scr)=>sendToMany([scr])} />
       ${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`}
       ${targets.length > 0 && html`<span style=${{fontSize:'10px', color:'var(--success-1)', fontWeight:700}}>● na tela</span>`}
     </div>
@@ -2330,17 +2377,17 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
           </div>
           ${media && media.title
             ? html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${ProjectButton} churchId=${churchId} media=${media} itemKey=${act.id} /></div>`
-            : (needsMedia && !act.fixed && !act.weeklyFixed && html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${CronometroAtividadeButton} churchId=${churchId} itemKey=${act.id} title=${act.name} responsible=${act.responsible} time=${act.time} /></div>`)}
+            : (needsMedia && !act.fixed && !act.weeklyFixed && html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${CronometroAtividadeButton} churchId=${churchId} itemKey=${act.id} title=${act.name} responsible=${act.responsible} time=${act.time} plannedSeconds=${act.plannedSeconds} onChangeDuration=${(secs)=>onEdit({...act, plannedSeconds: secs})} /></div>`)}
         </div>
       `}
       ${act.category === 'oracao' && !editing && html`
         <div style=${{marginLeft: isMobile ? '0' : '46px'}}>
-          <${CronometroAtividadeButton} churchId=${churchId} itemKey=${act.id} title=${act.name} responsible=${act.responsible} time=${act.time} />
+          <${CronometroAtividadeButton} churchId=${churchId} itemKey=${act.id} title=${act.name} responsible=${act.responsible} time=${act.time} plannedSeconds=${act.plannedSeconds} onChangeDuration=${(secs)=>onEdit({...act, plannedSeconds: secs})} />
         </div>
       `}
       ${act.category === 'sermao' && !editing && html`
         <div style=${{marginLeft: isMobile ? '0' : '46px', display:'grid', gap:'8px'}}>
-          <${CronometroAtividadeButton} churchId=${churchId} itemKey=${act.id+'-crono'} title=${act.name} responsible=${act.responsible} time=${act.time} />
+          <${CronometroAtividadeButton} churchId=${churchId} itemKey=${act.id+'-crono'} title=${act.name} responsible=${act.responsible} time=${act.time} plannedSeconds=${act.plannedSeconds} onChangeDuration=${(secs)=>onEdit({...act, plannedSeconds: secs})} />
           ${(!mensagemItems || mensagemItems.length === 0)
             ? html`<div style=${{fontSize:'11px', color:'var(--text-dim)', padding:'6px 2px'}}>Nenhum arquivo carregado ainda — vá na aba 🎤 Mensagem pra carregar fotos, vídeos ou PowerPoint da pregação.</div>`
             : html`
@@ -2795,6 +2842,19 @@ function saveEnabledScreens(churchId, list) {
   try { localStorage.setItem(screensEnabledKey(churchId), JSON.stringify(list)); } catch(e) {}
 }
 function screenSig(s) { return s.width+'x'+s.height+'@'+s.left+','+s.top; }
+
+// Telas adicionadas "na mão" (pedido do Paulo, 25/09) — pra quando o navegador não detecta uma tela
+// sozinho, ou pra deixar um "slot" já configurado com posição/tamanho antes mesmo de plugar o
+// monitor/projetor. Ficam salvas neste aparelho (cada operador tem as suas), junto da lista de
+// telas detectadas automaticamente, e entram no mesmo fluxo de habilitar/Projetor/Operador.
+function manualScreensKey(churchId) { return 'gc_telas_manuais_' + churchId; }
+function loadManualScreens(churchId) {
+  try { const raw = localStorage.getItem(manualScreensKey(churchId)); if (raw) return JSON.parse(raw); } catch(e) {}
+  return [];
+}
+function saveManualScreens(churchId, list) {
+  try { localStorage.setItem(manualScreensKey(churchId), JSON.stringify(list)); } catch(e) {}
+}
 function getProjectorScreen(churchId) {
   const list = loadEnabledScreens(churchId);
   return list.find(s => s.isProjector) || (list.length === 1 ? list[0] : null);
@@ -2964,7 +3024,7 @@ function projectionShellHtml() {
       // (acumulado até a última pausa), então não precisa ficar recebendo mensagem a cada segundo —
       // só quando o operador aperta Iniciar/Pausar/Zerar lá no painel.
       + 'function clearCronoInterval(){if(cronoInterval){clearInterval(cronoInterval);cronoInterval=null;}}'
-      + 'function fmtCrono(ms){ms=Math.max(0,ms||0);var totalSec=Math.floor(ms/1000);var h=Math.floor(totalSec/3600);var m=Math.floor((totalSec%3600)/60);var s=totalSec%60;var mm=(m<10?"0":"")+m,ss=(s<10?"0":"")+s;return h>0?(h+":"+mm+":"+ss):(mm+":"+ss);}'
+      + 'function fmtCrono(ms){ms=Math.max(0,ms||0);var totalSec=Math.ceil(ms/1000);var h=Math.floor(totalSec/3600);var m=Math.floor((totalSec%3600)/60);var s=totalSec%60;var mm=(m<10?"0":"")+m,ss=(s<10?"0":"")+s;return h>0?(h+":"+mm+":"+ss):(mm+":"+ss);}'
       + 'function renderCronometro(item){'
         + 'stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();cronoItem=item||{};'
         + 'var wrap=document.createElement("div");wrap.style.textAlign="center";wrap.style.padding="0 4vw";'
@@ -2973,8 +3033,15 @@ function projectionShellHtml() {
         + 'if(subText){var sub=document.createElement("div");sub.textContent=subText;sub.style.fontSize="clamp(14px,1.8vw,24px)";sub.style.opacity="0.62";sub.style.marginBottom="4vh";wrap.appendChild(sub);}'
         + 'var clock=document.createElement("div");clock.id="gc-crono-clock";clock.style.fontSize="clamp(64px,15vw,230px)";clock.style.fontWeight="800";clock.style.fontVariantNumeric="tabular-nums";clock.style.lineHeight="1";wrap.appendChild(clock);'
         + 'stage.appendChild(wrap);'
-        + 'function tick(){var it=cronoItem||{};var elapsed=(it.pausedMs||0)+((it.running&&it.startedAt)?(Date.now()-it.startedAt):0);clock.textContent=fmtCrono(elapsed);clock.style.opacity=it.running?"1":"0.55";}'
-        + 'tick();cronoInterval=setInterval(tick,250);'
+        + 'function tick(){'
+          + 'var it=cronoItem||{};'
+          + 'var elapsed=(it.running&&it.startedAt)?(Date.now()-it.startedAt):0;'
+          + 'var remain=Math.max(0,(it.remainingMs||0)-elapsed);'
+          + 'clock.textContent=fmtCrono(remain);'
+          + 'clock.style.opacity=it.running?"1":"0.7";'
+          + 'clock.style.color=remain<=0?"#f87171":"";'
+        + '}'
+        + 'tick();cronoInterval=setInterval(tick,200);'
       + '}'
       // Vídeo local (arquivo carregado do pendrive na aba Mensagem) — o item.url é um blob: URL criado
       // na janela principal; blob: URLs do mesmo site funcionam em qualquer janela/aba, então dá pra
@@ -4485,10 +4552,56 @@ function BuscasSemanaisView({ churchId }) {
   `;
 }
 
+// Formulário pra cadastrar uma tela na mão (pedido do Paulo, 25/09) — pra quando o navegador não
+// detecta um monitor/projetor sozinho (Firefox, Safari, ou permissão negada), ou pra já deixar um
+// "slot" configurado antes mesmo de plugar o aparelho. Left/Top/Largura/Altura são em pixels, do
+// jeito que aparecem em Configurações de Tela do Windows (Configurações > Sistema > Tela).
+function AddManualScreenForm({ onAdd, onClose, suggestedLeft }) {
+  const [label, setLabel] = useState('');
+  const [left, setLeft] = useState(suggestedLeft || 0);
+  const [top, setTop] = useState(0);
+  const [width, setWidth] = useState(1920);
+  const [height, setHeight] = useState(1080);
+
+  const submit = () => { onAdd({ label: label.trim(), left, top, width, height }); };
+
+  return html`
+    <div class="glass fade-up" style=${{padding:'14px 16px', borderRadius:'16px', display:'grid', gap:'8px'}}>
+      <div style=${{fontWeight:800, fontSize:'12.5px'}}>➕ Adicionar Tela Manualmente</div>
+      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Preencha a posição e o tamanho — dá pra ver esses números em Configurações de Tela do Windows (Sistema &gt; Tela). Depois de adicionar, use "🧪 Testar" pra conferir se abriu no monitor certo antes de habilitar.</div>
+      <input placeholder="Nome (ex: Telão do Salão, Tela da Recepção)" value=${label} onChange=${e=>setLabel(e.target.value)} style=${{...inputStyle, fontSize:'12.5px'}} autoFocus />
+      <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:'6px'}}>
+        <div>
+          <div style=${{fontSize:'9.5px', color:'var(--text-dim)', marginBottom:'2px'}}>Posição X (left)</div>
+          <input type="number" value=${left} onChange=${e=>setLeft(Number(e.target.value)||0)} style=${{...inputStyle, fontSize:'12px', padding:'6px 8px'}} />
+        </div>
+        <div>
+          <div style=${{fontSize:'9.5px', color:'var(--text-dim)', marginBottom:'2px'}}>Posição Y (top)</div>
+          <input type="number" value=${top} onChange=${e=>setTop(Number(e.target.value)||0)} style=${{...inputStyle, fontSize:'12px', padding:'6px 8px'}} />
+        </div>
+        <div>
+          <div style=${{fontSize:'9.5px', color:'var(--text-dim)', marginBottom:'2px'}}>Largura</div>
+          <input type="number" value=${width} onChange=${e=>setWidth(Number(e.target.value)||100)} style=${{...inputStyle, fontSize:'12px', padding:'6px 8px'}} />
+        </div>
+        <div>
+          <div style=${{fontSize:'9.5px', color:'var(--text-dim)', marginBottom:'2px'}}>Altura</div>
+          <input type="number" value=${height} onChange=${e=>setHeight(Number(e.target.value)||100)} style=${{...inputStyle, fontSize:'12px', padding:'6px 8px'}} />
+        </div>
+      </div>
+      <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end'}}>
+        <button onClick=${onClose} style=${btnGhost}>Cancelar</button>
+        <button onClick=${submit} style=${{...btnPrimary, width:'auto', padding:'8px 16px'}}>Adicionar</button>
+      </div>
+    </div>
+  `;
+}
+
 function TelasView({ churchId }) {
   const [screens, setScreens] = useState(null);
   const [permissionMsg, setPermissionMsg] = useState('');
   const [enabled, setEnabled] = useState(() => loadEnabledScreens(churchId));
+  const [manualScreens, setManualScreens] = useState(() => loadManualScreens(churchId));
+  const [showAddManual, setShowAddManual] = useState(false);
   const [choices, setChoices] = useState({});
   const activities = loadActivities(churchId);
 
@@ -4513,6 +4626,14 @@ function TelasView({ churchId }) {
 
   useEffect(() => { detectScreens(); }, []);
 
+  // Lista combinada — detectadas automaticamente + as que o Paulo cadastrar na mão — usada em toda
+  // parte que precisa "todas as telas conhecidas" (habilitar, Projetor, Tela 1/2/3, Transmitir).
+  const allScreens = useMemo(() => {
+    const detected = screens || [];
+    const detectedSigs = detected.map(screenSig);
+    return [...detected, ...manualScreens.filter(s => !detectedSigs.includes(screenSig(s)))];
+  }, [screens, manualScreens]);
+
   const toggleEnabled = (scr) => {
     const sig = screenSig(scr);
     setEnabled(list => {
@@ -4530,6 +4651,35 @@ function TelasView({ churchId }) {
     });
   };
 
+  // Adiciona uma tela "na mão" — pra quando o navegador não detecta um monitor/projetor sozinho, ou
+  // pra já deixar um slot configurado antes mesmo de plugar o aparelho. O Paulo digita a posição e o
+  // tamanho (dá pra ver isso em Configurações de Tela do Windows) e pode testar antes de habilitar.
+  const addManualScreen = (data) => {
+    const scr = { label: data.label || ('Tela Manual '+(manualScreens.length+1)), left: Number(data.left)||0, top: Number(data.top)||0, width: Math.max(100, Number(data.width)||1280), height: Math.max(100, Number(data.height)||720) };
+    setManualScreens(list => {
+      const next = [...list, scr];
+      saveManualScreens(churchId, next);
+      return next;
+    });
+    setShowAddManual(false);
+  };
+  const removeManualScreen = (sig) => {
+    setManualScreens(list => {
+      const next = list.filter(s => screenSig(s) !== sig);
+      saveManualScreens(churchId, next);
+      return next;
+    });
+    // Se essa tela estava habilitada, tira ela da lista de habilitadas também.
+    setEnabled(list => {
+      const exists = list.some(s => screenSig(s) === sig);
+      if (!exists) return list;
+      const next = list.filter(s => screenSig(s) !== sig);
+      saveEnabledScreens(churchId, next);
+      return next;
+    });
+  };
+  const testScreen = (scr) => { try { sendToScreenObj(scr, 'texto', scr.label); } catch (e) {} };
+
   const setChoice = (sig, patch) => setChoices(c => ({ ...c, [sig]: { ...(c[sig]||{type:'blank'}), ...patch } }));
 
   const sendToScreen = (scr, sig) => {
@@ -4543,13 +4693,16 @@ function TelasView({ churchId }) {
 
   return html`
     <div style=${{maxWidth:'700px', margin:'0 auto', padding:'20px 16px 60px', display:'grid', gap:'16px'}}>
-      <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Essa aba é para habilitar quais telas conectadas recebem transmissão e marcar qual delas é o projetor principal.</div>
+      <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Essa aba é para habilitar quais telas conectadas recebem transmissão e marcar qual delas é o projetor principal. As telas habilitadas aparecem numeradas (Tela 1, Tela 2...) nos botões de projetar da Liturgia, na mesma ordem de baixo.</div>
 
       ${permissionMsg && html`<div class="glass fade-up" style=${{padding:'12px 14px', borderRadius:'12px', fontSize:'11px', color:'var(--highlight)'}}>${permissionMsg}</div>`}
       <div style=${{display:'flex', gap:'8px', flexWrap:'wrap'}}>
         <button onClick=${detectScreens} style=${{...btnGhost, justifySelf:'start'}}>🔄 Detectar Telas Novamente</button>
+        <button onClick=${()=>setShowAddManual(v=>!v)} style=${{...btnGhost, justifySelf:'start'}}>➕ Adicionar Tela Manualmente</button>
         <button onClick=${closeAllProjectionScreens} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🔴 Encerrar em Todas as Telas</button>
       </div>
+
+      ${showAddManual && html`<${AddManualScreenForm} onAdd=${addManualScreen} onClose=${()=>setShowAddManual(false)} suggestedLeft=${allScreens.reduce((sum,s)=>sum+s.width,0)} />`}
 
       ${!screens ? html`<div style=${{fontSize:'12px', color:'var(--text-dim)'}}>Detectando telas...</div>` : html`
         <div>
@@ -4559,11 +4712,12 @@ function TelasView({ churchId }) {
               const sig = screenSig(scr);
               const isOn = enabledSigs.includes(sig);
               const enabledObj = enabled.find(s => screenSig(s) === sig);
+              const numLabel = isOn ? 'Tela ' + (enabledSigs.indexOf(sig)+1) : '';
               return html`
                 <div key=${sig} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'12px', border: isOn ? '1.5px solid var(--accent-1)' : '1px solid var(--border-soft)'}}>
                   <input type="checkbox" checked=${isOn} onChange=${()=>toggleEnabled(scr)} style=${{width:'18px', height:'18px'}} />
                   <div style=${{flex:1}}>
-                    <div style=${{fontWeight:700, fontSize:'13px'}}>${scr.label}</div>
+                    <div style=${{fontWeight:700, fontSize:'13px', display:'flex', alignItems:'center', gap:'6px'}}>${scr.label} ${numLabel && html`<span style=${{fontSize:'9.5px', fontWeight:700, padding:'2px 6px', borderRadius:'999px', background:'rgba(99,102,241,0.16)', color:'var(--accent-1)'}}>${numLabel}</span>`}</div>
                     <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Posição: ${scr.left},${scr.top}</div>
                   </div>
                   ${isOn && html`
@@ -4575,6 +4729,32 @@ function TelasView({ churchId }) {
           </div>
         </div>
 
+        ${manualScreens.length > 0 && html`
+          <div>
+            <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'16px 0 10px 0'}}>Telas Adicionadas Manualmente (${manualScreens.length})</h3>
+            <div style=${{display:'grid', gap:'8px'}}>
+              ${manualScreens.map(scr => {
+                const sig = screenSig(scr);
+                const isOn = enabledSigs.includes(sig);
+                const enabledObj = enabled.find(s => screenSig(s) === sig);
+                const numLabel = isOn ? 'Tela ' + (enabledSigs.indexOf(sig)+1) : '';
+                return html`
+                  <div key=${sig} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'12px', border: isOn ? '1.5px solid var(--accent-1)' : '1px solid var(--border-soft)'}}>
+                    <input type="checkbox" checked=${isOn} onChange=${()=>toggleEnabled(scr)} style=${{width:'18px', height:'18px'}} />
+                    <div style=${{flex:1}}>
+                      <div style=${{fontWeight:700, fontSize:'13px', display:'flex', alignItems:'center', gap:'6px'}}>${scr.label} ${numLabel && html`<span style=${{fontSize:'9.5px', fontWeight:700, padding:'2px 6px', borderRadius:'999px', background:'rgba(99,102,241,0.16)', color:'var(--accent-1)'}}>${numLabel}</span>`}</div>
+                      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Posição: ${scr.left},${scr.top} • ${scr.width}x${scr.height}</div>
+                    </div>
+                    ${isOn && html`<button onClick=${()=>setProjector(sig)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isProjector ? '📽️ Projetor' : 'Definir como Projetor'}</button>`}
+                    <button onClick=${()=>testScreen(scr)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px'}} title="Abre essa tela mostrando o nome dela, pra você arrastar/conferir se caiu no monitor certo">🧪 Testar</button>
+                    <button onClick=${()=>removeManualScreen(sig)} style=${{background:'transparent', border:'none', color:'var(--danger)', fontSize:'15px', padding:'4px 6px'}} title="Remover essa tela">✕</button>
+                  </div>
+                `;
+              })}
+            </div>
+          </div>
+        `}
+
         ${enabled.length > 0 && html`
           <div>
             <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'16px 0 10px 0'}}>Transmitir</h3>
@@ -4584,7 +4764,7 @@ function TelasView({ churchId }) {
                 const choice = choices[sig] || { type:'blank' };
                 return html`
                   <div key=${sig} class="glass fade-up" style=${{padding:'14px', borderRadius:'14px', display:'grid', gap:'8px'}}>
-                    <div style=${{fontWeight:700, fontSize:'12.5px'}}>${scr.label}${scr.isProjector ? ' 📽️' : ''}</div>
+                    <div style=${{fontWeight:700, fontSize:'12.5px'}}>Tela ${enabledSigs.indexOf(sig)+1} — ${scr.label}${scr.isProjector ? ' 📽️' : ''}</div>
                     <select value=${choice.type} onChange=${e=>setChoice(sig, {type:e.target.value})} style=${{...inputStyle, fontSize:'12px'}}>
                       <option value="blank">⬛ Tela Preta</option>
                       <option value="media">🎬 Vídeo/Música da Liturgia</option>
@@ -5346,10 +5526,13 @@ function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch,
   }, [autoMinutes, idleSecDefault, churchId]);
 
   // Reinicia a contagem sempre que muda de etapa (manual ou automático) ou liga/desliga o automático.
-  // Com vídeo/música: começa "aguardando" (teto de segurança = min/etapa). Sem mídia: contagem normal.
+  // Com vídeo/música: começa "aguardando" (teto de segurança = min/etapa). Sem mídia: usa a duração
+  // planejada da própria etapa (act.plannedSeconds — o mesmo número configurado no cronômetro dela lá
+  // na Liturgia, pedido do Paulo 25/09) quando existir; sem duração planejada, cai no "min/etapa" geral.
   useEffect(() => {
     if (!autoOn) { setSecondsLeft(null); setWaitingMedia(false); return; }
-    setSecondsLeft(autoMinutes * 60);
+    const plannedSecs = (!currentHasMedia && current && typeof current.plannedSeconds === 'number' && current.plannedSeconds > 0) ? current.plannedSeconds : (autoMinutes * 60);
+    setSecondsLeft(plannedSecs);
     setWaitingMedia(currentHasMedia);
   }, [autoOn, idx]);
 
@@ -5410,7 +5593,7 @@ function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch,
         <div style=${{display:'flex', alignItems:'center', gap:'10px'}}>
           ${autoOn
             ? html`<button onClick=${()=>setAutoOn(false)} title="Toque pra desligar" style=${{...btnGhost, padding:'6px 12px', fontSize:'11px', fontWeight:700, color:'var(--success)', borderColor:'var(--success)'}}>
-                ${waitingMedia ? '🎬 Aguardando vídeo/música terminar…' : '⏱️ ' + timeLabel} — Automático ligado
+                ${waitingMedia ? '🎬 Aguardando vídeo/música terminar…' : '⏱️ ' + timeLabel + (!currentHasMedia && current && current.plannedSeconds > 0 ? ' (duração da etapa)' : '')} — Automático ligado
               </button>`
             : html`
               <div style=${{display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>
