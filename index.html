@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.51';
+const APP_VERSION = '2026-09-25.52';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2491,7 +2491,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
   `;
 }
 
-function AddActivityForm({ defaultSection, activities, onAddAt, onClose }) {
+function AddActivityForm({ defaultSection, activities, onAddAt, onClose, fixedTracks }) {
   const [name, setName] = useState('');
   const [responsible, setResponsible] = useState('');
   const [category, setCategory] = useState('geral');
@@ -2500,9 +2500,23 @@ function AddActivityForm({ defaultSection, activities, onAddAt, onClose }) {
   const [refId, setRefId] = useState('');
   const [media, setMedia] = useState(null);
   const [weeklyFixed, setWeeklyFixed] = useState(false);
+  const [trilhaId, setTrilhaId] = useState('');
   const needsMedia = category !== 'oracao' && category !== 'sermao';
 
   const sectionItems = activities.filter(a => a.section === section);
+
+  // Atalho pedido pelo Paulo (25/09): em vez de digitar o nome igualzinho e marcar "todo sábado" na
+  // mão, escolhe direto uma Trilha Fixa já cadastrada em Gestão — já vem com nome, categoria adivinhada
+  // e o vínculo (📅) prontos, sem risco de errar a grafia e o vídeo/música não linkar.
+  const pickTrilha = (id) => {
+    setTrilhaId(id);
+    if (!id) return;
+    const track = (fixedTracks || []).find(t => t.id === id);
+    if (!track) return;
+    setName(track.name);
+    setWeeklyFixed(true);
+    setCategory(guessLiturgyCategory(track.name));
+  };
 
   const submit = (e) => {
     e.preventDefault();
@@ -2519,7 +2533,13 @@ function AddActivityForm({ defaultSection, activities, onAddAt, onClose }) {
           <button key=${key} type="button" onClick=${()=>{ setSection(key); setRefId(''); }} style=${{flex:1, padding:'7px', borderRadius:'10px', fontSize:'11.5px', fontWeight:700, border:'1px solid var(--border-soft)', background: section===key ? 'linear-gradient(90deg,var(--accent-1),var(--accent-2))' : 'transparent', color: section===key ? '#fff' : 'var(--text-mid)'}}>${label}</button>
         `)}
       </div>
-      <input placeholder="Nome da atividade" value=${name} onChange=${e=>setName(e.target.value)} style=${inputStyle} autoFocus />
+      ${fixedTracks && fixedTracks.length > 0 && html`
+        <select value=${trilhaId} onChange=${e=>pickTrilha(e.target.value)} style=${{...inputStyle, fontSize:'12px'}}>
+          <option value="">📌 Usar uma Trilha Fixa já cadastrada (opcional)</option>
+          ${fixedTracks.map(t => html`<option key=${t.id} value=${t.id}>${t.name}${(t.videoId || t.url) ? '' : ' (sem link ainda)'}</option>`)}
+        </select>
+      `}
+      <input placeholder="Nome da atividade" value=${name} onChange=${e=>{ setName(e.target.value); setTrilhaId(''); }} style=${inputStyle} autoFocus />
       <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px'}}>
         <input placeholder="Responsável" value=${responsible} onChange=${e=>setResponsible(e.target.value)} style=${inputStyle} />
         <select value=${category} onChange=${e=>setCategory(e.target.value)} style=${inputStyle}>
@@ -2534,7 +2554,8 @@ function AddActivityForm({ defaultSection, activities, onAddAt, onClose }) {
         </label>
       `}
       ${needsMedia && !weeklyFixed && html`<${MediaSearchField} media=${media} onChange=${setMedia} searchKey="nova-atividade" />`}
-      ${needsMedia && weeklyFixed && html`<div style=${{fontSize:'10.5px', color:'var(--text-dim)', padding:'2px'}}>Um espaço vai ser criado em Gestão &gt; Trilhas Fixas com o nome "${name.trim() || '...'}" pra você colar a URL.</div>`}
+      ${needsMedia && weeklyFixed && trilhaId && html`<div style=${{fontSize:'10.5px', color:'var(--success-1)', padding:'2px'}}>📌 Vinculada à Trilha Fixa "${name.trim()}" — o vídeo/música dela já toca automaticamente aqui.</div>`}
+      ${needsMedia && weeklyFixed && !trilhaId && html`<div style=${{fontSize:'10.5px', color:'var(--text-dim)', padding:'2px'}}>Um espaço vai ser criado em Gestão &gt; Trilhas Fixas com o nome "${name.trim() || '...'}" pra você colar a URL.</div>`}
 
       <div style=${{display:'grid', gridTemplateColumns:'110px 1fr', gap:'10px'}}>
         <select value=${position} onChange=${e=>setPosition(e.target.value)} style=${inputStyle}>
@@ -2784,7 +2805,7 @@ function DefaultLiturgyEditor({ initialList, password, onSave, onClose, churchId
         </div>
 
         <button onClick=${()=>setAdding(v=>!v)} style=${{...btnGhost, border:'1.5px dashed var(--border-soft)', padding:'12px'}}>➕ Acrescentar Atividade ao Padrão</button>
-        ${adding && html`<${AddActivityForm} defaultSection="escola_sabatina" activities=${list} onAddAt=${addAt} onClose=${()=>setAdding(false)} />`}
+        ${adding && html`<${AddActivityForm} defaultSection="escola_sabatina" activities=${list} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracksRef} />`}
 
         ${sections.map(sec => {
           const items = list.filter(a => a.section === sec);
@@ -6021,7 +6042,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       <button onClick=${zerarProgramacao} style=${{...btnGhost, width:'100%', marginBottom:'16px', padding:'12px', border:'1px solid var(--danger)', color:'var(--danger)'}}>🧹 Zerar Programação (mantém as com Trava de Etapa 📌)</button>
 
       ${finalizeOpen && finalizeSummary && html`<${FinalizeCultoModal} summary=${finalizeSummary} onConfirm=${confirmFinalize} onClose=${()=>setFinalizeOpen(false)} />`}
-      ${adding && html`<${AddActivityForm} defaultSection="escola_sabatina" activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} />`}
+      ${adding && html`<${AddActivityForm} defaultSection="escola_sabatina" activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracks} />`}
       ${assistantOpen && html`<${LiturgyAssistantModal} onImportAll=${importFromAssistant} onClose=${()=>setAssistantOpen(false)} />`}
 
       ${sections.map(sec => {
