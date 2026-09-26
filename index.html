@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.55';
+const APP_VERSION = '2026-09-25.56';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -3189,11 +3189,16 @@ function projectionShellHtml() {
       // verdade em vez de um tempo fixo "no chute".
       + 'function notifyMediaEnded(){try{if(window.opener&&!window.opener.closed)window.opener.postMessage({gcType:"gc_media_ended"},"*");}catch(e){}}'
       + 'function renderLocalVideo(item,mute){stage.innerHTML="";fading=false;ytPlayer=null;clearCronoInterval();var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;v.muted=!!mute;v.addEventListener("ended",notifyMediaEnded);stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
-      // Pausa/retoma o vídeo (local ou do YouTube) que estiver tocando agora — usado pelo controle
-      // miniatura na janela principal. Sem vídeo nenhum tocando, não faz nada.
-      + 'function togglePause(){'
-        + 'if(localVideoEl){if(localVideoEl.paused){localVideoEl.play().catch(function(){});}else{localVideoEl.pause();}return;}'
-        + 'if(ytPlayer){try{var st=ytPlayer.getPlayerState();if(st===1){ytPlayer.pauseVideo();}else{ytPlayer.playVideo();}}catch(e){}}'
+      // Play/Pause explícitos (botões separados, pedido do Paulo 25/09) do vídeo (local ou do
+      // YouTube) que estiver tocando agora — usado pelo controle miniatura na janela principal.
+      // Sem vídeo nenhum carregado ainda, não faz nada (não dá erro).
+      + 'function playMedia(){'
+        + 'if(localVideoEl){localVideoEl.play().catch(function(){});return;}'
+        + 'if(ytPlayer){try{ytPlayer.playVideo();}catch(e){}}'
+      + '}'
+      + 'function pauseMedia(){'
+        + 'if(localVideoEl){localVideoEl.pause();return;}'
+        + 'if(ytPlayer){try{ytPlayer.pauseVideo();}catch(e){}}'
       + '}'
       // Texto animado por cima (ex: versículo bíblico) — não mexe no #gc-stage, então continua
       // aparecendo o que já estava projetado (foto/slide/vídeo) atrás dele. fadeMs = duração do
@@ -3261,8 +3266,10 @@ function projectionShellHtml() {
         + 'else if(d.gcType==="cronometro")renderCronometro(d.item);'
         + 'else if(d.gcType==="overlay_texto")renderOverlayText(d.item);'
         + 'else if(d.gcType==="overlay_limpar")clearOverlayText();'
-        + 'else if(d.gcType==="pause_toggle")togglePause();'
+        + 'else if(d.gcType==="media_play")playMedia();'
+        + 'else if(d.gcType==="media_pause")pauseMedia();'
         + 'else if(d.gcType==="blank")renderBlank();'
+        + 'else if(d.gcType==="close_self"){try{window.close();}catch(e){}}'
         + 'tryFullscreen();'
       + '});'
       + 'tryFullscreen();'
@@ -3335,7 +3342,8 @@ async function sendToScreenObj(scr, kind, payload, opts) {
       : kind === 'cronometro' ? { gcType:'cronometro', item: payload || {} }
       : kind === 'overlay_texto' ? { gcType:'overlay_texto', item: payload || {} }
       : kind === 'overlay_limpar' ? { gcType:'overlay_limpar' }
-      : kind === 'pause_toggle' ? { gcType:'pause_toggle' }
+      : kind === 'media_play' ? { gcType:'media_play' }
+      : kind === 'media_pause' ? { gcType:'media_pause' }
       : { gcType:'blank' };
     const post = () => { try { win.postMessage(msg, '*'); } catch(e) {} };
     // Numa janela recém-criada, dá um tiquinho pro script da página terminar de registrar o "ouvinte"
@@ -3347,19 +3355,33 @@ async function sendToScreenObj(scr, kind, payload, opts) {
   }
 }
 
+// Fecha de verdade a(s) aba(s)/janela(s) de projeção — pedido explícito do Paulo (25/09): quando
+// apertar "Fechar", tem que fechar a aba completamente, não só apagar o conteúdo. Manda um aviso pra
+// janela se fechar sozinha (isso NUNCA é bloqueado pelo navegador, mesmo que a referência aqui do
+// lado do operador esteja "velha") e, por garantia, também tenta fechar direto pela referência.
 function closeAllProjectionScreens() {
   Object.keys(projectionWindows).forEach(sig => {
     const win = projectionWindows[sig];
+    try { if (win && !win.closed) win.postMessage({ gcType:'close_self' }, '*'); } catch(e) {}
     try { if (win && !win.closed) win.close(); } catch(e) {}
     delete projectionWindows[sig];
   });
 }
 
-// Pausa/retoma o que estiver tocando (vídeo local ou do YouTube) em todas as telas habilitadas —
-// usado pelo controle miniatura (ProjectionMiniControl).
-function pauseToggleAllScreens(churchId) {
-  const enabled = loadEnabledScreens(churchId);
-  enabled.forEach(scr => { try { sendToScreenObj(scr, 'pause_toggle'); } catch(e) {} });
+// Play/Pause/Tela Cheia/Fechar do controle miniatura (ProjectionMiniControl) — pedido do Paulo
+// (25/09): botões separados e diretos, agindo só nas janelas de projeção que já estiverem abertas
+// (não abre uma janela nova só por apertar Play/Pause).
+function playAllScreens(churchId) {
+  Object.keys(projectionWindows).forEach(sig => {
+    const win = projectionWindows[sig];
+    try { if (win && !win.closed) win.postMessage({ gcType:'media_play' }, '*'); } catch(e) {}
+  });
+}
+function pauseAllScreens(churchId) {
+  Object.keys(projectionWindows).forEach(sig => {
+    const win = projectionWindows[sig];
+    try { if (win && !win.closed) win.postMessage({ gcType:'media_pause' }, '*'); } catch(e) {}
+  });
 }
 
 // Pede tela cheia de novo pras janelas de projeção já abertas. Chamado direto (sem postMessage) a
@@ -5596,7 +5618,8 @@ function ProjectionMiniControl({ churchId, mensagemItems, mensagemCurrent, setMe
     setMensagemCurrent(newIdx);
     projectMensagemItem(churchId, items[newIdx], 'msg-' + items[newIdx].id);
   };
-  const pausarRetomar = () => pauseToggleAllScreens(churchId);
+  const play = () => playAllScreens(churchId);
+  const pause = () => pauseAllScreens(churchId);
   const telaCheia = () => retryFullscreenAllScreens(churchId);
   const fechar = () => closeAllProjectionScreens();
 
@@ -5609,11 +5632,16 @@ function ProjectionMiniControl({ churchId, mensagemItems, mensagemCurrent, setMe
             <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>${items[Math.min(mensagemCurrent, items.length-1)] ? items[Math.min(mensagemCurrent, items.length-1)].title : ''} (${Math.min(mensagemCurrent, items.length-1)+1} de ${items.length})</div>
           `}
           <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
-            <button type="button" onClick=${pausarRetomar} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>⏸️ Pausar/Retomar</button>
-            <button type="button" onClick=${proximo} disabled=${!hasNext} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', opacity: hasNext ? 1 : 0.4}}>⏭️ Próximo</button>
+            <button type="button" onClick=${play} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>▶️ Play</button>
+            <button type="button" onClick=${pause} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>⏸️ Pause</button>
             <button type="button" onClick=${telaCheia} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>⛶ Tela Cheia</button>
-            <button type="button" onClick=${fechar} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>⬛ Fechar Projeção</button>
+            <button type="button" onClick=${fechar} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>✖️ Fechar</button>
           </div>
+          ${items.length > 0 && html`
+            <div style=${{display:'grid', gridTemplateColumns:'1fr', gap:'8px'}}>
+              <button type="button" onClick=${proximo} disabled=${!hasNext} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', opacity: hasNext ? 1 : 0.4}}>⏭️ Próximo</button>
+            </div>
+          `}
         </div>
       `}
       <button onClick=${()=>setOpen(v=>!v)} title="Controle da Projeção" style=${{width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color:'#fff', background:'linear-gradient(150deg,var(--accent-2),var(--accent-1))', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
