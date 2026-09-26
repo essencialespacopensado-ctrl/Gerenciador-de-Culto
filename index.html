@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.57';
+const APP_VERSION = '2026-09-25.58';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -3143,27 +3143,25 @@ function projectionShellHtml() {
     + '.gc-overlay-logo{display:block;max-width:16vw;max-height:14vh;margin:0 auto 2vh;object-fit:contain;}'
     + '.gc-overlay-text{font-size:clamp(22px,3.4vw,48px);line-height:1.42;white-space:pre-line;font-weight:600;}'
     + '.gc-overlay-ref{margin-top:1.2vh;font-size:clamp(13px,1.5vw,22px);opacity:0.78;font-weight:700;letter-spacing:0.03em;}'
-    // z-index bem alto e "!important" pra garantir que esse botão sempre fique VISÍVEL por cima do
-    // vídeo do YouTube (em alguns casos o iframe do vídeo ficava cobrindo o botão por completo).
-    + '#fs-fallback{position:fixed !important;bottom:20px !important;right:20px !important;padding:12px 18px !important;border-radius:10px !important;background:#4f46e5 !important;color:#fff !important;border:2px solid #fff !important;font-size:15px !important;font-weight:600 !important;cursor:pointer !important;z-index:2147483647 !important;box-shadow:0 4px 14px rgba(0,0,0,0.5) !important;}'
     + '</style></head><body>'
     + '<div id="gc-stage"></div>'
     + '<div id="gc-overlay"></div>'
-    + '<button id="fs-fallback">⛶ Tela Cheia</button>'
+    // Sem botão "Tela Cheia" aqui dentro da tela de projeção (pedido do Paulo 26/09 — só o botão
+    // "⛶ Tela Cheia" do painel de controle na tela do operador, que já pede tela cheia direto na
+    // tela certa via API de múltiplas telas). Um clique em qualquer lugar aqui continua tentando
+    // tela cheia sozinho, como reforço silencioso, sem precisar de nenhum botão visível.
     + '<scr'+'ipt>(function(){'
       + 'var stage=document.getElementById("gc-stage");'
       + 'var overlay=document.getElementById("gc-overlay");'
       + 'var overlayTimer=null,overlayClearTimer=null;'
-      + 'var fsBtn=document.getElementById("fs-fallback");'
       + 'var ytPlayer=null,fading=false;var localVideoEl=null;var lastMute=false;'
       + 'var cronoInterval=null,cronoItem=null;'
       + 'function tryFullscreen(){'
         + 'try{'
-          + 'if(document.fullscreenElement){fsBtn.style.display="none";return;}'
-          + 'if(document.documentElement.requestFullscreen){document.documentElement.requestFullscreen().then(function(){fsBtn.style.display="none";}).catch(function(){});}'
+          + 'if(document.fullscreenElement)return;'
+          + 'if(document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(function(){});'
         + '}catch(e){}'
       + '}'
-      + 'fsBtn.onclick=tryFullscreen;'
       + 'function renderBlank(){stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();}'
       + 'function renderText(text){stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();var h=document.createElement("h1");h.textContent=text||"";h.style.whiteSpace="pre-line";h.style.lineHeight="1.35";h.style.fontSize="clamp(28px, 4.6vw, 74px)";stage.appendChild(h);}'
       + 'function renderImage(item){stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();var img=document.createElement("img");img.src=(item&&item.dataUrl)||"";img.alt=(item&&item.title)||"";stage.appendChild(img);}'
@@ -3396,17 +3394,24 @@ function pauseAllScreens(churchId) {
 }
 
 // Pede tela cheia de novo pras janelas de projeção já abertas. Chamado direto (sem postMessage) a
-// partir de um clique real do operador aqui na janela principal — é o mesmo truque usado quando a
-// janela é aberta pela primeira vez: o navegador só permite pedir tela cheia numa janela de destino
-// quando o pedido acontece durante o mesmo clique do usuário, mesmo que a chamada mire noutra janela.
-function retryFullscreenAllScreens(churchId) {
+// partir de um clique real do operador aqui na janela principal. Corrigido (26/09 — pedido do Paulo:
+// só esse botão daqui da tela do operador deve funcionar, tirando o botão de dentro da tela do
+// projetor): pedir tela cheia numa OUTRA janela só funciona de verdade usando a API de múltiplas
+// telas (getScreenDetails + requestFullscreen({screen})) — é o mesmo truque já usado quando a janela
+// é aberta pela primeira vez. Sem essa API (navegador sem suporte, ou permissão de telas ainda não
+// concedida), cai no pedido simples, que funciona quando é a própria janela em foco.
+async function retryFullscreenAllScreens(churchId) {
   const enabled = loadEnabledScreens(churchId);
+  let screens = null;
+  try { if ('getScreenDetails' in window) screens = (await window.getScreenDetails()).screens; } catch(e) {}
   enabled.forEach(scr => {
     const win = projectionWindows[screenSig(scr)];
     if (win && !win.closed) {
       try {
         const el = win.document.documentElement;
-        if (el && el.requestFullscreen && !win.document.fullscreenElement) el.requestFullscreen().catch(()=>{});
+        if (!el || !el.requestFullscreen || win.document.fullscreenElement) return;
+        const fsScreen = screens ? screens.find(s => s.left===scr.left && s.top===scr.top && s.width===scr.width && s.height===scr.height) : null;
+        (fsScreen ? el.requestFullscreen({ screen: fsScreen }) : el.requestFullscreen()).catch(()=>{});
       } catch(e) {}
     }
   });
