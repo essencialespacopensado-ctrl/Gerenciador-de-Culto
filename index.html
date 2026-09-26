@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.56';
+const APP_VERSION = '2026-09-25.57';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1768,7 +1768,18 @@ function MediaSearchField({ media, onChange, searchKey }) {
   // busca, mas não o vídeo selecionado"). Agora, pra esses, a gente já faz a busca de verdade aqui
   // mesmo e mostra os resultados reais pra escolher — igual clicar em "🔍 Buscar".
   const pickLibrary = async (m) => {
-    if (m.dynamic) { pick({ title: m.title + ' ('+weekDateSuffix()+')', url: mediaLibraryUrl(m), playlistId: m.playlistId || null }); return; }
+    if (m.dynamic) {
+      // Busca de verdade (25/09, corrigido — pedido do Paulo) o vídeo já LANÇADO mais recente, em vez
+      // de usar direto a playlist de uploads do canal: essa playlist já lista pré-estreias/vídeos
+      // agendados (ainda não foram ao ar) ANTES dos que já foram lançados, e a busca normal do
+      // YouTube não traz esses agendados — só os que já estão no ar de verdade.
+      setSearching(true);
+      const results = await searchYoutubeServer(m.query);
+      setSearching(false);
+      const videoId = (results && results[0] && results[0].videoId) || null;
+      pick({ title: m.title + ' ('+weekDateSuffix()+')', url: mediaLibraryUrl(m), playlistId: m.playlistId || null, videoId });
+      return;
+    }
     setQ(m.title);
     setSearching(true);
     const result = await searchYoutubeServer(m.query);
@@ -5889,6 +5900,33 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       return changed ? next : list;
     });
   }, [churchId]);
+
+  // Confere se o vídeo vinculado (Provai e Vede / Informativo / Vida e Saúde) já é o certo desta
+  // semana (25/09 — pedido do Paulo: o vídeo estava errado, pegando uma PRÉ-ESTREIA agendada do canal
+  // que ainda nem foi ao ar, em vez do vídeo mais recente já lançado). A playlist de uploads do canal
+  // lista pré-estreias agendadas ANTES dos vídeos já lançados; a busca normal do YouTube nunca traz
+  // agendados, só o que já está no ar de verdade — por isso usamos ela pra achar o vídeo certo e
+  // corrigir sozinho sempre que o título ainda estiver com a data de uma semana antiga.
+  useEffect(() => {
+    const suffix = weekDateSuffix();
+    const stale = activities.filter(a => a.media && a.media.dynamic && a.media.libTitle && !(a.media.title || '').includes(suffix));
+    if (stale.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const a of stale) {
+        const lib = MEDIA_LIBRARY.find(m => m.title === a.media.libTitle);
+        if (!lib) continue;
+        const results = await searchYoutubeServer(lib.query);
+        if (cancelled) return;
+        const videoId = (results && results[0] && results[0].videoId) || null;
+        setActivities(list => list.map(act => {
+          if (act.id !== a.id || !act.media || !act.media.dynamic) return act;
+          return { ...act, media: { ...act.media, title: lib.title + ' (' + suffix + ')', videoId: videoId || act.media.videoId || null } };
+        }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [churchId, activities.map(a => (a.media && a.media.dynamic) ? a.media.title : '').join('|')]);
 
   // Trilhas Fixas (25/09) — vídeos/músicas de toda semana (música das ofertas, entrada/saída das
   // crianças, entrada da plataforma etc), cadastrados em Gestão. Mesmo padrão de sincronização com a
