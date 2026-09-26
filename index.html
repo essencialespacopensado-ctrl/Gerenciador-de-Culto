@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.58';
+const APP_VERSION = '2026-09-25.59';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2976,6 +2976,22 @@ function blankWindowHtml(title, bodyHtml) {
 // Janelas de projeção compartilhadas entre abas/telas da aplicação (evita reabrir com popup toda vez)
 const projectionWindows = {};
 
+// "Congelar" (25/09 - pedido do Paulo): enquanto congelado, o que já está projetado fica intocado —
+// qualquer novo envio (trocar de atividade, próxima música etc.) é só guardado, e só aparece de fato
+// nas telas quando o operador descongelar. Isso deixa o operador preparar o próximo conteúdo por
+// baixo dos panos sem que a congregação veja a troca antes da hora.
+let projectionFrozen = false;
+let frozenPendingBySig = {};
+function isProjectionFrozen() { return projectionFrozen; }
+function setProjectionFrozen(value) {
+  projectionFrozen = !!value;
+  if (!projectionFrozen) {
+    const pending = frozenPendingBySig;
+    frozenPendingBySig = {};
+    Object.values(pending).forEach(p => { try { sendToScreenObj(p.scr, p.kind, p.payload, p.opts); } catch(e) {} });
+  }
+}
+
 function screensEnabledKey(churchId) { return 'gc_telas_habilitadas_' + churchId; }
 function loadEnabledScreens(churchId) {
   try { const raw = localStorage.getItem(screensEnabledKey(churchId)); if (raw) return JSON.parse(raw); } catch(e) {}
@@ -3291,6 +3307,9 @@ function projectionShellHtml() {
 async function sendToScreenObj(scr, kind, payload, opts) {
   try {
     const sig = screenSig(scr);
+    // Enquanto estiver congelado, guarda só a última tentativa de troca pra essa tela e não toca em
+    // nada que já esteja sendo exibido — é isso que garante o "congelamento" de verdade.
+    if (projectionFrozen) { frozenPendingBySig[sig] = { scr, kind, payload, opts }; return; }
     const features = 'left='+scr.left+',top='+scr.top+',width='+scr.width+',height='+scr.height;
     let win = projectionWindows[sig];
     let isNewWindow = false;
@@ -3375,6 +3394,19 @@ function closeAllProjectionScreens() {
     try { if (win && !win.closed) win.close(); } catch(e) {}
     delete projectionWindows[sig];
   });
+  projectionFrozen = false;
+  frozenPendingBySig = {};
+}
+
+// Envia a imagem de plano de fundo cadastrada em Configurações pra todas as telas habilitadas —
+// útil pra manter algo bonito na tela nos momentos em que não há nada específico sendo projetado,
+// em vez de ficar preto.
+function sendBackgroundToAllScreens(churchId, church) {
+  const url = church && church.backgroundImageDataUrl;
+  if (!url) { alert('Nenhuma imagem de plano de fundo cadastrada ainda. Cadastre em Configurações > Dados da Igreja.'); return; }
+  const enabled = loadEnabledScreens(churchId);
+  if (!enabled.length) { alert('Nenhuma tela de projeção habilitada. Habilite em Telas.'); return; }
+  enabled.forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }); } catch(e) {} });
 }
 
 // Play/Pause/Tela Cheia/Fechar do controle miniatura (ProjectionMiniControl) — pedido do Paulo
@@ -5622,8 +5654,9 @@ function GlobalMixerWidget({ churchId, church, onUpdateChurch }) {
 // foto/slide, pedir tela cheia de novo ou fechar tudo. Só aparece um botão redondo discreto (canto
 // inferior esquerdo, pra não brigar com o mixer de áudio que já fica no canto direito); clicando nele
 // abre o painel com os controles.
-function ProjectionMiniControl({ churchId, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
+function ProjectionMiniControl({ churchId, church, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
   const [open, setOpen] = useState(false);
+  const [frozen, setFrozen] = useState(() => isProjectionFrozen());
   const isMobile = useIsMobile();
   const items = mensagemItems || [];
   const hasNext = items.length > 0 && mensagemCurrent < items.length - 1;
@@ -5637,13 +5670,16 @@ function ProjectionMiniControl({ churchId, mensagemItems, mensagemCurrent, setMe
   const play = () => playAllScreens(churchId);
   const pause = () => pauseAllScreens(churchId);
   const telaCheia = () => retryFullscreenAllScreens(churchId);
-  const fechar = () => closeAllProjectionScreens();
+  const fechar = () => { setProjectionFrozen(false); setFrozen(false); closeAllProjectionScreens(); };
+  const fundo = () => sendBackgroundToAllScreens(churchId, church);
+  const alternarCongelar = () => { const next = !isProjectionFrozen(); setProjectionFrozen(next); setFrozen(next); };
 
   return html`
     <div style=${{position:'fixed', left: isMobile ? '12px' : '20px', bottom: 'calc(14px + env(safe-area-inset-bottom,0px))', zIndex:150, display:'flex', flexDirection:'column', alignItems:'flex-start', gap:'10px'}}>
       ${open && html`
         <div class="glass fade-up" style=${{width: isMobile ? 'min(88vw, 300px)' : '260px', padding:'14px', borderRadius:'18px', boxShadow:'0 20px 50px -14px rgba(0,0,0,0.55)', display:'grid', gap:'8px'}}>
           <div style=${{fontSize:'11px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:'2px'}}>🎛️ Controle da Projeção</div>
+          ${frozen && html`<div style=${{fontSize:'10.5px', fontWeight:700, color:'var(--accent-1)', background:'color-mix(in srgb, var(--accent-1) 16%, transparent)', borderRadius:'8px', padding:'6px 8px'}}>❄️ Projeção congelada — o que estiver na tela não vai mudar até descongelar.</div>`}
           ${items.length > 0 && html`
             <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>${items[Math.min(mensagemCurrent, items.length-1)] ? items[Math.min(mensagemCurrent, items.length-1)].title : ''} (${Math.min(mensagemCurrent, items.length-1)+1} de ${items.length})</div>
           `}
@@ -5652,6 +5688,8 @@ function ProjectionMiniControl({ churchId, mensagemItems, mensagemCurrent, setMe
             <button type="button" onClick=${pause} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>⏸️ Pause</button>
             <button type="button" onClick=${telaCheia} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>⛶ Tela Cheia</button>
             <button type="button" onClick=${fechar} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>✖️ Fechar</button>
+            <button type="button" onClick=${fundo} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>🖼️ Fundo</button>
+            <button type="button" onClick=${alternarCongelar} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', ...(frozen ? {background:'color-mix(in srgb, var(--accent-1) 22%, transparent)', borderColor:'var(--accent-1)', color:'var(--accent-1)'} : {})}}>${frozen ? '▶️ Descongelar' : '❄️ Congelar'}</button>
           </div>
           ${items.length > 0 && html`
             <div style=${{display:'grid', gridTemplateColumns:'1fr', gap:'8px'}}>
@@ -5660,8 +5698,8 @@ function ProjectionMiniControl({ churchId, mensagemItems, mensagemCurrent, setMe
           `}
         </div>
       `}
-      <button onClick=${()=>setOpen(v=>!v)} title="Controle da Projeção" style=${{width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color:'#fff', background:'linear-gradient(150deg,var(--accent-2),var(--accent-1))', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
-        ${open ? '✕' : '🎛️'}
+      <button onClick=${()=>setOpen(v=>!v)} title="Controle da Projeção" style=${{width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color:'#fff', background: frozen ? 'linear-gradient(150deg,#0891b2,#0e7490)' : 'linear-gradient(150deg,var(--accent-2),var(--accent-1))', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
+        ${open ? '✕' : (frozen ? '❄️' : '🎛️')}
       </button>
     </div>
   `;
@@ -7517,6 +7555,8 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
   const [dataSaved, setDataSaved] = useState(false);
   const [logoDataUrl, setLogoDataUrl] = useState(church.logoDataUrl || '');
   const [logoSaving, setLogoSaving] = useState(false);
+  const [backgroundDataUrl, setBackgroundDataUrl] = useState(church.backgroundImageDataUrl || '');
+  const [backgroundSaving, setBackgroundSaving] = useState(false);
 
   const updateLeaderRow = (idx, field, value) => setMinistryLeaders(rows => rows.map((r,i) => i===idx ? {...r, [field]: value} : r));
   const addLeaderRow = () => setMinistryLeaders(rows => [...rows, { ministry:'', leader:'' }]);
@@ -7568,6 +7608,27 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
   const removeLogo = () => {
     setLogoDataUrl('');
     persistChurch({ logoDataUrl: '' }, 'Logo da igreja removida');
+  };
+
+  /* ---- Imagem de plano de fundo (projetada quando não há nada em exibição) ---- */
+  const handleBackgroundUpload = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    setBackgroundSaving(true);
+    try {
+      const dataUrl = await readImageFileSmart(file);
+      setBackgroundDataUrl(dataUrl);
+      persistChurch({ backgroundImageDataUrl: dataUrl }, 'Imagem de plano de fundo atualizada');
+    } catch (err) {
+      alert('Erro ao carregar a imagem: ' + (err && err.message ? err.message : err));
+    } finally {
+      setBackgroundSaving(false);
+    }
+  };
+  const removeBackground = () => {
+    setBackgroundDataUrl('');
+    persistChurch({ backgroundImageDataUrl: '' }, 'Imagem de plano de fundo removida');
   };
 
   /* ---- Senha ---- */
@@ -7642,6 +7703,17 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
             ${logoDataUrl && html`<button type="button" onClick=${removeLogo} style=${{...btnGhost, padding:'8px 12px', fontSize:'11.5px', color:'var(--danger)'}}>✕ Remover</button>`}
           </div>
           <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginTop:'-4px'}}>Essa logo aparece junto com o versículo quando você projeta um texto pela ferramenta "📖 Bíblia Sagrada" (em Ferramentas).</div>
+
+          <div style=${{display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap', marginTop:'6px'}}>
+            ${backgroundDataUrl && html`<img src=${backgroundDataUrl} style=${{width:'56px', height:'56px', objectFit:'cover', borderRadius:'8px', background:'rgba(255,255,255,0.06)', padding:'4px'}} />`}
+            <label style=${{...btnGhost, padding:'8px 14px', fontSize:'11.5px', cursor:'pointer'}}>
+              ${backgroundSaving ? 'Carregando...' : (backgroundDataUrl ? '🖼️ Trocar Plano de Fundo' : '🖼️ Enviar Plano de Fundo')}
+              <input type="file" accept="image/*" onChange=${handleBackgroundUpload} style=${{display:'none'}} />
+            </label>
+            ${backgroundDataUrl && html`<button type="button" onClick=${removeBackground} style=${{...btnGhost, padding:'8px 12px', fontSize:'11.5px', color:'var(--danger)'}}>✕ Remover</button>`}
+          </div>
+          <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginTop:'-4px'}}>Essa imagem pode ser projetada nas telas a qualquer momento pelo botão "🖼️ Fundo" no painel de controle da projeção (aparece em todas as abas).</div>
+
           <input placeholder="Nome da igreja adventista" value=${name} onChange=${e=>setName(e.target.value)} style=${inputStyle} />
           <input placeholder="Endereço completo" value=${address} onChange=${e=>setAddress(e.target.value)} style=${inputStyle} />
           <input placeholder="Cidade" value=${city} onChange=${e=>setCity(e.target.value)} style=${inputStyle} />
@@ -7806,7 +7878,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'sugestoes' ? html`<${SugestoesView} key="sugestoes" church=${church} />` : ''}
       ${tab === 'config' ? html`<${ConfiguracoesView} key="config" church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       <${GlobalMixerWidget} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />
-      <${ProjectionMiniControl} churchId=${church.id} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />
+      <${ProjectionMiniControl} churchId=${church.id} church=${church} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />
     </div>
   `;
 }
