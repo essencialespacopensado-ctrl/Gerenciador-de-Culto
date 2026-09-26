@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.52';
+const APP_VERSION = '2026-09-25.53';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2373,7 +2373,7 @@ function LocalVideoProjectButton({ churchId, item, itemKey, onProjected }) {
   `;
 }
 
-function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWeekly, onToggleKeepOnClear, fixedTracks, churchId, idx, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
+function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWeekly, fixedTracks, churchId, idx, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(act.name);
@@ -2438,7 +2438,6 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
         </div>
         ${needsMedia && onToggleWeekly && html`<button onClick=${()=>onToggleWeekly(act.id)} style=${{background:'transparent', border:'none', color: act.weeklyFixed ? 'var(--highlight)' : 'var(--text-dim)', fontSize:'16px', padding:'4px 6px', borderRadius:'8px'}} title=${act.weeklyFixed ? 'Acontece todo sábado — usa o vídeo/música fixo cadastrado em Gestão (toca pra desmarcar)' : 'Marcar como algo que acontece todo sábado, com vídeo/música fixo'}>${act.weeklyFixed ? '📅' : '🗓️'}</button>`}
         <button onClick=${()=>onToggleFix(act.id)} style=${{background:'transparent', border:'none', color: act.fixed ? 'var(--highlight)' : 'var(--text-dim)', fontSize:'16px', padding:'4px 6px', borderRadius:'8px'}} title=${act.fixed ? 'Trava de edição ligada — toca pra destrancar' : 'Trava de Edição (impede editar/remover essa etapa)'}>${act.fixed ? '🔒' : '🔓'}</button>
-        ${onToggleKeepOnClear && html`<button onClick=${()=>onToggleKeepOnClear(act.id)} style=${{background:'transparent', border:'none', color: act.keepOnClear ? 'var(--highlight)' : 'var(--text-dim)', fontSize:'16px', padding:'4px 6px', borderRadius:'8px'}} title=${act.keepOnClear ? 'Trava de Etapa ligada — não sai quando "Zerar Programação" for usado (toca pra desmarcar)' : 'Trava de Etapa (não deixa essa etapa sair quando "Zerar Programação" for usado)'}>${act.keepOnClear ? '📌' : '📍'}</button>`}
         <button onClick=${()=>!act.fixed && setEditing(true)} disabled=${act.fixed} style=${{background:'transparent', border:'none', color: act.fixed ? 'var(--border-soft)' : 'var(--text-dim)', fontSize:'14px', padding:'4px 6px', borderRadius:'8px', cursor: act.fixed ? 'not-allowed' : 'pointer'}} title=${act.fixed ? 'Trancada — destranque (🔒) pra editar' : 'Editar'}>✏️</button>
         <button onClick=${()=>!act.fixed && onDelete(act.id)} disabled=${act.fixed} style=${{background:'transparent', border:'none', color: act.fixed ? 'var(--border-soft)' : 'var(--text-dim)', fontSize:'16px', padding:'4px 8px', borderRadius:'8px', cursor: act.fixed ? 'not-allowed' : 'pointer'}} title=${act.fixed ? 'Trancada — destranque (🔒) pra remover' : 'Remover'}>✕</button>
       </div>
@@ -5884,15 +5883,21 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   const edit = (updated) => setActivities(list => list.map(a => a.id === updated.id ? updated : a));
   const toggleFix = (id) => setActivities(list => list.map(a => a.id===id ? {...a, fixed: !a.fixed} : a));
   const toggleWeekly = (id) => setActivities(list => list.map(a => a.id===id ? {...a, weeklyFixed: !a.weeklyFixed} : a));
-  // Trava de Etapa (📌) — separada da Trava de Edição (🔒). Uma etapa pode ficar destravada pra edição
-  // e mesmo assim sobreviver ao "Zerar Programação", ou vice-versa; são dois controles independentes.
-  const toggleKeepOnClear = (id) => setActivities(list => list.map(a => a.id===id ? {...a, keepOnClear: !a.keepOnClear} : a));
-  // Zera de verdade: remove (apaga) toda atividade que NÃO está com a Trava de Etapa (📌) ligada,
-  // como se fosse começar a liturgia do zero. O que está com a trava de etapa continua como está.
+  // Zera de verdade (25/09, corrigido a pedido do Paulo): não mantém nada de exceção (nem trancado 🔒,
+  // nem nenhuma outra marcação) — troca a programação inteira pelo exato conteúdo da Liturgia Padrão
+  // salva, sem acrescentar nada a mais. Se ainda não existe um padrão salvo, só esvazia mesmo.
   const zerarProgramacao = () => {
-    if (!window.confirm('Isso vai APAGAR todas as atividades que NÃO estão com a Trava de Etapa (📌) ligada, como se você fosse começar uma liturgia do zero. As marcadas com 📌 continuam. Depois, se quiser, use "Restaurar Padrão" pra voltar pra última liturgia salva. Continuar?')) return;
-    setActivities(list => list.filter(a => a.keepOnClear));
-    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada (atividades sem Trava de Etapa apagadas; as com 📌 preservadas)' });
+    const def = (church && church.defaultLiturgy) || loadDefaultLiturgy(churchId);
+    const hasDefault = def && def.versions && def.versions.length > 0;
+    if (!hasDefault) {
+      if (!window.confirm('Você ainda não tem uma Liturgia Padrão salva. Isso vai APAGAR toda a programação atual, ficando vazia. Continuar?')) return;
+      setActivities([]);
+      pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada (ficou vazia — nenhuma Liturgia Padrão salva ainda)' });
+      return;
+    }
+    if (!window.confirm('Isso vai APAGAR a programação atual e colocar no lugar exatamente a Liturgia Padrão salva — nada além dela fica. Continuar?')) return;
+    setActivities(def.versions[0].list.map(a => ({ ...a, done:false })));
+    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada e recolocada exatamente igual à Liturgia Padrão' });
   };
   const addAt = (act, refId, position) => {
     setActivities(list => {
@@ -5959,7 +5964,15 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     if (onUpdateChurch) onUpdateChurch({ defaultLiturgy: newDefault });
     pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia padrão atualizada a partir da liturgia atual' });
     setMakeDefaultGate(false);
-    alert('Pronto! A liturgia de agora foi salva como o novo padrão. Toda vez que clicar em "Restaurar Padrão", tudo que não estiver trancado (🔒) volta pra esse ponto.');
+    alert('Pronto! A liturgia de agora foi salva como o novo padrão (já na nuvem). Toda vez que clicar em "Restaurar Padrão", tudo que não estiver trancado (🔒) volta pra esse ponto.');
+  };
+  // Botão "Tornar Padrão" (25/09, a pedido do Paulo): por enquanto sem exigir senha — se já existe uma
+  // senha configurada de antes (em Gestão > Liturgia Padrão), continua pedindo ela pra não tirar uma
+  // proteção que a pessoa já tinha montado; se não existe nenhuma, salva direto, sem abrir gate nenhum.
+  const doMakeDefault = () => {
+    if (savedDefault && savedDefault.password) { setMakeDefaultGate(true); return; }
+    if (!window.confirm('Salvar a liturgia de AGORA como o novo Padrão (fica salvo na nuvem)? Da próxima vez que clicar em "Restaurar Padrão", tudo que não estiver trancado (🔒) volta pra esse ponto.')) return;
+    makeCurrentDefault(null);
   };
 
   const buildFinalizeSummary = () => {
@@ -6034,12 +6047,12 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       <button onClick=${()=>setAdding(v=>!v)} style=${{...btnGhost, width:'100%', border:'1.5px dashed var(--border-soft)', padding:'12px', marginBottom:'8px'}}>➕ Acrescentar Atividade</button>
       <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'8px'}}>
         <button onClick=${resetToDefault} style=${{...btnGhost, padding:'12px'}}>🔄 Restaurar Padrão</button>
-        <button onClick=${()=>setMakeDefaultGate(true)} style=${{...btnGhost, padding:'12px'}}>💾${savedDefault && savedDefault.password ? '🔒' : ''} Tornar Padrão</button>
+        <button onClick=${doMakeDefault} style=${{...btnGhost, padding:'12px'}}>💾${savedDefault && savedDefault.password ? '🔒' : ''} Tornar Padrão</button>
       </div>
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginBottom:'8px'}}>"Tornar Padrão" salva a liturgia de agora como o novo modelo. "Restaurar Padrão" volta tudo (menos o trancado 🔒) pro último modelo salvo. Pra apagar a senha ou ver versões antigas, vá em Gestão > 🔒 Liturgia Padrão.</div>
       ${makeDefaultGate && html`<${DefaultLiturgyPasswordGate} hasPassword=${!!(savedDefault && savedDefault.password)} onUnlock=${makeCurrentDefault} onClose=${()=>setMakeDefaultGate(false)} />`}
       <button onClick=${openFinalize} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1px solid var(--success-1)', color:'var(--success-1)'}}>✅ Finalizar Culto</button>
-      <button onClick=${zerarProgramacao} style=${{...btnGhost, width:'100%', marginBottom:'16px', padding:'12px', border:'1px solid var(--danger)', color:'var(--danger)'}}>🧹 Zerar Programação (mantém as com Trava de Etapa 📌)</button>
+      <button onClick=${zerarProgramacao} style=${{...btnGhost, width:'100%', marginBottom:'16px', padding:'12px', border:'1px solid var(--danger)', color:'var(--danger)'}}>🧹 Zerar Programação (volta exatamente pro Padrão)</button>
 
       ${finalizeOpen && finalizeSummary && html`<${FinalizeCultoModal} summary=${finalizeSummary} onConfirm=${confirmFinalize} onClose=${()=>setFinalizeOpen(false)} />`}
       ${adding && html`<${AddActivityForm} defaultSection="escola_sabatina" activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracks} />`}
@@ -6052,7 +6065,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
             <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 10px 4px'}}>${SECTION_LABELS[sec]}</h3>
             <div style=${{display:'grid', gap:'8px'}}>
               ${items.length === 0 && html`<div style=${{color:'var(--text-dim)', fontSize:'12.5px', padding:'8px 4px'}}>Nenhuma atividade cadastrada ainda.</div>`}
-              ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} onToggleWeekly=${toggleWeekly} onToggleKeepOnClear=${toggleKeepOnClear} fixedTracks=${fixedTracks} churchId=${churchId} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />`)}
+              ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} onToggleWeekly=${toggleWeekly} fixedTracks=${fixedTracks} churchId=${churchId} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />`)}
             </div>
           </div>
         `;
