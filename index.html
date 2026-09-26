@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.54';
+const APP_VERSION = '2026-09-25.55';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -3355,6 +3355,15 @@ function closeAllProjectionScreens() {
   });
 }
 
+// Apaga o que está sendo projetado (fica tela preta) em todas as telas habilitadas, SEM fechar as
+// janelas — diferente de "closeAllProjectionScreens" (que fecha a janela de verdade e exige abrir e
+// permitir popup de novo depois). Pedido do Paulo (25/09): um jeito rápido de "fechar a projeção"
+// (o conteúdo) direto do controle do operador, mantendo a tela do projetor aberta e pronta.
+function blankAllProjectionScreens(churchId) {
+  const enabled = loadEnabledScreens(churchId);
+  enabled.forEach(scr => { try { sendToScreenObj(scr, 'blank'); } catch(e) {} });
+}
+
 // Pausa/retoma o que estiver tocando (vídeo local ou do YouTube) em todas as telas habilitadas —
 // usado pelo controle miniatura (ProjectionMiniControl).
 function pauseToggleAllScreens(churchId) {
@@ -5598,6 +5607,7 @@ function ProjectionMiniControl({ churchId, mensagemItems, mensagemCurrent, setMe
   };
   const pausarRetomar = () => pauseToggleAllScreens(churchId);
   const telaCheia = () => retryFullscreenAllScreens(churchId);
+  const pararProjecao = () => blankAllProjectionScreens(churchId);
   const fechar = () => closeAllProjectionScreens();
 
   return html`
@@ -5612,7 +5622,8 @@ function ProjectionMiniControl({ churchId, mensagemItems, mensagemCurrent, setMe
             <button type="button" onClick=${pausarRetomar} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>⏸️ Pausar/Retomar</button>
             <button type="button" onClick=${proximo} disabled=${!hasNext} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', opacity: hasNext ? 1 : 0.4}}>⏭️ Próximo</button>
             <button type="button" onClick=${telaCheia} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>⛶ Tela Cheia</button>
-            <button type="button" onClick=${fechar} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>✖️ Fechar</button>
+            <button type="button" onClick=${pararProjecao} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>⬛ Fechar Projeção</button>
+            <button type="button" onClick=${fechar} style=${{...btnGhost, padding:'12px 8px', fontSize:'11px', gridColumn:'1 / -1', color:'var(--text-dim)'}}>✖️ Fechar Janela(s) da Tela</button>
           </div>
         </div>
       `}
