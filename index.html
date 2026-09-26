@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.53';
+const APP_VERSION = '2026-09-25.54';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -2373,7 +2373,7 @@ function LocalVideoProjectButton({ churchId, item, itemKey, onProjected }) {
   `;
 }
 
-function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWeekly, fixedTracks, churchId, idx, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
+function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWeekly, onReorder, siblings, fixedTracks, churchId, idx, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(act.name);
@@ -2383,6 +2383,10 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
   const [media, setMedia] = useState(act.media || null);
   const [sermaoExpanded, setSermaoExpanded] = useState(false);
   const [idleSeconds, setIdleSeconds] = useState(typeof act.idleSeconds === 'number' ? act.idleSeconds : '');
+  // Mover de lugar (25/09, a pedido do Paulo): reaproveita o mesmo "antes de / depois de" que já existe
+  // em Acrescentar Atividade, só que agora dentro do próprio Editar, pra reordenar sem apagar e recriar.
+  const [movePosition, setMovePosition] = useState('depois');
+  const [moveRefId, setMoveRefId] = useState('');
   // Antes só liberava a busca de vídeo/música pra "mensagem_musical"/"louvor" — mas os exemplos do
   // Paulo (música das ofertas, entrada/saída das crianças, entrada da plataforma) caem em outras
   // categorias (ofertas, infantil, abertura, vídeo...). Liberado pra qualquer categoria, exceto
@@ -2397,6 +2401,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
 
   const save = () => {
     onEdit({ ...act, name: name.trim() || act.name, responsible: responsible.trim() || 'A definir', category, time: time || '--:--', media: media || null, idleSeconds: idleSeconds === '' ? null : Math.max(0, Number(idleSeconds) || 0) });
+    if (onReorder && moveRefId) onReorder(act.id, moveRefId, movePosition);
     setEditing(false);
   };
 
@@ -2417,6 +2422,21 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
           <div style=${{display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>
             <input type="number" min="0" placeholder="padrão" value=${idleSeconds} onChange=${e=>setIdleSeconds(e.target.value)} style=${{...inputStyle, fontSize:'12px', width:'70px', flexShrink:0}} />
             <span style=${{fontSize:'10.5px', color:'var(--text-mid)'}}>seg. ocioso após o vídeo/música terminar, na Programação Automática (vazio = usa o padrão)</span>
+          </div>
+        `}
+        ${onReorder && siblings && siblings.length > 0 && html`
+          <div style=${{display:'grid', gap:'4px', paddingTop:'2px', borderTop:'1px solid var(--border-soft)'}}>
+            <div style=${{fontSize:'9.5px', color:'var(--text-dim)', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.05em', marginTop:'6px'}}>Mudar de lugar (opcional)</div>
+            <div style=${{display:'grid', gridTemplateColumns:'110px 1fr', gap:'8px'}}>
+              <select value=${movePosition} onChange=${e=>setMovePosition(e.target.value)} style=${{...inputStyle, fontSize:'12px'}}>
+                <option value="antes">Antes de...</option>
+                <option value="depois">Depois de...</option>
+              </select>
+              <select value=${moveRefId} onChange=${e=>setMoveRefId(e.target.value)} style=${{...inputStyle, fontSize:'12px'}}>
+                <option value="">(não mudar de lugar)</option>
+                ${siblings.filter(s => s.id !== act.id).map(s => html`<option key=${s.id} value=${s.id}>${s.name}</option>`)}
+              </select>
+            </div>
           </div>
         `}
         <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end'}}>
@@ -2777,6 +2797,20 @@ function DefaultLiturgyEditor({ initialList, password, onSave, onClose, churchId
   const edit = (updated) => setList(l => l.map(a => a.id === updated.id ? updated : a));
   const toggleFix = (id) => setList(l => l.map(a => a.id===id ? {...a, fixed: !a.fixed} : a));
   const toggleWeekly = (id) => setList(l => l.map(a => a.id===id ? {...a, weeklyFixed: !a.weeklyFixed} : a));
+  const moveActivity = (id, refId, position) => {
+    setList(l => {
+      if (!refId || refId === id) return l;
+      const item = l.find(a => a.id === id);
+      if (!item) return l;
+      const without = l.filter(a => a.id !== id);
+      const refIdx = without.findIndex(a => a.id === refId);
+      if (refIdx === -1) return l;
+      const insertAt = position === 'antes' ? refIdx : refIdx + 1;
+      const next = without.slice();
+      next.splice(insertAt, 0, item);
+      return next;
+    });
+  };
   const [fixedTracksRef] = useState(() => loadFixedTracks(churchId));
   const addAt = (act, refId, position) => {
     setList(l => {
@@ -2813,7 +2847,7 @@ function DefaultLiturgyEditor({ initialList, password, onSave, onClose, churchId
               <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 10px 4px'}}>${SECTION_LABELS[sec]}</h3>
               <div style=${{display:'grid', gap:'8px'}}>
                 ${items.length === 0 && html`<div style=${{color:'var(--text-dim)', fontSize:'12.5px', padding:'8px 4px'}}>Nenhuma atividade no padrão ainda.</div>`}
-                ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} onToggleWeekly=${toggleWeekly} fixedTracks=${fixedTracksRef} churchId=${churchId} />`)}
+                ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} onToggleWeekly=${toggleWeekly} onReorder=${moveActivity} siblings=${items} fixedTracks=${fixedTracksRef} churchId=${churchId} />`)}
               </div>
             </div>
           `;
@@ -5883,6 +5917,22 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   const edit = (updated) => setActivities(list => list.map(a => a.id === updated.id ? updated : a));
   const toggleFix = (id) => setActivities(list => list.map(a => a.id===id ? {...a, fixed: !a.fixed} : a));
   const toggleWeekly = (id) => setActivities(list => list.map(a => a.id===id ? {...a, weeklyFixed: !a.weeklyFixed} : a));
+  // Mover de lugar (25/09, a pedido do Paulo): mesma lógica de "antes de/depois de" do Acrescentar
+  // Atividade, só que reordenando quem já existe em vez de inserir um item novo.
+  const moveActivity = (id, refId, position) => {
+    setActivities(list => {
+      if (!refId || refId === id) return list;
+      const item = list.find(a => a.id === id);
+      if (!item) return list;
+      const without = list.filter(a => a.id !== id);
+      const refIdx = without.findIndex(a => a.id === refId);
+      if (refIdx === -1) return list;
+      const insertAt = position === 'antes' ? refIdx : refIdx + 1;
+      const next = without.slice();
+      next.splice(insertAt, 0, item);
+      return next;
+    });
+  };
   // Zera de verdade (25/09, corrigido a pedido do Paulo): não mantém nada de exceção (nem trancado 🔒,
   // nem nenhuma outra marcação) — troca a programação inteira pelo exato conteúdo da Liturgia Padrão
   // salva, sem acrescentar nada a mais. Se ainda não existe um padrão salvo, só esvazia mesmo.
@@ -6065,7 +6115,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
             <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 10px 4px'}}>${SECTION_LABELS[sec]}</h3>
             <div style=${{display:'grid', gap:'8px'}}>
               ${items.length === 0 && html`<div style=${{color:'var(--text-dim)', fontSize:'12.5px', padding:'8px 4px'}}>Nenhuma atividade cadastrada ainda.</div>`}
-              ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} onToggleWeekly=${toggleWeekly} fixedTracks=${fixedTracks} churchId=${churchId} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />`)}
+              ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} onToggleWeekly=${toggleWeekly} onReorder=${moveActivity} siblings=${items} fixedTracks=${fixedTracks} churchId=${churchId} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />`)}
             </div>
           </div>
         `;
