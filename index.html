@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.59';
+const APP_VERSION = '2026-09-25.60';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -3206,6 +3206,22 @@ function projectionShellHtml() {
         + '}'
         + 'tick();cronoInterval=setInterval(tick,200);'
       + '}'
+      // Relógio ao vivo na tela — pedido do Paulo (28/09): a ferramenta "🕐 Relógio" não tinha botão
+      // de projeção nenhum. Roda inteiramente aqui dentro da janela (não precisa ficar recebendo
+      // mensagem a cada segundo do operador), igual ao cronômetro.
+      + 'function renderRelogio(){'
+        + 'stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();'
+        + 'var wrap=document.createElement("div");wrap.style.textAlign="center";'
+        + 'var clock=document.createElement("div");clock.style.fontSize="clamp(64px,15vw,230px)";clock.style.fontWeight="800";clock.style.fontVariantNumeric="tabular-nums";clock.style.lineHeight="1";wrap.appendChild(clock);'
+        + 'var date=document.createElement("div");date.style.fontSize="clamp(16px,2.2vw,30px)";date.style.opacity="0.7";date.style.marginTop="2vh";date.style.textTransform="capitalize";wrap.appendChild(date);'
+        + 'stage.appendChild(wrap);'
+        + 'function tick(){'
+          + 'var now=new Date();'
+          + 'clock.textContent=now.toLocaleTimeString("pt-BR");'
+          + 'date.textContent=now.toLocaleDateString("pt-BR",{weekday:"long",day:"2-digit",month:"long"});'
+        + '}'
+        + 'tick();cronoInterval=setInterval(tick,1000);'
+      + '}'
       // Vídeo local (arquivo carregado do pendrive na aba Mensagem) — o item.url é um blob: URL criado
       // na janela principal; blob: URLs do mesmo site funcionam em qualquer janela/aba, então dá pra
       // tocar aqui sem precisar subir o arquivo pra lugar nenhum.
@@ -3289,6 +3305,7 @@ function projectionShellHtml() {
         + 'else if(d.gcType==="localvideo")renderLocalVideo(d.item,d.mute);'
         + 'else if(d.gcType==="texto")renderText(d.text);'
         + 'else if(d.gcType==="cronometro")renderCronometro(d.item);'
+        + 'else if(d.gcType==="relogio")renderRelogio();'
         + 'else if(d.gcType==="overlay_texto")renderOverlayText(d.item);'
         + 'else if(d.gcType==="overlay_limpar")clearOverlayText();'
         + 'else if(d.gcType==="media_play")playMedia();'
@@ -3368,6 +3385,7 @@ async function sendToScreenObj(scr, kind, payload, opts) {
       : kind === 'localvideo' ? { gcType:'localvideo', item: payload || {}, mute }
       : kind === 'texto' ? { gcType:'texto', text: payload || '' }
       : kind === 'cronometro' ? { gcType:'cronometro', item: payload || {} }
+      : kind === 'relogio' ? { gcType:'relogio' }
       : kind === 'overlay_texto' ? { gcType:'overlay_texto', item: payload || {} }
       : kind === 'overlay_limpar' ? { gcType:'overlay_limpar' }
       : kind === 'media_play' ? { gcType:'media_play' }
@@ -3515,8 +3533,14 @@ function BibliaTool({ churchId, churchLogo }) {
   };
 
   return html`
-    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'10px'}}>
-      <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Escolha o versículo, confira o texto e projete animado — funciona por cima de uma foto, slide ou vídeo que já esteja na tela, sem apagar o que tá lá. O texto aparece centralizado na tela, com a referência (livro e capítulo/versículo) e a logo da igreja (se você cadastrou uma em Config).</div>
+    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px', borderTop:'3px solid #d97706'}}>
+      <div style=${{display:'flex', alignItems:'center', gap:'10px'}}>
+        <span style=${{fontSize:'19px', width:'38px', height:'38px', borderRadius:'12px', flex:'none', display:'flex', alignItems:'center', justifyContent:'center', background:'linear-gradient(135deg,#f59e0b,#b45309)', boxShadow:'0 3px 12px -2px #b45309, inset 0 1px 0 rgba(255,255,255,.25)'}}>📖</span>
+        <div>
+          <div style=${{fontWeight:800, fontSize:'13.5px', color:'#d97706'}}>Bíblia Sagrada</div>
+          <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Projeta o versículo animado, por cima do que já estiver na tela</div>
+        </div>
+      </div>
 
       <div style=${{display:'grid', gridTemplateColumns:'2fr 1fr 1.4fr', gap:'8px'}}>
         <select value=${bookIdx} onChange=${e=>setBookIdx(Number(e.target.value))} style=${{...inputStyle, fontSize:'12px'}}>
@@ -3525,14 +3549,22 @@ function BibliaTool({ churchId, churchLogo }) {
         <input value=${chapter} onChange=${e=>setChapter(e.target.value)} placeholder="Cap." style=${{...inputStyle, fontSize:'12px', textAlign:'center'}} />
         <input value=${verse} onChange=${e=>setVerse(e.target.value)} placeholder="Vers. (16 ou 16-18)" style=${{...inputStyle, fontSize:'12px', textAlign:'center'}} />
       </div>
-      <button type="button" onClick=${buscar} disabled=${searching} style=${{...btnGhost, padding:'8px'}}>${searching ? 'Buscando...' : '🔎 Buscar Texto'}</button>
+      <button type="button" onClick=${buscar} disabled=${searching} style=${{...btnGhost, padding:'9px', fontWeight:700, color:'#d97706', borderColor:'color-mix(in srgb, #d97706 40%, transparent)', background:'color-mix(in srgb, #d97706 10%, transparent)'}}>${searching ? 'Buscando...' : '🔎 Buscar Texto'}</button>
       ${searchError && html`<div style=${{fontSize:'10.5px', color:'var(--highlight)'}}>${searchError}</div>`}
 
       <input value=${reference} onChange=${e=>setReference(e.target.value)} placeholder="Referência (ex: João 3:16)" style=${{...inputStyle, fontSize:'12px', fontWeight:700}} />
       <textarea value=${text} onChange=${e=>setText(e.target.value)} placeholder="O texto do versículo aparece aqui depois de buscar — ou cole/escreva à mão." rows="4" style=${{...inputStyle, fontSize:'12.5px', fontFamily:'inherit', resize:'vertical'}}></textarea>
 
-      <div style=${{display:'grid', gap:'8px', padding:'10px', borderRadius:'12px', background:'rgba(99,102,241,0.08)', border:'1px solid var(--border-soft)'}}>
-        <div style=${{fontSize:'10.5px', fontWeight:700, color:'var(--text-mid)'}}>⚙️ Animação</div>
+      ${text.trim() && html`
+        <div style=${{padding:'18px 14px', borderRadius:'14px', background:'linear-gradient(160deg,#1c1917,#0c0a09)', border:'1px solid #78350f', textAlign:'center', display:'grid', gap:'8px'}}>
+          <div style=${{fontSize:'10px', fontWeight:800, color:'#fbbf24', textTransform:'uppercase', letterSpacing:'0.06em', opacity:0.75}}>Prévia da projeção</div>
+          <div style=${{fontSize:'13.5px', color:'#fefce8', lineHeight:1.5, fontStyle:'italic'}}>"${text.trim()}"</div>
+          ${reference.trim() && html`<div style=${{fontSize:'11px', fontWeight:700, color:'#fbbf24'}}>${reference.trim()}</div>`}
+        </div>
+      `}
+
+      <div style=${{display:'grid', gap:'8px', padding:'10px', borderRadius:'12px', background:'color-mix(in srgb, #d97706 8%, transparent)', border:'1px solid color-mix(in srgb, #d97706 28%, var(--border-soft))'}}>
+        <div style=${{fontSize:'10.5px', fontWeight:700, color:'#d97706'}}>⚙️ Animação</div>
         <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
           <label style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Tempo de entrar/sumir (seg.)
             <input type="number" min="0.1" step="0.1" value=${fadeSec} onChange=${e=>setFadeSec(e.target.value)} style=${{...inputStyle, fontSize:'12px', marginTop:'4px'}} />
@@ -3548,21 +3580,39 @@ function BibliaTool({ churchId, churchLogo }) {
       </div>
 
       <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
-        <button type="button" onClick=${projetar} style=${{...btnPrimary, padding:'10px'}}>📽️ Projetar Animado</button>
+        <button type="button" onClick=${projetar} style=${{...btnPrimary, padding:'10px', background:'linear-gradient(135deg,#f59e0b,#b45309)'}}>📽️ Projetar Animado</button>
         <button type="button" onClick=${tirarDaTela} style=${{...btnGhost, padding:'10px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>✖️ Tirar da Tela</button>
       </div>
     </div>
   `;
 }
 
-function RelogioTool() {
+function RelogioTool({ churchId }) {
   const [now, setNow] = useState(new Date());
+  const [projetado, setProjetado] = useState(false);
   useEffect(() => { const id = setInterval(()=>setNow(new Date()), 1000); return () => clearInterval(id); }, []);
+
+  const projetar = () => {
+    const enabled = loadEnabledScreens(churchId);
+    if (enabled.length === 0) { alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.'); return; }
+    enabled.forEach(scr => { try { sendToScreenObj(scr, 'relogio'); } catch (e) {} });
+    setProjetado(true);
+  };
+  const tirar = () => {
+    const enabled = loadEnabledScreens(churchId);
+    enabled.forEach(scr => { try { sendToScreenObj(scr, 'blank'); } catch (e) {} });
+    setProjetado(false);
+  };
+
   return html`
-    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'6px', textAlign:'center'}}>
+    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'10px', textAlign:'center'}}>
       <div style=${{fontWeight:800, fontSize:'13px', textAlign:'left'}}>🕐 Relógio</div>
       <div style=${{fontSize:'42px', fontWeight:800, fontVariantNumeric:'tabular-nums'}}>${now.toLocaleTimeString('pt-BR')}</div>
       <div style=${{fontSize:'13px', color:'var(--text-mid)', textTransform:'capitalize'}}>${now.toLocaleDateString('pt-BR', { weekday:'long', day:'2-digit', month:'long', year:'numeric' })}</div>
+      <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginTop:'4px'}}>
+        <button type="button" onClick=${projetar} style=${{...btnPrimary, padding:'10px'}}>📽️ Projetar Relógio</button>
+        <button type="button" onClick=${tirar} disabled=${!projetado} style=${{...btnGhost, padding:'10px', opacity: projetado ? 1 : 0.5, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>✖️ Tirar da Tela</button>
+      </div>
     </div>
   `;
 }
@@ -4565,9 +4615,9 @@ function FerramentasView({ churchName, churchId, churchLogo }) {
   const [selected, setSelected] = useState(null);
   const tools = [
     { key:'biblia', label:'📖 Bíblia Sagrada' },
-    { key:'sorteio', label:'🎱 Sorteador de Números' },
-    { key:'relogio', label:'🕐 Relógio' },
     { key:'cronometro', label:'⏱️ Cronômetro' },
+    { key:'relogio', label:'🕐 Relógio' },
+    { key:'sorteio', label:'🎱 Sorteador de Números' },
     { key:'ppt', label:'📊 Criador de PowerPoint' },
     { key:'manual', label:'📘 Como Usar' },
   ];
@@ -4582,8 +4632,17 @@ function FerramentasView({ churchName, churchId, churchLogo }) {
 
       ${selected === 'biblia' && html`<${BibliaTool} churchId=${churchId} churchLogo=${churchLogo} />`}
       ${selected === 'sorteio' && html`<${NumberDrawTool} churchId=${churchId} />`}
-      ${selected === 'relogio' && html`<${RelogioTool} />`}
-      ${selected === 'cronometro' && html`<${CronometroTool} />`}
+      ${selected === 'relogio' && html`<${RelogioTool} churchId=${churchId} />`}
+      ${selected === 'cronometro' && html`
+        <div style=${{display:'grid', gap:'14px'}}>
+          <${CronometroTool} />
+          <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'8px'}}>
+            <div style=${{fontWeight:800, fontSize:'13px'}}>⏳ Cronômetro Regressivo (pra projetar)</div>
+            <div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Clique no relógio abaixo pra abrir os controles e escolher em qual tela mostrar — mesmo cronômetro usado nas etapas da Liturgia.</div>
+            <${CronometroAtividadeButton} churchId=${churchId} itemKey=${null} title="Cronômetro" responsible="" time="" plannedSeconds=${300} onChangeDuration=${null} />
+          </div>
+        </div>
+      `}
       ${selected === 'ppt' && html`<${PowerpointTool} churchName=${churchName} />`}
       ${selected === 'manual' && html`<${ManualTool} />`}
     </div>
@@ -5674,27 +5733,39 @@ function ProjectionMiniControl({ churchId, church, mensagemItems, mensagemCurren
   const fundo = () => sendBackgroundToAllScreens(churchId, church);
   const alternarCongelar = () => { const next = !isProjectionFrozen(); setProjectionFrozen(next); setFrozen(next); };
 
+  // Botões só com ícone + legenda curtinha embaixo (em vez de texto longo) — pedido do Paulo (28/09):
+  // "os botões das projeções não estão intuitivos, estão tomando espaço de tela". Grade de 3 colunas
+  // deixa o painel bem mais baixo e compacto, e o "title" dá a dica completa pra quem passar o mouse.
+  const iconBtn = (icon, label, title, onClick, extraStyle) => html`
+    <button type="button" onClick=${onClick} title=${title} style=${{
+      display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'3px',
+      padding:'9px 4px', borderRadius:'12px', border:'1px solid var(--border-soft)', background:'rgba(148,163,184,0.08)',
+      color:'var(--text-mid)', cursor:'pointer', ...extraStyle,
+    }}>
+      <span style=${{fontSize:'18px'}}>${icon}</span>
+      <span style=${{fontSize:'9px', fontWeight:700}}>${label}</span>
+    </button>
+  `;
+
   return html`
     <div style=${{position:'fixed', left: isMobile ? '12px' : '20px', bottom: 'calc(14px + env(safe-area-inset-bottom,0px))', zIndex:150, display:'flex', flexDirection:'column', alignItems:'flex-start', gap:'10px'}}>
       ${open && html`
-        <div class="glass fade-up" style=${{width: isMobile ? 'min(88vw, 300px)' : '260px', padding:'14px', borderRadius:'18px', boxShadow:'0 20px 50px -14px rgba(0,0,0,0.55)', display:'grid', gap:'8px'}}>
-          <div style=${{fontSize:'11px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:'2px'}}>🎛️ Controle da Projeção</div>
-          ${frozen && html`<div style=${{fontSize:'10.5px', fontWeight:700, color:'var(--accent-1)', background:'color-mix(in srgb, var(--accent-1) 16%, transparent)', borderRadius:'8px', padding:'6px 8px'}}>❄️ Projeção congelada — o que estiver na tela não vai mudar até descongelar.</div>`}
+        <div class="glass fade-up" style=${{width: isMobile ? 'min(80vw, 230px)' : '210px', padding:'12px', borderRadius:'18px', boxShadow:'0 20px 50px -14px rgba(0,0,0,0.55)', display:'grid', gap:'8px'}}>
+          <div style=${{fontSize:'10.5px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em'}}>🎛️ Projeção</div>
+          ${frozen && html`<div style=${{fontSize:'10px', fontWeight:700, color:'var(--accent-1)', background:'color-mix(in srgb, var(--accent-1) 16%, transparent)', borderRadius:'8px', padding:'5px 7px'}}>❄️ Congelada — a tela não muda até descongelar.</div>`}
           ${items.length > 0 && html`
-            <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>${items[Math.min(mensagemCurrent, items.length-1)] ? items[Math.min(mensagemCurrent, items.length-1)].title : ''} (${Math.min(mensagemCurrent, items.length-1)+1} de ${items.length})</div>
+            <div style=${{fontSize:'10px', color:'var(--text-dim)'}}>${items[Math.min(mensagemCurrent, items.length-1)] ? items[Math.min(mensagemCurrent, items.length-1)].title : ''} (${Math.min(mensagemCurrent, items.length-1)+1}/${items.length})</div>
           `}
-          <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
-            <button type="button" onClick=${play} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>▶️ Play</button>
-            <button type="button" onClick=${pause} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>⏸️ Pause</button>
-            <button type="button" onClick=${telaCheia} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>⛶ Tela Cheia</button>
-            <button type="button" onClick=${fechar} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>✖️ Fechar</button>
-            <button type="button" onClick=${fundo} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px'}}>🖼️ Fundo</button>
-            <button type="button" onClick=${alternarCongelar} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', ...(frozen ? {background:'color-mix(in srgb, var(--accent-1) 22%, transparent)', borderColor:'var(--accent-1)', color:'var(--accent-1)'} : {})}}>${frozen ? '▶️ Descongelar' : '❄️ Congelar'}</button>
+          <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'6px'}}>
+            ${iconBtn('▶️', 'Play', 'Retomar vídeo/música na tela', play)}
+            ${iconBtn('⏸️', 'Pause', 'Pausar vídeo/música na tela', pause)}
+            ${iconBtn('⛶', 'Tela Cheia', 'Forçar tela cheia de novo', telaCheia)}
+            ${iconBtn('🖼️', 'Fundo', 'Projetar a imagem de plano de fundo cadastrada em Configurações', fundo)}
+            ${iconBtn(frozen ? '▶️' : '❄️', frozen ? 'Descong.' : 'Congelar', frozen ? 'Descongelar — volta a aceitar trocas de conteúdo' : 'Congelar — trava o que está na tela até descongelar', alternarCongelar, frozen ? {background:'color-mix(in srgb, var(--accent-1) 22%, transparent)', borderColor:'var(--accent-1)', color:'var(--accent-1)'} : {})}
+            ${iconBtn('✖️', 'Fechar', 'Fechar de vez as janelas de projeção', fechar, {color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'})}
           </div>
           ${items.length > 0 && html`
-            <div style=${{display:'grid', gridTemplateColumns:'1fr', gap:'8px'}}>
-              <button type="button" onClick=${proximo} disabled=${!hasNext} style=${{...btnGhost, padding:'12px 8px', fontSize:'12.5px', opacity: hasNext ? 1 : 0.4}}>⏭️ Próximo</button>
-            </div>
+            <button type="button" onClick=${proximo} disabled=${!hasNext} style=${{...btnGhost, padding:'10px 8px', fontSize:'11.5px', opacity: hasNext ? 1 : 0.4}}>⏭️ Próximo item da Mensagem</button>
           `}
         </div>
       `}
