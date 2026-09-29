@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.61';
+const APP_VERSION = '2026-09-25.62';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -6194,8 +6194,15 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       return;
     }
     if (!window.confirm('Isso vai APAGAR a programação atual e colocar no lugar exatamente a Liturgia Padrão salva — nada além dela fica. Continuar?')) return;
-    setActivities(def.versions[0].list.map(a => ({ ...a, done:false })));
-    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada e recolocada exatamente igual à Liturgia Padrão' });
+    // Pedido do Paulo (29/09): ao zerar, qualquer mídia avulsa que não seja de Trilha Fixa
+    // (📅 fromFixedTrack) nem de Busca Semanal (dynamic — Provai e Vede/Informativo/Vida e Saúde)
+    // precisa sair, mesmo que tenha ficado gravada dentro da própria Liturgia Padrão salva (por
+    // exemplo, um vídeo específico anexado numa semana e depois salvo sem querer como padrão).
+    setActivities(def.versions[0].list.map(a => {
+      const keepMedia = a.media && (a.media.fromFixedTrack || a.media.dynamic);
+      return { ...a, done:false, media: keepMedia ? a.media : null };
+    }));
+    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada e recolocada exatamente igual à Liturgia Padrão (mídia avulsa que não é trilha fixa/busca semanal removida)' });
   };
   const addAt = (act, refId, position) => {
     setActivities(list => {
