@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.63';
+const APP_VERSION = '2026-09-25.64';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -4914,7 +4914,15 @@ function TelasView({ churchId }) {
     if ('getScreenDetails' in window) {
       try {
         const details = await window.getScreenDetails();
-        const list = details.screens.map((s,i) => ({ label: (s.isPrimary ? 'Tela Principal' : 'Tela '+(i+1))+' — '+s.width+'x'+s.height, left: s.left, top: s.top, width: s.width, height: s.height }));
+        // Pedido do Paulo (29/09): identificar a tela com o nome que o próprio Windows dá a ela
+        // (o mesmo que aparece em Configurações de Tela do Windows), não só "Tela 1/Tela 2" — assim
+        // fica fácil saber qual é qual quando tem mais de um monitor/projetor ligado.
+        const list = details.screens.map((s,i) => {
+          const nomeWindows = (s.label && s.label.trim()) ? s.label.trim() : '';
+          const base = s.isPrimary ? 'Tela Principal' : 'Tela '+(i+1);
+          const label = (nomeWindows ? base+' — '+nomeWindows : base) + ' — '+s.width+'x'+s.height;
+          return { label, left: s.left, top: s.top, width: s.width, height: s.height };
+        });
         setScreens(list);
       } catch (e) {
         setPermissionMsg('Permissão de telas negada ou indisponível. Usando apenas a tela atual.');
