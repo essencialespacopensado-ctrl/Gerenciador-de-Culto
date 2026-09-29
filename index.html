@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.64';
+const APP_VERSION = '2026-09-25.65';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -6159,6 +6159,29 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       return changed ? next : list;
     });
   }, [fixedTracks]);
+
+  // Pedido do Paulo (29/09): o "responsável" da Mensagem Musical na Liturgia acompanha sozinho o
+  // nome preenchido na Escala (Gestão → Sonoplastia/Louvor → "Mensagem Musical (nome do
+  // solista/grupo)") pro próximo sábado — não precisa mais digitar o nome duas vezes. Escala só
+  // existe pra Sábado, então nos outros dias esse campo continua manual, do jeito que já era.
+  const scheduleIdMensagem = 'louvor_equipes';
+  const schedMensagemEscala = (church && church.schedules && church.schedules[scheduleIdMensagem]) || null;
+  const nextSaturdayKeyMensagem = isSabado ? getSaturdaysForMonths(3)[0] : null;
+  const nomeMensagemEscala = isSabado && schedMensagemEscala && schedMensagemEscala.specialMusic
+    ? (schedMensagemEscala.specialMusic[nextSaturdayKeyMensagem] || '').trim()
+    : '';
+  useEffect(() => {
+    if (!isSabado || !nomeMensagemEscala) return;
+    setActivities(list => {
+      let changed = false;
+      const next = list.map(a => {
+        if (a.category !== 'mensagem_musical' || a.responsible === nomeMensagemEscala) return a;
+        changed = true;
+        return { ...a, responsible: nomeMensagemEscala };
+      });
+      return changed ? next : list;
+    });
+  }, [isSabado, nomeMensagemEscala, activities]);
 
   const toggle = (id) => setActivities(list => list.map(a => a.id===id ? {...a, done: !a.done} : a));
   const markDone = (id) => setActivities(list => list.map(a => a.id===id ? {...a, done:true} : a));
