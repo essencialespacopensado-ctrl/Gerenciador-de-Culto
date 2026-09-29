@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.62';
+const APP_VERSION = '2026-09-25.63';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -6187,9 +6187,34 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   const zerarProgramacao = () => {
     const def = isSabado ? ((church && church.defaultLiturgy) || loadDefaultLiturgy(churchId)) : ((church && church.otherDefaultLiturgy && church.otherDefaultLiturgy[day]) || loadDefaultLiturgy(churchId, day));
     const hasDefault = def && def.versions && def.versions.length > 0;
+    // Pedido do Paulo (29/09): Momento de Louvor e Mensagem Musical são escolhidos de novo toda
+    // semana por quem vai cantar/tocar — mesmo que a atividade esteja marcada como "todo sábado"
+    // (📅) e tenha uma Trilha Fixa com esse nome cadastrada, a mídia dessas duas categorias NUNCA
+    // conta como trilha fixa/busca semanal de verdade aqui, então sempre sai ao zerar.
+    const SEMPRE_LIMPA_MEDIA = new Set(['louvor', 'mensagem_musical']);
+    const stripMedia = (a) => {
+      if (SEMPRE_LIMPA_MEDIA.has(a.category)) return { ...a, media: null };
+      const keepMedia = a.media && (a.media.fromFixedTrack || a.media.dynamic);
+      return { ...a, media: keepMedia ? a.media : null };
+    };
+    // A "Mensagem Musical (nome do solista/grupo)" da Escala (Gestão → Sonoplastia/Louvor) é a
+    // mesma informação, só que guardada à parte (por data) — zerar também limpa o nome salvo pro
+    // próximo sábado, senão ficava parecendo que não apagou nada. Escala é recurso só de Sábado.
+    const clearSpecialMusicIfSabado = () => {
+      if (!isSabado) return;
+      const scheduleId = 'louvor_equipes';
+      const sched = (church && church.schedules && church.schedules[scheduleId]) || loadSchedule(churchId, scheduleId);
+      const targetKey = getSaturdaysForMonths(3)[0];
+      if (!sched.specialMusic || !sched.specialMusic[targetKey]) return;
+      const nextSched = { ...sched, specialMusic: { ...sched.specialMusic, [targetKey]: '' } };
+      saveSchedule(churchId, scheduleId, nextSched);
+      if (docId) fbUpdateChurchFields(docId, { ['schedules.' + scheduleId]: nextSched });
+      if (onUpdateChurch) onUpdateChurch({ schedules: { ...((church && church.schedules) || {}), [scheduleId]: nextSched } });
+    };
     if (!hasDefault) {
       if (!window.confirm('Você ainda não tem uma Liturgia Padrão salva. Isso vai APAGAR toda a programação atual, ficando vazia. Continuar?')) return;
       setActivities([]);
+      clearSpecialMusicIfSabado();
       pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada (ficou vazia — nenhuma Liturgia Padrão salva ainda)' });
       return;
     }
@@ -6198,11 +6223,9 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     // (📅 fromFixedTrack) nem de Busca Semanal (dynamic — Provai e Vede/Informativo/Vida e Saúde)
     // precisa sair, mesmo que tenha ficado gravada dentro da própria Liturgia Padrão salva (por
     // exemplo, um vídeo específico anexado numa semana e depois salvo sem querer como padrão).
-    setActivities(def.versions[0].list.map(a => {
-      const keepMedia = a.media && (a.media.fromFixedTrack || a.media.dynamic);
-      return { ...a, done:false, media: keepMedia ? a.media : null };
-    }));
-    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada e recolocada exatamente igual à Liturgia Padrão (mídia avulsa que não é trilha fixa/busca semanal removida)' });
+    setActivities(def.versions[0].list.map(a => ({ ...stripMedia(a), done:false })));
+    clearSpecialMusicIfSabado();
+    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada e recolocada exatamente igual à Liturgia Padrão (mídia avulsa que não é trilha fixa/busca semanal removida — inclui Momento de Louvor e Mensagem Musical)' });
   };
   const addAt = (act, refId, position) => {
     setActivities(list => {
