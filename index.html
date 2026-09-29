@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.60';
+const APP_VERSION = '2026-09-25.61';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -350,7 +350,7 @@ function useSyncedChurches() {
       // aparelho novo — ou depois de limpar o cache — ela nasce sem saber que já existe algo salvo na
       // nuvem, assume que está "vazia" e pode acabar regravando por cima do que já tinha, apagando de
       // verdade o que a pessoa cadastrou. Corrigido em 24/09.
-      const CONTENT_FIELDS = ['activities', 'defaultLiturgy', 'archive', 'teams', 'functionsList', 'schedules', 'churchLocation', 'presence', 'lembretesAtivo', 'lembretesStatus', 'fixedTracks'];
+      const CONTENT_FIELDS = ['activities', 'defaultLiturgy', 'otherActivities', 'otherDefaultLiturgy', 'archive', 'teams', 'functionsList', 'schedules', 'churchLocation', 'presence', 'lembretesAtivo', 'lembretesStatus', 'fixedTracks'];
       remoteByLogin.forEach((rc, loginLower) => {
         if (!currentLogins.has(loginLower)) {
           const entry = {
@@ -1535,7 +1535,9 @@ const HYMNS = [
   {n:560,t:'Momento Vida e Saúde',c:'Saúde e Temperança',k:'C',s:'Vídeos informativos sobre saúde e estilo de vida...'},
 ];
 
-const SECTION_LABELS = { escola_sabatina: 'Escola Sabatina', culto_divino: 'Culto Divino' };
+const SECTION_LABELS = { escola_sabatina: 'Escola Sabatina', culto_divino: 'Culto Divino', culto: 'Programação' };
+const SABADO_SECTION_LABELS = { escola_sabatina: 'Escola Sabatina', culto_divino: 'Culto Divino' };
+const OUTRO_DIA_SECTION_LABELS = { culto: 'Programação' };
 const CATEGORY_ICON = { louvor:'🎵', oracao:'🙏', video:'🎬', mensagem_musical:'🎤', infantil:'🧸', ofertas:'💰', sermao:'📖', anuncios:'📢', abertura:'✨', geral:'📌' };
 
 // Os 66 livros, em português (pra mostrar) e o "slug" em inglês que a API pública de busca de
@@ -1846,25 +1848,50 @@ const DEFAULT_ACTIVITIES = [
   {id:'b8',name:'Bênção Pastoral',section:'culto_divino',category:'oracao',responsible:'Pastor',time:'11:56',dur:3,done:false},
 ];
 
-function activitiesKey(churchId) { return 'gc_activities_' + churchId; }
-function loadActivities(churchId) {
-  try { const raw = localStorage.getItem(activitiesKey(churchId)); if (raw) return JSON.parse(raw); } catch(e) {}
-  return DEFAULT_ACTIVITIES;
-}
-function saveActivities(churchId, list) {
-  try { localStorage.setItem(activitiesKey(churchId), JSON.stringify(list)); } catch(e) {}
+// Liturgias em outros dias da semana (29/09, a pedido do Paulo: "quero que tenha como salvar
+// liturgias diferentes em outros dias da semana... tem que ser como as do Sábado, todas as
+// funcionalidades"). Sábado continua usando exatamente a mesma chave/campo de sempre (zero risco
+// pro que já existia); os outros dias ganham uma chave própria — "day" omitido ou 'sabado' se
+// comporta 100% igual ao código antigo.
+const LITURGIA_DAYS = [
+  { key:'sabado', label:'Sábado', jsDay:6 },
+  { key:'domingo', label:'Domingo', jsDay:0 },
+  { key:'segunda', label:'Segunda', jsDay:1 },
+  { key:'terca', label:'Terça', jsDay:2 },
+  { key:'quarta', label:'Quarta', jsDay:3 },
+  { key:'quinta', label:'Quinta', jsDay:4 },
+  { key:'sexta', label:'Sexta', jsDay:5 },
+];
+function liturgiaDayLabel(day) { const d = LITURGIA_DAYS.find(x => x.key === day); return d ? d.label : 'Sábado'; }
+// Próxima data (chave AAAA-MM-DD) em que aquele dia da semana cai — mesma lógica já usada só pra
+// sábado em getSaturdaysForMonths, generalizada pra qualquer dia.
+function nextWeekdayKey(jsWeekday) {
+  const today = new Date();
+  const d = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const daysUntil = (jsWeekday - d.getDay() + 7) % 7;
+  d.setDate(d.getDate() + daysUntil);
+  return dateKey(d);
 }
 
-function defaultLiturgyKey(churchId) { return 'gc_default_liturgy_' + churchId; }
-function loadDefaultLiturgy(churchId) {
+function activitiesKey(churchId, day) { return (day && day !== 'sabado') ? ('gc_activities_' + churchId + '_' + day) : ('gc_activities_' + churchId); }
+function loadActivities(churchId, day) {
+  try { const raw = localStorage.getItem(activitiesKey(churchId, day)); if (raw) return JSON.parse(raw); } catch(e) {}
+  return (day && day !== 'sabado') ? [] : DEFAULT_ACTIVITIES;
+}
+function saveActivities(churchId, list, day) {
+  try { localStorage.setItem(activitiesKey(churchId, day), JSON.stringify(list)); } catch(e) {}
+}
+
+function defaultLiturgyKey(churchId, day) { return (day && day !== 'sabado') ? ('gc_default_liturgy_' + churchId + '_' + day) : ('gc_default_liturgy_' + churchId); }
+function loadDefaultLiturgy(churchId, day) {
   try {
-    const raw = localStorage.getItem(defaultLiturgyKey(churchId));
+    const raw = localStorage.getItem(defaultLiturgyKey(churchId, day));
     if (raw) {
       const data = JSON.parse(raw);
       if (data && Array.isArray(data.list) && !Array.isArray(data.versions)) {
         // Formato antigo (uma única lista) — migra automaticamente para o novo formato com versões
         const migrated = { password: data.password, versions: [{ at: new Date().toISOString(), list: data.list }] };
-        try { localStorage.setItem(defaultLiturgyKey(churchId), JSON.stringify(migrated)); } catch(e) {}
+        try { localStorage.setItem(defaultLiturgyKey(churchId, day), JSON.stringify(migrated)); } catch(e) {}
         return migrated;
       }
       return data;
@@ -1872,11 +1899,11 @@ function loadDefaultLiturgy(churchId) {
   } catch(e) {}
   return null;
 }
-function saveDefaultLiturgyVersion(churchId, list, password) {
-  const current = loadDefaultLiturgy(churchId) || { password, versions: [] };
+function saveDefaultLiturgyVersion(churchId, list, password, day) {
+  const current = loadDefaultLiturgy(churchId, day) || { password, versions: [] };
   const versions = [{ at: new Date().toISOString(), list }, ...current.versions].slice(0, 10);
   const data = { password: current.password || password, versions };
-  try { localStorage.setItem(defaultLiturgyKey(churchId), JSON.stringify(data)); } catch(e) {}
+  try { localStorage.setItem(defaultLiturgyKey(churchId, day), JSON.stringify(data)); } catch(e) {}
   return data;
 }
 
@@ -2521,7 +2548,8 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
   `;
 }
 
-function AddActivityForm({ defaultSection, activities, onAddAt, onClose, fixedTracks }) {
+function AddActivityForm({ defaultSection, activities, onAddAt, onClose, fixedTracks, sectionLabels }) {
+  const labels = sectionLabels || SECTION_LABELS;
   const [name, setName] = useState('');
   const [responsible, setResponsible] = useState('');
   const [category, setCategory] = useState('geral');
@@ -2559,7 +2587,7 @@ function AddActivityForm({ defaultSection, activities, onAddAt, onClose, fixedTr
   return html`
     <form onSubmit=${submit} class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', marginBottom:'16px', display:'grid', gap:'10px'}}>
       <div style=${{display:'flex', gap:'6px'}}>
-        ${Object.entries(SECTION_LABELS).map(([key,label]) => html`
+        ${Object.entries(labels).map(([key,label]) => html`
           <button key=${key} type="button" onClick=${()=>{ setSection(key); setRefId(''); }} style=${{flex:1, padding:'7px', borderRadius:'10px', fontSize:'11.5px', fontWeight:700, border:'1px solid var(--border-soft)', background: section===key ? 'linear-gradient(90deg,var(--accent-1),var(--accent-2))' : 'transparent', color: section===key ? '#fff' : 'var(--text-mid)'}}>${label}</button>
         `)}
       </div>
@@ -2628,20 +2656,25 @@ function guessLiturgyCategory(text) {
   }
   return 'geral';
 }
-function guessLiturgySection(text, current) {
+function guessLiturgySection(text, current, allowSwitch) {
+  if (!allowSwitch) return current;
   const low = text.toLowerCase();
   if (low.includes('escola sabatina') || low.includes('escola sabática') || low.includes('escola sabatica')) return 'escola_sabatina';
   if (low.includes('culto divino') || low.includes('culto de adoração') || low.includes('culto de adoracao')) return 'culto_divino';
   return current;
 }
-function parseLiturgyText(text) {
+// defaultSection: pra Sábado (escola_sabatina/culto_divino) continua detectando os dois cabeçalhos
+// no texto colado, igual sempre foi. Pros outros dias da semana (uma seção só, genérica) não faz
+// sentido procurar por "Escola Sabatina"/"Culto Divino" no texto, então essa troca fica desligada.
+function parseLiturgyText(text, defaultSection) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const drafts = [];
-  let currentSection = 'escola_sabatina';
+  const allowSwitch = !defaultSection || defaultSection === 'escola_sabatina' || defaultSection === 'culto_divino';
+  let currentSection = defaultSection || 'escola_sabatina';
   let idx = 0;
   for (const raw of lines) {
     const low = raw.toLowerCase();
-    const isHeader = raw.length < 40 && /(escola sabatina|escola sab[aá]tica|culto divino|culto de ador)/.test(low) && !/\d{1,2}[:h]\d{2}/.test(raw);
+    const isHeader = allowSwitch && raw.length < 40 && /(escola sabatina|escola sab[aá]tica|culto divino|culto de ador)/.test(low) && !/\d{1,2}[:h]\d{2}/.test(raw);
     if (isHeader) {
       currentSection = low.includes('escola') ? 'escola_sabatina' : 'culto_divino';
       continue;
@@ -2675,7 +2708,7 @@ function parseLiturgyText(text) {
     name = name.replace(/^[-–—:\s]+|[-–—:\s]+$/g, '');
     if (!name) continue;
 
-    currentSection = guessLiturgySection(raw, currentSection);
+    currentSection = guessLiturgySection(raw, currentSection, allowSwitch);
     const category = guessLiturgyCategory(raw);
 
     drafts.push({ tempId:'draft-'+(idx++), name, responsible: responsible || 'A definir', time, section: currentSection, category });
@@ -2683,12 +2716,13 @@ function parseLiturgyText(text) {
   return drafts;
 }
 
-function LiturgyAssistantModal({ onImportAll, onClose }) {
+function LiturgyAssistantModal({ onImportAll, onClose, defaultSection, sectionLabels }) {
   const [text, setText] = useState('');
   const [drafts, setDrafts] = useState(null);
+  const labels = sectionLabels || SECTION_LABELS;
 
   const analyze = () => {
-    const parsed = parseLiturgyText(text);
+    const parsed = parseLiturgyText(text, defaultSection);
     if (parsed.length === 0) { alert('Não consegui identificar nenhuma atividade nesse texto. Tente colar um item por linha, um por atividade.'); return; }
     setDrafts(parsed);
   };
@@ -2734,7 +2768,7 @@ CULTO DIVINO
                 </div>
                 <div style=${{display:'grid', gridTemplateColumns:'1.2fr 1.2fr 1fr 70px', gap:'6px'}}>
                   <select value=${d.section} onChange=${e=>updateDraft(d.tempId,{section:e.target.value})} style=${{...inputStyle, fontSize:'11px', padding:'6px 7px'}}>
-                    ${Object.entries(SECTION_LABELS).map(([k,l])=>html`<option key=${k} value=${k}>${l}</option>`)}
+                    ${Object.entries(labels).map(([k,l])=>html`<option key=${k} value=${k}>${l}</option>`)}
                   </select>
                   <select value=${d.category} onChange=${e=>updateDraft(d.tempId,{category:e.target.value})} style=${{...inputStyle, fontSize:'11px', padding:'6px 7px'}}>
                     ${Object.keys(CATEGORY_ICON).map(c=>html`<option key=${c} value=${c}>${CATEGORY_ICON[c]} ${c}</option>`)}
@@ -2849,7 +2883,7 @@ function DefaultLiturgyEditor({ initialList, password, onSave, onClose, churchId
         </div>
 
         <button onClick=${()=>setAdding(v=>!v)} style=${{...btnGhost, border:'1.5px dashed var(--border-soft)', padding:'12px'}}>➕ Acrescentar Atividade ao Padrão</button>
-        ${adding && html`<${AddActivityForm} defaultSection="escola_sabatina" activities=${list} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracksRef} />`}
+        ${adding && html`<${AddActivityForm} defaultSection="escola_sabatina" activities=${list} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracksRef} sectionLabels=${SABADO_SECTION_LABELS} />`}
 
         ${sections.map(sec => {
           const items = list.filter(a => a.section === sec);
@@ -2910,7 +2944,7 @@ function FinalizeCultoModal({ summary, onConfirm, onClose }) {
   return html`
     <div style=${{position:'fixed', inset:0, background:'rgba(2,6,23,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:210, padding:'16px'}} onClick=${onClose}>
       <div class="glass fade-up" style=${{maxWidth:'440px', width:'100%', padding:'22px', borderRadius:'20px', display:'grid', gap:'12px', maxHeight:'82vh', overflowY:'auto'}} onClick=${e=>e.stopPropagation()}>
-        <div style=${{fontWeight:800, fontSize:'15px'}}>✅ Finalizar Culto — ${summary.dateLabel}</div>
+        <div style=${{fontWeight:800, fontSize:'15px'}}>✅ Finalizar Culto — ${summary.dayLabel ? summary.dayLabel+' ' : ''}${summary.dateLabel}</div>
         <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Isso arquiva exatamente o que está sendo usado hoje: a programação, quem estava escalado e os dados de liderança.</div>
         <div style=${{display:'grid', gap:'6px', fontSize:'12px'}}>
           <div><b>Atividades:</b> ${summary.activitiesCount}</div>
@@ -5960,28 +5994,56 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   // Corrigido (24/09): mesmo padrão já usado em Gestão — o valor vindo da nuvem tem prioridade no
   // carregamento inicial, e toda alteração é gravada local (cache, funciona offline) e na nuvem.
   const docId = church && (church.fbDocId || church.docId);
-  const [activities, setActivities] = useState(() => (church && church.activities) ? church.activities : loadActivities(churchId));
+  // Liturgias de outros dias da semana (29/09, a pedido do Paulo) — Sábado continua sendo o campo
+  // de sempre (church.activities/defaultLiturgy); os outros dias ficam num dicionário à parte
+  // (church.otherActivities/otherDefaultLiturgy), cada um na sua chave (domingo, quarta etc.), com
+  // TODAS as mesmas funcionalidades: trancar, "todo sábado" (aqui vira "toda semana"), Restaurar/
+  // Tornar Padrão, Zerar Programação, Modo Ao Vivo, Finalizar Culto.
+  const [day, setDay] = useState('sabado');
+  const isSabado = day === 'sabado';
+  const readActivitiesFor = (d, churchObj) => {
+    if (d === 'sabado') return (churchObj && churchObj.activities) ? churchObj.activities : loadActivities(churchId);
+    const stored = churchObj && churchObj.otherActivities && churchObj.otherActivities[d];
+    return stored !== undefined ? stored : loadActivities(churchId, d);
+  };
+  const hasCloudValueFor = (d, churchObj) => d === 'sabado'
+    ? !!(churchObj && churchObj.activities !== undefined)
+    : !!(churchObj && churchObj.otherActivities && churchObj.otherActivities[d] !== undefined);
+
+  const [activities, setActivities] = useState(() => readActivitiesFor('sabado', church));
   const [adding, setAdding] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [finalizeOpen, setFinalizeOpen] = useState(false);
   const [makeDefaultGate, setMakeDefaultGate] = useState(false);
 
-  // Trava de segurança: a primeira vez que este efeito roda (assim que a tela abre) só NÃO manda
-  // nada pra nuvem quando a nuvem já tinha algo (church.activities definido) — evita que, no
-  // instante entre abrir a tela e a nuvem confirmar o que já existe, a gente grave por cima o que
-  // já estava salvo com um valor "vazio"/de exemplo carregado só como ponto de partida. MAS se a
-  // nuvem não tinha NADA ainda pra essa igreja (campo indefinido — igreja nova, ou programação que
-  // só existe neste aparelho e nunca foi enviada), manda esse primeiro valor sim: não existe risco
-  // de apagar nada, e sem isso uma programação feita só localmente (num aparelho que nunca chegou a
-  // fazer uma "segunda" edição) ficava presa pra sempre nesse aparelho, nunca aparecendo em outro
-  // (bug relatado em 25/09: "a programação feita em outro aparelho não está salvando na nuvem").
-  const skipFirstSync = useRef(!!(church && church.activities !== undefined));
+  // Trava de segurança: a primeira vez que este efeito roda (assim que a tela abre, ou logo depois
+  // de trocar de dia) só NÃO manda nada pra nuvem quando a nuvem já tinha algo pra aquele dia —
+  // evita que, no instante entre abrir a tela e a nuvem confirmar o que já existe, a gente grave
+  // por cima o que já estava salvo com um valor "vazio"/de exemplo carregado só como ponto de
+  // partida. MAS se a nuvem não tinha NADA ainda pra esse dia (campo indefinido — dia novo, ou
+  // programação que só existe neste aparelho e nunca foi enviada), manda esse primeiro valor sim:
+  // não existe risco de apagar nada, e sem isso uma programação feita só localmente ficava presa
+  // pra sempre nesse aparelho, nunca aparecendo em outro (bug já visto em 25/09 pro Sábado).
+  const skipFirstSync = useRef(hasCloudValueFor('sabado', church));
+  // Ao trocar de dia, recarrega a lista certa (não é uma edição, é só trocar de aba) e reseta a
+  // trava de segurança pra esse dia especificamente.
   useEffect(() => {
-    saveActivities(churchId, activities);
+    skipFirstSync.current = hasCloudValueFor(day, church);
+    setActivities(readActivitiesFor(day, church));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [day]);
+  useEffect(() => {
+    saveActivities(churchId, activities, day);
     if (skipFirstSync.current) { skipFirstSync.current = false; return; }
-    if (docId) fbUpdateChurchFields(docId, { activities });
-    if (onUpdateChurch) onUpdateChurch({ activities });
-  }, [activities, churchId]);
+    if (isSabado) {
+      if (docId) fbUpdateChurchFields(docId, { activities });
+      if (onUpdateChurch) onUpdateChurch({ activities });
+    } else {
+      const merged = { ...((church && church.otherActivities) || {}), [day]: activities };
+      if (docId) fbUpdateChurchFields(docId, { otherActivities: merged });
+      if (onUpdateChurch) onUpdateChurch({ otherActivities: merged });
+    }
+  }, [activities, churchId, day]);
 
   // Atualiza sozinho o link de itens dinâmicos (Provai e Vede / Informativo) e completa quem ainda não tem
   useEffect(() => {
@@ -6116,8 +6178,14 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   // Zera de verdade (25/09, corrigido a pedido do Paulo): não mantém nada de exceção (nem trancado 🔒,
   // nem nenhuma outra marcação) — troca a programação inteira pelo exato conteúdo da Liturgia Padrão
   // salva, sem acrescentar nada a mais. Se ainda não existe um padrão salvo, só esvazia mesmo.
+  // Seções da liturgia: Sábado continua com as duas de sempre (Escola Sabatina / Culto Divino);
+  // os outros dias da semana usam uma seção genérica só ("Programação").
+  const sections = isSabado ? ['escola_sabatina', 'culto_divino'] : ['culto'];
+  const sectionLabels = isSabado ? SABADO_SECTION_LABELS : OUTRO_DIA_SECTION_LABELS;
+  const dayDef = LITURGIA_DAYS.find(d => d.key === day) || LITURGIA_DAYS[0];
+
   const zerarProgramacao = () => {
-    const def = (church && church.defaultLiturgy) || loadDefaultLiturgy(churchId);
+    const def = isSabado ? ((church && church.defaultLiturgy) || loadDefaultLiturgy(churchId)) : ((church && church.otherDefaultLiturgy && church.otherDefaultLiturgy[day]) || loadDefaultLiturgy(churchId, day));
     const hasDefault = def && def.versions && def.versions.length > 0;
     if (!hasDefault) {
       if (!window.confirm('Você ainda não tem uma Liturgia Padrão salva. Isso vai APAGAR toda a programação atual, ficando vazia. Continuar?')) return;
@@ -6150,7 +6218,9 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Assistente de liturgia: '+newActs.length+' atividade(s) adicionada(s) por texto' });
   };
 
-  const savedDefault = (church && church.defaultLiturgy) || loadDefaultLiturgy(churchId);
+  const savedDefault = isSabado
+    ? ((church && church.defaultLiturgy) || loadDefaultLiturgy(churchId))
+    : ((church && church.otherDefaultLiturgy && church.otherDefaultLiturgy[day]) || loadDefaultLiturgy(churchId, day));
 
   // Restaura o padrão SEM apagar o que está trancado (🔒): tudo que não tem cadeado é removido e
   // trocado pelo conteúdo do modelo padrão; o que está trancado fica exatamente onde estava.
@@ -6174,10 +6244,16 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       // já oferece criar o padrão agora, com a liturgia atual, e explica em uma frase o que fazer
       // se quiser trocar isso depois.
       if (window.confirm('Você ainda não tem uma Liturgia Padrão salva, então não tem o que restaurar. Quer usar a liturgia de AGORA como o padrão? (dá pra trocar depois em Gestão > 🔒 Liturgia Padrão)')) {
-        const newDefault = saveDefaultLiturgyVersion(churchId, activities.map(a => ({...a})), null);
-        if (docId) fbUpdateChurchFields(docId, { defaultLiturgy: newDefault });
-        if (onUpdateChurch) onUpdateChurch({ defaultLiturgy: newDefault });
-        pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia padrão criada a partir da liturgia atual' });
+        const newDefault = saveDefaultLiturgyVersion(churchId, activities.map(a => ({...a})), null, day);
+        if (isSabado) {
+          if (docId) fbUpdateChurchFields(docId, { defaultLiturgy: newDefault });
+          if (onUpdateChurch) onUpdateChurch({ defaultLiturgy: newDefault });
+        } else {
+          const merged = { ...((church && church.otherDefaultLiturgy) || {}), [day]: newDefault };
+          if (docId) fbUpdateChurchFields(docId, { otherDefaultLiturgy: merged });
+          if (onUpdateChurch) onUpdateChurch({ otherDefaultLiturgy: merged });
+        }
+        pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia padrão ('+dayDef.label+') criada a partir da liturgia atual' });
         alert('Pronto! Essa liturgia agora é o seu padrão. Da próxima vez que clicar em "Restaurar Padrão", tudo que não estiver trancado (🔒) volta pra esse ponto.');
       }
       return;
@@ -6189,10 +6265,16 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   // Salva a liturgia de AGORA (como está na tela) como o novo modelo padrão — direto por aqui,
   // sem precisar ir em Gestão. Continua protegido por senha, igual ao fluxo de lá.
   const makeCurrentDefault = (password) => {
-    const newDefault = saveDefaultLiturgyVersion(churchId, activities.map(a => ({...a})), password);
-    if (docId) fbUpdateChurchFields(docId, { defaultLiturgy: newDefault });
-    if (onUpdateChurch) onUpdateChurch({ defaultLiturgy: newDefault });
-    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia padrão atualizada a partir da liturgia atual' });
+    const newDefault = saveDefaultLiturgyVersion(churchId, activities.map(a => ({...a})), password, day);
+    if (isSabado) {
+      if (docId) fbUpdateChurchFields(docId, { defaultLiturgy: newDefault });
+      if (onUpdateChurch) onUpdateChurch({ defaultLiturgy: newDefault });
+    } else {
+      const merged = { ...((church && church.otherDefaultLiturgy) || {}), [day]: newDefault };
+      if (docId) fbUpdateChurchFields(docId, { otherDefaultLiturgy: merged });
+      if (onUpdateChurch) onUpdateChurch({ otherDefaultLiturgy: merged });
+    }
+    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia padrão ('+dayDef.label+') atualizada a partir da liturgia atual' });
     setMakeDefaultGate(false);
     alert('Pronto! A liturgia de agora foi salva como o novo padrão (já na nuvem). Toda vez que clicar em "Restaurar Padrão", tudo que não estiver trancado (🔒) volta pra esse ponto.');
   };
@@ -6205,15 +6287,28 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     makeCurrentDefault(null);
   };
 
+  // As escalas de equipe (sonoplastia/mídia/louvor) só existem hoje pro Sábado — pros outros dias
+  // o resumo de "Finalizar Culto" fica mais simples (sem puxar escala nenhuma), mas continua
+  // arquivando a liturgia certinha, com a data do próximo dia daquela semana.
   const buildFinalizeSummary = () => {
     const church = loadDB().find(c => c.id === churchId) || {};
+    if (!isSabado) {
+      const targetKey = nextWeekdayKey(dayDef.jsDay);
+      return {
+        church, targetKey, day, dayLabel: dayDef.label,
+        dateLabel: formatSaturday(keyToDate(targetKey)),
+        activitiesCount: activities.length,
+        pastorName: church.pastorName, elderName: church.elderName,
+        sono: [], midia: [], louvor: {}, sonoNames: '', midiaNames: '', louvorTeamName: '', musica: null,
+      };
+    }
     const teams = loadTeams(churchId);
     const targetKey = getSaturdaysForMonths(3)[0];
     const sono = getScheduledGroupForDate(churchId, 'sonoplastia', teams.sonoplastia, targetKey);
     const midia = getScheduledGroupForDate(churchId, 'midia', teams.midia, targetKey);
     const louvor = getScheduledLouvorForDate(churchId, teams.louvorTeams, targetKey);
     return {
-      church, teams, targetKey, sono, midia, louvor,
+      church, teams, targetKey, sono, midia, louvor, day, dayLabel: dayDef.label,
       dateLabel: formatSaturday(keyToDate(targetKey)),
       activitiesCount: activities.length,
       pastorName: church.pastorName, elderName: church.elderName,
@@ -6230,12 +6325,13 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     const record = {
       id: 'culto-'+Date.now(),
       date: s.targetKey,
+      day: s.day, dayLabel: s.dayLabel,
       finalizedAt: new Date().toISOString(),
       activities: activities.map(a => ({...a})),
       church: { name: s.church.name, pastorName: s.church.pastorName, elderName: s.church.elderName, association: s.church.association, district: s.church.district },
-      sonoplastia: s.sono.map(m => ({ name:m.name, function:m.function })),
-      midia: s.midia.map(m => ({ name:m.name, function:m.function })),
-      louvor: { teamName: s.louvorTeamName, musica: s.musica, members: s.louvor.team ? s.louvor.team.members.map(m=>({name:m.name, function:m.function})) : [] },
+      sonoplastia: (s.sono||[]).map(m => ({ name:m.name, function:m.function })),
+      midia: (s.midia||[]).map(m => ({ name:m.name, function:m.function })),
+      louvor: { teamName: s.louvorTeamName, musica: s.musica, members: (s.louvor && s.louvor.team) ? s.louvor.team.members.map(m=>({name:m.name, function:m.function})) : [] },
     };
     const arch = loadArchive(churchId);
     // Limita a 20 cultos arquivados (os mais recentes) — evita que o histórico cresça sem limite e
@@ -6244,18 +6340,22 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     saveArchive(churchId, newArch);
     if (docId) fbUpdateChurchFields(docId, { archive: newArch });
     if (onUpdateChurch) onUpdateChurch({ archive: newArch });
-    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Culto finalizado e arquivado ('+s.dateLabel+')' });
+    pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Culto ('+s.dayLabel+') finalizado e arquivado ('+s.dateLabel+')' });
     setFinalizeOpen(false);
   };
 
-  const sections = ['escola_sabatina', 'culto_divino'];
   const totalDone = activities.filter(a=>a.done).length;
 
   return html`
     <div style=${{maxWidth:'760px', margin:'0 auto', padding:'20px 16px 60px'}}>
+      <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'14px'}}>
+        ${LITURGIA_DAYS.map((d,i) => html`<${TabTile} key=${d.key} text=${d.label} idx=${i} delay=${i} active=${day===d.key} onClick=${()=>setDay(d.key)} />`)}
+      </div>
+      <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginBottom:'14px'}}>Cada dia tem a própria liturgia salva, com tudo igual ao Sábado: trancar atividade, Liturgia Padrão, Zerar Programação, Modo Ao Vivo e Finalizar Culto.</div>
+
       <div class="glass fade-up" style=${{padding:'16px 20px', borderRadius:'18px', marginBottom:'20px', display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:'10px'}}>
         <div>
-          <div style=${{fontWeight:800, fontSize:'15px'}}>Liturgia do Sábado</div>
+          <div style=${{fontWeight:800, fontSize:'15px'}}>Liturgia de ${dayDef.label}</div>
           <div style=${{fontSize:'12px', color:'var(--text-mid)'}}>${totalDone} de ${activities.length} atividades concluídas</div>
         </div>
         <div style=${{width:'140px', height:'8px', borderRadius:'999px', background:'rgba(148,163,184,0.18)', overflow:'hidden'}}>
@@ -6285,14 +6385,14 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       <button onClick=${zerarProgramacao} style=${{...btnGhost, width:'100%', marginBottom:'16px', padding:'12px', border:'1px solid var(--danger)', color:'var(--danger)'}}>🧹 Zerar Programação (volta exatamente pro Padrão)</button>
 
       ${finalizeOpen && finalizeSummary && html`<${FinalizeCultoModal} summary=${finalizeSummary} onConfirm=${confirmFinalize} onClose=${()=>setFinalizeOpen(false)} />`}
-      ${adding && html`<${AddActivityForm} defaultSection="escola_sabatina" activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracks} />`}
-      ${assistantOpen && html`<${LiturgyAssistantModal} onImportAll=${importFromAssistant} onClose=${()=>setAssistantOpen(false)} />`}
+      ${adding && html`<${AddActivityForm} defaultSection=${sections[0]} activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracks} sectionLabels=${sectionLabels} />`}
+      ${assistantOpen && html`<${LiturgyAssistantModal} onImportAll=${importFromAssistant} onClose=${()=>setAssistantOpen(false)} defaultSection=${sections[0]} sectionLabels=${sectionLabels} />`}
 
       ${sections.map(sec => {
         const items = activities.filter(a => a.section === sec);
         return html`
           <div key=${sec} style=${{marginBottom:'26px'}}>
-            <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 10px 4px'}}>${SECTION_LABELS[sec]}</h3>
+            <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 10px 4px'}}>${sectionLabels[sec]}</h3>
             <div style=${{display:'grid', gap:'8px'}}>
               ${items.length === 0 && html`<div style=${{color:'var(--text-dim)', fontSize:'12.5px', padding:'8px 4px'}}>Nenhuma atividade cadastrada ainda.</div>`}
               ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} onToggleWeekly=${toggleWeekly} onReorder=${moveActivity} siblings=${items} fixedTracks=${fixedTracks} churchId=${churchId} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />`)}
@@ -7916,6 +8016,15 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
           // qualquer aparelho, sem precisar deslogar/logar de novo.
           if (data.activities) { patch.activities = data.activities; saveActivities(church.id, data.activities); }
           if (data.defaultLiturgy) { patch.defaultLiturgy = data.defaultLiturgy; try { localStorage.setItem(defaultLiturgyKey(church.id), JSON.stringify(data.defaultLiturgy)); } catch(e) {} }
+          // Liturgias de outros dias da semana (29/09) — um dicionário por dia, mesmo padrão do resto.
+          if (data.otherActivities) {
+            patch.otherActivities = data.otherActivities;
+            Object.keys(data.otherActivities).forEach(d => saveActivities(church.id, data.otherActivities[d], d));
+          }
+          if (data.otherDefaultLiturgy) {
+            patch.otherDefaultLiturgy = data.otherDefaultLiturgy;
+            Object.keys(data.otherDefaultLiturgy).forEach(d => { try { localStorage.setItem(defaultLiturgyKey(church.id, d), JSON.stringify(data.otherDefaultLiturgy[d])); } catch(e) {} });
+          }
           if (data.archive) { patch.archive = data.archive; saveArchive(church.id, data.archive); }
           if (data.churchLocation) { patch.churchLocation = data.churchLocation; saveChurchLocation(church.id, data.churchLocation); }
           if (data.presence) {
