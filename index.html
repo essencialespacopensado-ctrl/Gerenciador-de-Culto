@@ -117,7 +117,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.65';
+const APP_VERSION = '2026-09-25.66';
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -6171,13 +6171,18 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     ? (schedMensagemEscala.specialMusic[nextSaturdayKeyMensagem] || '').trim()
     : '';
   useEffect(() => {
-    if (!isSabado || !nomeMensagemEscala) return;
+    if (!isSabado) return;
+    // Corrigido (29/09, pedido do Paulo): antes só atualizava quando a Escala TINHA um nome — se o
+    // campo lá fosse apagado/limpo, o nome antigo (ex: "Suelin") ficava preso no responsável da
+    // Liturgia pra sempre. Agora espelha os dois sentidos: com nome, usa o nome; vazio, volta pro
+    // padrão "A definir".
+    const desired = nomeMensagemEscala || 'A definir';
     setActivities(list => {
       let changed = false;
       const next = list.map(a => {
-        if (a.category !== 'mensagem_musical' || a.responsible === nomeMensagemEscala) return a;
+        if (a.category !== 'mensagem_musical' || a.responsible === desired) return a;
         changed = true;
-        return { ...a, responsible: nomeMensagemEscala };
+        return { ...a, responsible: desired };
       });
       return changed ? next : list;
     });
