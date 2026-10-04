@@ -117,14 +117,32 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-04.68';
-// Lista curta (1 linha por item) do que mudou nesta versão — aparece no aviso de atualização
-// pra quem já está usando o app, pra não precisar perguntar "o que mudou?". Atualize junto
-// com o APP_VERSION a cada publicação.
-const APP_CHANGELOG = [
-  "Vídeo do Momento Vida e Saúde (e Provai e Vede/Informativo) agora busca sempre o vídeo mais recente de verdade, sem travar num antigo.",
-  "Campos de edição confirmam com Enter e atualizam a tela na hora.",
+const APP_VERSION = '2026-10-04.69';
+// Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
+// nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
+// pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
+const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-04.69',
+    date: '04/10/2026',
+    items: [
+      "Novo botão de novidades (🗂️, canto superior direito) pra ver a qualquer momento o histórico do que já mudou no sistema — antes só aparecia um aviso quando tinha atualização nova.",
+    ]
+  },
+  {
+    version: '2026-10-04.68',
+    date: '04/10/2026',
+    items: [
+      "Vídeo do Momento Vida e Saúde (e Provai e Vede/Informativo) agora busca sempre o vídeo mais recente de verdade, sem travar num antigo.",
+      "Campos de edição confirmam com Enter e atualizam a tela na hora.",
+    ]
+  },
 ];
+// Lista curta (1 linha por item) do que mudou na versão mais recente — mantida como array simples
+// (além do histórico acima) porque é isso que o verificador de atualização busca no arquivo novo
+// publicado, pra avisar quem ainda está numa versão antiga. Mantenha sempre igual aos itens da
+// primeira entrada de APP_CHANGELOG_HISTORY.
+const APP_CHANGELOG = APP_CHANGELOG_HISTORY[0].items;
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -8196,10 +8214,11 @@ function applyTheme(t) {
   set('--glass-bg', isLight ? '#ffffffee' : '#0f172acc');
 }
 
-/* ============ Aviso de atualização disponível ============ */
+/* ============ Novidades / aviso de atualização disponível ============ */
 // Fica de olho na versão publicada no servidor (buscando o próprio index.html de tempos em
-// tempos) e avisa com uma "abinha de mensagens" quando existe uma versão mais nova — sem
-// recarregar sozinho, pra pessoa atualizar no momento que for melhor pra ela.
+// tempos) e avisa quando existe uma versão mais nova — sem recarregar sozinho, pra pessoa
+// atualizar no momento que for melhor pra ela. O botão (🗂️) fica sempre visível, não só quando
+// tem atualização pendente, pra qualquer um poder abrir e ver o histórico do que já mudou.
 function useAppUpdateChecker() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [changelog, setChangelog] = useState([]);
@@ -8215,6 +8234,16 @@ function useAppUpdateChecker() {
           setUpdateAvailable(true);
           // Lê a lista de novidades direto do arquivo novo publicado, pra mostrar pra quem
           // ainda está na versão antiga (que não tem essa lista nova embutida localmente).
+          // Tenta primeiro o histórico completo (versões mais novas do app); se não achar
+          // (arquivo publicado por uma versão mais antiga, que só tinha APP_CHANGELOG simples),
+          // cai pro formato antigo — assim continua funcionando nos dois sentidos.
+          try {
+            const hm = text.match(/const APP_CHANGELOG_HISTORY\s*=\s*(\[[\s\S]*?\]);/);
+            if (hm) {
+              const hist = JSON.parse(hm[1].replace(/,(\s*[\]}])/g, '$1'));
+              if (hist && hist[0] && Array.isArray(hist[0].items)) { setChangelog(hist[0].items); return; }
+            }
+          } catch(e) {}
           try {
             const cm = text.match(/const APP_CHANGELOG\s*=\s*(\[[\s\S]*?\]);/);
             if (cm) setChangelog(JSON.parse(cm[1].replace(/,(\s*\])/, '$1')));
@@ -8231,30 +8260,51 @@ function useAppUpdateChecker() {
   return { updateAvailable, changelog };
 }
 
-function UpdateNotice() {
+function ChangelogWidget() {
   const { updateAvailable, changelog } = useAppUpdateChecker();
   const [open, setOpen] = useState(false);
-  if (!updateAvailable) return null;
   return html`
     <div style=${{position:'fixed', top:'14px', right:'14px', zIndex:500}}>
-      <button onClick=${()=>setOpen(o=>!o)} title="Mensagens" style=${{width:'46px', height:'46px', borderRadius:'50%', border:'none', background:'linear-gradient(135deg,var(--accent-1),var(--accent-2))', color:'#fff', fontSize:'20px', cursor:'pointer', boxShadow:'0 8px 22px -8px rgba(0,0,0,0.55)', position:'relative'}}>
-        📬
-        <span class="breathe" style=${{position:'absolute', top:'-1px', right:'-1px', width:'13px', height:'13px', borderRadius:'50%', background:'var(--danger)', border:'2px solid var(--bg-page)'}}></span>
+      <button onClick=${()=>setOpen(o=>!o)} title="Novidades — veja o que mudou" style=${{width:'46px', height:'46px', borderRadius:'50%', border:'none', background: updateAvailable ? 'linear-gradient(135deg,var(--accent-1),var(--accent-2))' : 'rgba(148,163,184,0.18)', color: updateAvailable ? '#fff' : 'var(--text-mid)', fontSize:'19px', cursor:'pointer', boxShadow:'0 8px 22px -8px rgba(0,0,0,0.5)', position:'relative'}}>
+        🗂️
+        ${updateAvailable && html`<span class="breathe" style=${{position:'absolute', top:'-1px', right:'-1px', width:'13px', height:'13px', borderRadius:'50%', background:'var(--danger)', border:'2px solid var(--bg-page)'}}></span>`}
       </button>
       ${open && html`
-        <div class="glass fade-up" style=${{position:'absolute', top:'56px', right:0, width:'290px', padding:'16px', borderRadius:'16px', display:'grid', gap:'10px'}}>
-          <div style=${{fontWeight:800, fontSize:'13px'}}>📬 Nova atualização disponível</div>
-          ${changelog.length > 0 ? html`
-            <ul style=${{margin:0, padding:'0 0 0 16px', fontSize:'12px', color:'var(--text-hi)', lineHeight:1.5, display:'grid', gap:'4px'}}>
-              ${changelog.map(item => html`<li key=${item}>${item}</li>`)}
-            </ul>
-          ` : html`
-            <div style=${{fontSize:'12px', color:'var(--text-hi)', lineHeight:1.45}}>Existe uma nova atualização do sistema disponível.</div>
+        <div class="glass fade-up" style=${{position:'absolute', top:'56px', right:0, width:'310px', maxHeight:'72vh', overflowY:'auto', padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
+          ${updateAvailable && html`
+            <div style=${{display:'grid', gap:'8px', paddingBottom:'12px', borderBottom:'1px solid var(--border-soft)'}}>
+              <div style=${{fontWeight:800, fontSize:'13px'}}>📬 Nova atualização disponível</div>
+              ${changelog.length > 0 ? html`
+                <ul style=${{margin:0, padding:'0 0 0 16px', fontSize:'12px', color:'var(--text-hi)', lineHeight:1.5, display:'grid', gap:'4px'}}>
+                  ${changelog.map(item => html`<li key=${item}>${item}</li>`)}
+                </ul>
+              ` : html`
+                <div style=${{fontSize:'12px', color:'var(--text-hi)', lineHeight:1.45}}>Existe uma nova atualização do sistema disponível.</div>
+              `}
+              <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Você pode continuar usando normalmente e atualizar quando for melhor pra você.</div>
+              <div style=${{display:'flex', justifyContent:'flex-end'}}>
+                <button onClick=${()=>window.location.reload()} style=${{...btnPrimary, width:'auto', padding:'8px 14px'}}>Atualizar agora</button>
+              </div>
+            </div>
           `}
-          <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Você pode continuar usando normalmente e atualizar quando for melhor pra você.</div>
-          <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end'}}>
-            <button onClick=${()=>setOpen(false)} style=${btnGhost}>Depois</button>
-            <button onClick=${()=>window.location.reload()} style=${{...btnPrimary, width:'auto', padding:'8px 14px'}}>Atualizar agora</button>
+          <div style=${{display:'grid', gap:'2px'}}>
+            <div style=${{fontWeight:800, fontSize:'13px'}}>🗂️ Histórico de novidades</div>
+            <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>O que já mudou no sistema, versão por versão.</div>
+          </div>
+          <div style=${{display:'grid', gap:'14px'}}>
+            ${APP_CHANGELOG_HISTORY.map(entry => html`
+              <div key=${entry.version} style=${{display:'grid', gap:'4px'}}>
+                <div style=${{fontSize:'10.5px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.04em'}}>
+                  ${entry.date}${entry.version === APP_VERSION ? html` <span style=${{color:'var(--success-1)'}}>· versão atual</span>` : ''}
+                </div>
+                <ul style=${{margin:0, padding:'0 0 0 16px', fontSize:'12px', color:'var(--text-hi)', lineHeight:1.5, display:'grid', gap:'3px'}}>
+                  ${entry.items.map(item => html`<li key=${item}>${item}</li>`)}
+                </ul>
+              </div>
+            `)}
+          </div>
+          <div style=${{display:'flex', justifyContent:'flex-end'}}>
+            <button onClick=${()=>setOpen(false)} style=${btnGhost}>Fechar</button>
           </div>
         </div>
       `}
@@ -8360,7 +8410,7 @@ function App() {
 
   return html`
     <div>
-      <${UpdateNotice} />
+      <${ChangelogWidget} />
       ${!session ? html`<${LoginScreen} onLogin=${login} />` :
         session.type === 'developer' ? html`<${DeveloperPanel} onLogout=${logout} />` :
         html`<${ChurchDashboard} church=${session.church} onLogout=${logout} onUpdateChurch=${updateChurchSession} />`}
