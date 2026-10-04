@@ -117,7 +117,14 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-09-25.66';
+const APP_VERSION = '2026-10-04.68';
+// Lista curta (1 linha por item) do que mudou nesta versão — aparece no aviso de atualização
+// pra quem já está usando o app, pra não precisar perguntar "o que mudou?". Atualize junto
+// com o APP_VERSION a cada publicação.
+const APP_CHANGELOG = [
+  "Vídeo do Momento Vida e Saúde (e Provai e Vede/Informativo) agora busca sempre o vídeo mais recente de verdade, sem travar num antigo.",
+  "Campos de edição confirmam com Enter e atualizam a tela na hora.",
+];
 
 const DB_KEY = 'gc_igrejas_db_v1';
 const LOG_KEY = 'gc_log_v1';
@@ -1625,7 +1632,7 @@ function TrilhasFixasRow({ track, onChange, onRemove }) {
   return html`
     <div class="glass" style=${{padding:'12px 14px', borderRadius:'12px', display:'grid', gap:'8px'}}>
       <div style=${{display:'flex', gap:'8px', alignItems:'center'}}>
-        <input value=${name} onChange=${e=>setName(e.target.value)} onBlur=${saveName} style=${{...inputStyle, fontWeight:700, fontSize:'12.5px'}} placeholder="Nome (ex: Música das Ofertas)" />
+        <input value=${name} onChange=${e=>setName(e.target.value)} onBlur=${saveName} onKeyDown=${e=>{ if (e.key==='Enter') e.target.blur(); }} style=${{...inputStyle, fontWeight:700, fontSize:'12.5px'}} placeholder="Nome (ex: Música das Ofertas)" />
         <button type="button" onClick=${onRemove} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'15px', padding:'4px 6px'}} title="Remover">✕</button>
       </div>
       <form onSubmit=${saveLink} style=${{display:'flex', gap:'6px', alignItems:'center'}}>
@@ -1771,14 +1778,12 @@ function MediaSearchField({ media, onChange, searchKey }) {
   // mesmo e mostra os resultados reais pra escolher — igual clicar em "🔍 Buscar".
   const pickLibrary = async (m) => {
     if (m.dynamic) {
-      // Busca de verdade (25/09, corrigido — pedido do Paulo) o vídeo já LANÇADO mais recente, em vez
-      // de usar direto a playlist de uploads do canal: essa playlist já lista pré-estreias/vídeos
-      // agendados (ainda não foram ao ar) ANTES dos que já foram lançados, e a busca normal do
-      // YouTube não traz esses agendados — só os que já estão no ar de verdade.
+      // Corrigido (04/10, pedido do Paulo): agora usa a playlist de uploads de verdade do canal
+      // (mais confiável — sempre o vídeo mais novo primeiro, pulando pré-estreias agendadas), com a
+      // busca por palavra-chave só como reserva se a playlist falhar.
       setSearching(true);
-      const results = await searchYoutubeServer(m.query);
+      const videoId = await fetchDynamicVideoId(m);
       setSearching(false);
-      const videoId = (results && results[0] && results[0].videoId) || null;
       pick({ title: m.title + ' ('+weekDateSuffix()+')', url: mediaLibraryUrl(m), playlistId: m.playlistId || null, videoId });
       return;
     }
@@ -2315,7 +2320,7 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
           <div style=${{fontSize:'22px', fontWeight:800, fontVariantNumeric:'tabular-nums', color: done ? 'var(--danger)' : 'inherit'}}>⏳ ${format(remainingMs)}</div>
           ${!running && html`
             <div style=${{display:'flex', alignItems:'center', gap:'4px'}}>
-              <input type="number" min="1" value=${durationMin} onChange=${e=>changeDuration(e.target.value)} onBlur=${commitDuration} title="Duração planejada — também usada pra avançar sozinho na Programação Automática" style=${{...inputStyle, width:'54px', padding:'6px 7px', fontSize:'12px', textAlign:'center'}} />
+              <input type="number" min="1" value=${durationMin} onChange=${e=>changeDuration(e.target.value)} onBlur=${commitDuration} onKeyDown=${e=>{ if (e.key==='Enter') e.target.blur(); }} title="Duração planejada — também usada pra avançar sozinho na Programação Automática" style=${{...inputStyle, width:'54px', padding:'6px 7px', fontSize:'12px', textAlign:'center'}} />
               <span style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>min planejados</span>
             </div>
           `}
@@ -5362,6 +5367,33 @@ async function searchYoutubeServer(query) {
   } catch (e) { return null; } // sem backend, sem rede, ou bloqueado — retorna null pra cair no fallback
 }
 
+// Pedido do Paulo (04/10): pega o vídeo mais recente direto da playlist de "uploads" do canal (mais
+// confiável que busca por palavra-chave — a busca ordena por "relevância" do YouTube e às vezes
+// trazia um vídeo antigo/popular em vez do lançado no sábado mais recente; a playlist de uploads é
+// sempre do mais novo pro mais antigo de verdade). Usada pelos 3 itens que mudam toda semana
+// (Provai e Vede, Informativo Mundial das Missões, Momento Vida e Saúde).
+async function fetchLatestFromPlaylist(playlistId) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch('/api/latest-from-playlist?id=' + encodeURIComponent(playlistId), { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data && data.video) || null;
+  } catch (e) { return null; }
+}
+// Acha o vídeo certo pra um item dinâmico: tenta a playlist de uploads primeiro (mais confiável),
+// só cai pra busca por palavra-chave se a playlist falhar ou o item não tiver playlistId.
+async function fetchDynamicVideoId(lib) {
+  if (lib.playlistId) {
+    const fromPlaylist = await fetchLatestFromPlaylist(lib.playlistId);
+    if (fromPlaylist && fromPlaylist.videoId) return fromPlaylist.videoId;
+  }
+  const results = await searchYoutubeServer(lib.query);
+  return (results && results[0] && results[0].videoId) || null;
+}
+
 // O YouTube não permite (por política própria) que um site como este busque vídeos automaticamente
 // sem um servidor próprio. Por isso o caminho aqui é o mais simples e confiável possível: sugestão de
 // texto em tempo real (JSONP, do próprio Google) + um clique abre a busca de verdade no youtube.com +
@@ -6086,11 +6118,11 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   }, [churchId]);
 
   // Confere se o vídeo vinculado (Provai e Vede / Informativo / Vida e Saúde) já é o certo desta
-  // semana (25/09 — pedido do Paulo: o vídeo estava errado, pegando uma PRÉ-ESTREIA agendada do canal
-  // que ainda nem foi ao ar, em vez do vídeo mais recente já lançado). A playlist de uploads do canal
-  // lista pré-estreias agendadas ANTES dos vídeos já lançados; a busca normal do YouTube nunca traz
-  // agendados, só o que já está no ar de verdade — por isso usamos ela pra achar o vídeo certo e
-  // corrigir sozinho sempre que o título ainda estiver com a data de uma semana antiga.
+  // semana. Corrigido em 04/10 (pedido do Paulo: "pegou vídeo desatualizado e não atualizou sozinho
+  // o Vida e Saúde do último sábado") — antes usava só busca por palavra-chave, que ordena por
+  // "relevância" do YouTube e podia trazer um vídeo antigo/mais popular em vez do mais novo. Agora
+  // lê direto a playlist de uploads do canal (sempre do mais novo pro mais antigo de verdade,
+  // pulando pré-estreias agendadas), com a busca por palavra-chave só como reserva.
   useEffect(() => {
     const suffix = weekDateSuffix();
     const stale = activities.filter(a => a.media && a.media.dynamic && a.media.libTitle && !(a.media.title || '').includes(suffix));
@@ -6100,9 +6132,8 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       for (const a of stale) {
         const lib = MEDIA_LIBRARY.find(m => m.title === a.media.libTitle);
         if (!lib) continue;
-        const results = await searchYoutubeServer(lib.query);
+        const videoId = await fetchDynamicVideoId(lib);
         if (cancelled) return;
-        const videoId = (results && results[0] && results[0].videoId) || null;
         setActivities(list => list.map(act => {
           if (act.id !== a.id || !act.media || !act.media.dynamic) return act;
           return { ...act, media: { ...act.media, title: lib.title + ' (' + suffix + ')', videoId: videoId || act.media.videoId || null } };
@@ -8171,6 +8202,7 @@ function applyTheme(t) {
 // recarregar sozinho, pra pessoa atualizar no momento que for melhor pra ela.
 function useAppUpdateChecker() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [changelog, setChangelog] = useState([]);
   useEffect(() => {
     let stopped = false;
     const check = async () => {
@@ -8179,7 +8211,15 @@ function useAppUpdateChecker() {
         if (!res.ok) return;
         const text = await res.text();
         const m = text.match(/const APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
-        if (m && m[1] && m[1] !== APP_VERSION && !stopped) setUpdateAvailable(true);
+        if (m && m[1] && m[1] !== APP_VERSION && !stopped) {
+          setUpdateAvailable(true);
+          // Lê a lista de novidades direto do arquivo novo publicado, pra mostrar pra quem
+          // ainda está na versão antiga (que não tem essa lista nova embutida localmente).
+          try {
+            const cm = text.match(/const APP_CHANGELOG\s*=\s*(\[[\s\S]*?\]);/);
+            if (cm) setChangelog(JSON.parse(cm[1].replace(/,(\s*\])/, '$1')));
+          } catch(e) {}
+        }
       } catch(e) {}
     };
     check();
@@ -8188,11 +8228,11 @@ function useAppUpdateChecker() {
     document.addEventListener('visibilitychange', onVisible);
     return () => { stopped = true; clearInterval(id); document.removeEventListener('visibilitychange', onVisible); };
   }, []);
-  return updateAvailable;
+  return { updateAvailable, changelog };
 }
 
 function UpdateNotice() {
-  const updateAvailable = useAppUpdateChecker();
+  const { updateAvailable, changelog } = useAppUpdateChecker();
   const [open, setOpen] = useState(false);
   if (!updateAvailable) return null;
   return html`
@@ -8202,9 +8242,16 @@ function UpdateNotice() {
         <span class="breathe" style=${{position:'absolute', top:'-1px', right:'-1px', width:'13px', height:'13px', borderRadius:'50%', background:'var(--danger)', border:'2px solid var(--bg-page)'}}></span>
       </button>
       ${open && html`
-        <div class="glass fade-up" style=${{position:'absolute', top:'56px', right:0, width:'270px', padding:'16px', borderRadius:'16px', display:'grid', gap:'10px'}}>
-          <div style=${{fontWeight:800, fontSize:'13px'}}>📬 Mensagens</div>
-          <div style=${{fontSize:'12px', color:'var(--text-hi)', lineHeight:1.45}}>Existe uma nova atualização do sistema disponível. Você pode continuar usando normalmente e atualizar quando for melhor pra você.</div>
+        <div class="glass fade-up" style=${{position:'absolute', top:'56px', right:0, width:'290px', padding:'16px', borderRadius:'16px', display:'grid', gap:'10px'}}>
+          <div style=${{fontWeight:800, fontSize:'13px'}}>📬 Nova atualização disponível</div>
+          ${changelog.length > 0 ? html`
+            <ul style=${{margin:0, padding:'0 0 0 16px', fontSize:'12px', color:'var(--text-hi)', lineHeight:1.5, display:'grid', gap:'4px'}}>
+              ${changelog.map(item => html`<li key=${item}>${item}</li>`)}
+            </ul>
+          ` : html`
+            <div style=${{fontSize:'12px', color:'var(--text-hi)', lineHeight:1.45}}>Existe uma nova atualização do sistema disponível.</div>
+          `}
+          <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Você pode continuar usando normalmente e atualizar quando for melhor pra você.</div>
           <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end'}}>
             <button onClick=${()=>setOpen(false)} style=${btnGhost}>Depois</button>
             <button onClick=${()=>window.location.reload()} style=${{...btnPrimary, width:'auto', padding:'8px 14px'}}>Atualizar agora</button>
