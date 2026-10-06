@@ -117,11 +117,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-06.70';
+const APP_VERSION = '2026-10-06.71';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-06.71',
+    date: '06/10/2026',
+    items: [
+      "Coletâneas › Faixas: novo botão \"📥 Importar letras/cifras em lote\" — cole (ou envie um .txt com) o texto do CD/hinário e o app separa por música e preenche todas as faixas de uma vez.",
+    ]
+  },
   {
     version: '2026-10-06.70',
     date: '06/10/2026',
@@ -4457,11 +4464,74 @@ function ColetaneaTrackRow({ churchId, coletaneaId, coletaneaTitle, track, onCha
   `;
 }
 
+// Importação em lote de letras/cifras: a pessoa cola (ou envia um .txt com) o texto do CD/encarte/hinário
+// e o app separa por música usando os nomes das faixas como marcadores (uma linha que seja só o nome da
+// música, com ou sem número na frente, começa a música; ela vai até o próximo nome de faixa encontrado).
+function normSongKey(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/^\s*(faixa\s*)?\d{1,3}\s*[-–.):]*\s*/, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function parseBulkSongs(text, tracks) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n');
+  const keys = tracks.map(t => ({ id: t.id, key: normSongKey(t.title) })).filter(k => k.key);
+  const marks = []; // { line, id }
+  lines.forEach((ln, i) => {
+    const k = normSongKey(ln);
+    if (!k || ln.trim().length > 90) return;
+    const hit = keys.find(x => x.key === k);
+    if (hit && !marks.some(m => m.id === hit.id)) marks.push({ line: i, id: hit.id });
+  });
+  marks.sort((a, b) => a.line - b.line);
+  const out = {};
+  marks.forEach((m, idx) => {
+    const end = idx + 1 < marks.length ? marks[idx + 1].line : lines.length;
+    const body = lines.slice(m.line + 1, end).join('\n').replace(/^\s*\n+/, '').replace(/\s+$/, '');
+    if (body) out[m.id] = body;
+  });
+  return out;
+}
+
+function BulkImportPanel({ tracks, onApply, onClose }) {
+  const [kind, setKind] = useState('lyrics'); // 'lyrics' | 'chords'
+  const [text, setText] = useState('');
+  const [overwrite, setOverwrite] = useState(false);
+  const found = useMemo(() => parseBulkSongs(text, tracks), [text, tracks]);
+  const foundCount = Object.keys(found).length;
+  const loadFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => setText(String(r.result || ''));
+    r.readAsText(f, 'utf-8');
+    e.target.value = '';
+  };
+  const apply = () => { onApply(kind, found, overwrite); onClose(); };
+  return html`
+    <div style=${{display:'grid', gap:'8px', padding:'12px', borderRadius:'12px', border:'1.5px dashed var(--accent-1)', background:'rgba(99,102,241,0.06)'}}>
+      <div style=${{fontWeight:800, fontSize:'12.5px'}}>📥 Importar em lote</div>
+      <div style=${{fontSize:'11px', color:'var(--text-mid)', lineHeight:1.45}}>Cole abaixo o texto do CD/encarte/hinário (ou envie um arquivo .txt). Cada música tem que começar numa linha só com o <b>nome da faixa</b> (pode ter o número na frente, ex: "2. Cada Dia Mais Perto"). O app separa sozinho.</div>
+      <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+        <button type="button" onClick=${()=>setKind('lyrics')} style=${{...btnGhost, padding:'5px 10px', fontSize:'10.5px', fontWeight:700, background: kind==='lyrics' ? 'linear-gradient(150deg,var(--accent-1),var(--accent-2))' : btnGhost.background, color: kind==='lyrics' ? '#fff' : btnGhost.color}}>📝 São letras</button>
+        <button type="button" onClick=${()=>setKind('chords')} style=${{...btnGhost, padding:'5px 10px', fontSize:'10.5px', fontWeight:700, background: kind==='chords' ? 'linear-gradient(150deg,var(--accent-1),var(--accent-2))' : btnGhost.background, color: kind==='chords' ? '#fff' : btnGhost.color}}>🎸 São cifras</button>
+        <label style=${{...btnGhost, padding:'5px 10px', fontSize:'10.5px', cursor:'pointer'}}>📄 Enviar .txt<input type="file" accept=".txt,text/plain" onChange=${loadFile} style=${{display:'none'}} /></label>
+      </div>
+      <textarea value=${text} onChange=${e=>setText(e.target.value)} placeholder=${'1. Prefixo de Louvor\\n(letra...)\\n\\n2. Cada Dia Mais Perto\\n(letra...)'} rows="8" style=${{...inputStyle, fontSize:'11.5px', fontFamily: kind==='chords' ? 'ui-monospace,Consolas,monospace' : 'inherit', resize:'vertical', whiteSpace:'pre'}} />
+      <label style=${{fontSize:'11px', color:'var(--text-mid)', display:'flex', gap:'6px', alignItems:'center'}}><input type="checkbox" checked=${overwrite} onChange=${e=>setOverwrite(e.target.checked)} /> Substituir o que já está preenchido</label>
+      <div style=${{fontSize:'11.5px', fontWeight:700, color: foundCount ? 'var(--success-1)' : 'var(--text-dim)'}}>${text.trim() ? (foundCount+' de '+tracks.length+' faixas encontradas no texto') : 'Cole o texto pra ver quantas faixas o app reconhece.'}</div>
+      <div style=${{display:'flex', gap:'6px'}}>
+        <button type="button" disabled=${!foundCount} onClick=${apply} style=${{...btnPrimary, width:'auto', padding:'7px 14px', fontSize:'11px', opacity: foundCount ? 1 : 0.5}}>💾 Salvar ${foundCount || ''} faixa${foundCount===1?'':'s'}</button>
+        <button type="button" onClick=${onClose} style=${{...btnGhost, padding:'7px 12px', fontSize:'11px'}}>Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
 // Painel com as faixas de uma coletânea — aparece ao clicar em "🎵 Faixas" no card. Cada igreja monta
 // as músicas do CD do jeito que for tocar (não precisa ser o CD inteiro, só o que interessa).
 function ColetaneaTracksPanel({ churchId, coletanea, onClose }) {
   const [allTracks, setAllTracks] = useState(() => loadColetaneaTracksAll(churchId));
   const [activeView, setActiveView] = useState(null); // { trackId, view } — só uma faixa toca/abre por vez
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [auto, setAuto] = useState(null); // { done, total, current } enquanto vincula vídeos sozinho
   const seed = COLETANEA_TRACKS_SEED[coletanea.id];
   const seedTracks = () => seed ? seed.map((t,i) => ({ id:'seed-trk-'+i, title:t.title, duration:t.duration, media:null, playback:null, lyrics:'', chords:'' })) : [];
@@ -4482,6 +4552,12 @@ function ColetaneaTracksPanel({ churchId, coletanea, onClose }) {
 
   // Procura no YouTube (pelo servidor próprio) e vincula sozinho o vídeo cantado e o playback com letra de
   // cada faixa que ainda não tem — pra já vir pronto pra tocar, sem precisar buscar música por música.
+  const applyBulk = (kind, found, overwrite) => mutate(list => list.map(t => {
+    const body = found[t.id];
+    const field = kind === 'chords' ? 'chords' : 'lyrics';
+    if (!body || (t[field] && !overwrite)) return t;
+    return { ...t, [field]: body };
+  }));
   const missingCount = tracks.reduce((n,t) => n + (t.media ? 0 : 1) + (t.playback ? 0 : 1), 0);
   const autoLink = async () => {
     const todo = [];
@@ -4520,6 +4596,8 @@ function ColetaneaTracksPanel({ churchId, coletanea, onClose }) {
         <button type="button" disabled=${!!auto} onClick=${autoLink} style=${{...btnPrimary, width:'auto', justifySelf:'start', padding:'8px 14px', fontSize:'11.5px', opacity: auto ? 0.7 : 1}}>
           ${auto ? '⏳ Vinculando '+(auto.done+1)+'/'+auto.total+' — '+auto.current : '✨ Vincular vídeos automaticamente ('+missingCount+' faltando)'}
         </button>`}
+      ${tracks.length > 0 && !bulkOpen && html`<button type="button" onClick=${()=>setBulkOpen(true)} style=${{...btnGhost, justifySelf:'start', padding:'8px 14px', fontSize:'11.5px', fontWeight:700}}>📥 Importar letras/cifras em lote</button>`}
+      ${bulkOpen && html`<${BulkImportPanel} tracks=${tracks} onApply=${applyBulk} onClose=${()=>setBulkOpen(false)} />`}
       <div style=${{display:'grid', gap:'8px'}}>
         ${tracks.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhuma faixa cadastrada ainda. Toca em "+ Adicionar Faixa" pra montar as músicas dessa coletânea.</div>`}
         ${tracks.map(t => html`<${ColetaneaTrackRow} key=${t.id} churchId=${churchId} coletaneaId=${coletanea.id} coletaneaTitle=${coletanea.title} track=${t}
