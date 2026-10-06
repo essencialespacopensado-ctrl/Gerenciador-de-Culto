@@ -117,11 +117,21 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-04.69';
+const APP_VERSION = '2026-10-06.70';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-06.70',
+    date: '06/10/2026',
+    items: [
+      "Coletâneas › Faixas: cada música agora tem 4 versões, igual ao LouvorJA — 🎤 Cantado, 🎹 Playback com letra, 📝 Só letra e 🎸 Cifra.",
+      "Os vídeos tocam dentro do próprio app (player embutido), sem abrir outra aba.",
+      "Em Só letra e Cifra, atalhos \"🔎 Buscar\" abrem o Letras.mus.br / Cifra Club já na música certa, pra copiar e colar.",
+      "Novo botão \"✨ Vincular vídeos automaticamente\": busca no YouTube e já vincula o cantado e o playback de todas as faixas da coletânea.",
+    ]
+  },
   {
     version: '2026-10-04.69',
     date: '04/10/2026',
@@ -4333,19 +4343,35 @@ function LetraProjectorPanel({ churchId, lyrics, itemKey }) {
   `;
 }
 
-// Uma faixa dentro de uma coletânea: título, duração, vídeo (busca/vincula/projeta) e letra
-// (escreve/edita/projeta estrofe por estrofe).
-function ColetaneaTrackRow({ churchId, coletaneaId, track, onChange, onRemove }) {
+// Uma faixa dentro de uma coletânea — igual ao LouvorJA, cada música tem 4 versões: 🎤 Cantado (normal),
+// 🎹 Playback com letra, 📝 Só letra (projeta estrofe por estrofe) e 🎸 Cifra. Os dois vídeos tocam
+// aqui dentro do próprio app (player embutido), sem abrir outra aba.
+const TRACK_VIEWS = [
+  { key:'cantado',  icon:'🎤', label:'Cantado',  field:'media' },
+  { key:'playback', icon:'🎹', label:'Playback c/ letra', field:'playback' },
+  { key:'letra',    icon:'📝', label:'Só letra' },
+  { key:'cifra',    icon:'🎸', label:'Cifra' },
+];
+
+function ColetaneaTrackRow({ churchId, coletaneaId, coletaneaTitle, track, onChange, onRemove, view, onSetView, autoLinking }) {
   const [editingLyrics, setEditingLyrics] = useState(false);
   const [lyricsDraft, setLyricsDraft] = useState(track.lyrics || '');
+  const [editingChords, setEditingChords] = useState(false);
+  const [chordsDraft, setChordsDraft] = useState(track.chords || '');
   const [linkingVideo, setLinkingVideo] = useState(false);
-  const media = track.media || null;
   const trackKey = 'colet-faixa-' + coletaneaId + '-' + track.id;
 
   const setTitle = (title) => onChange({ ...track, title });
   const setDuration = (duration) => onChange({ ...track, duration });
-  const setMedia = (media) => onChange({ ...track, media });
   const saveLyrics = () => { onChange({ ...track, lyrics: lyricsDraft.trim() }); setEditingLyrics(false); };
+  const saveChords = () => { onChange({ ...track, chords: chordsDraft.replace(/\s+$/,'') }); setEditingChords(false); };
+
+  const activeDef = TRACK_VIEWS.find(v => v.key === view) || null;
+  const isVideoView = !!(activeDef && activeDef.field);
+  const media = isVideoView ? (track[activeDef.field] || null) : null;
+  const setVideo = (m) => onChange({ ...track, [activeDef.field]: m });
+  const has = (v) => v.field ? !!track[v.field] : (v.key === 'letra' ? !!track.lyrics : !!track.chords);
+  const searchQuery = (activeDef && activeDef.key === 'playback') ? (track.title+' '+coletaneaTitle+' playback com letra') : (track.title+' '+coletaneaTitle);
 
   return html`
     <div class="glass fade-up" style=${{padding:'12px', borderRadius:'12px', display:'grid', gap:'8px', border:'1px solid var(--border-soft)'}}>
@@ -4356,22 +4382,39 @@ function ColetaneaTrackRow({ churchId, coletaneaId, track, onChange, onRemove })
       </div>
 
       <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
-        ${linkingVideo
-          ? html`<${ColetaneaLinkForm} onLink=${(vid)=>{setMedia({ title: track.title, url:'https://www.youtube.com/watch?v='+vid, videoId: vid }); setLinkingVideo(false);}} onCancel=${()=>setLinkingVideo(false)} />`
-          : media
-          ? html`
-            <a href=${media.url} target="_blank" rel="noopener" style=${{...btnGhost, textDecoration:'none', padding:'5px 9px', fontSize:'10.5px'}}>▶ Abrir</a>
-            <${ProjectButton} churchId=${churchId} media=${media} itemKey=${trackKey} />
-            <button type="button" onClick=${()=>setLinkingVideo(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>🔗 Trocar</button>
-            <button type="button" onClick=${()=>setMedia(null)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>✕ Vídeo</button>
-          `
-          : html`
-            <a href=${youtubeSearchUrl(track.title+' playback')} target="_blank" rel="noopener" style=${{...btnGhost, textDecoration:'none', padding:'5px 9px', fontSize:'10.5px'}}>🔎 Buscar Vídeo</a>
-            <button type="button" onClick=${()=>setLinkingVideo(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>🔗 Vincular Vídeo</button>
-          `}
+        ${TRACK_VIEWS.map(v => html`
+          <button key=${v.key} type="button" onClick=${()=>{ setLinkingVideo(false); onSetView(view === v.key ? null : v.key); }}
+            style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', fontWeight:700, opacity: has(v) || view === v.key ? 1 : 0.6,
+              background: view === v.key ? 'linear-gradient(150deg,var(--accent-1),var(--accent-2))' : btnGhost.background,
+              color: view === v.key ? '#fff' : btnGhost.color}}>
+            ${view === v.key && v.field ? '⏹ ' : (v.field ? '▶ ' : '')}${v.icon} ${v.label}${has(v) ? '' : (v.field ? ' ·' : ' +')}
+          </button>`)}
+        ${autoLinking && html`<span style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>⏳ buscando vídeos…</span>`}
       </div>
 
-      ${editingLyrics
+      ${isVideoView && html`
+        <div style=${{display:'grid', gap:'8px'}}>
+          ${media && html`
+            <div style=${{position:'relative', width:'100%', aspectRatio:'16/9', borderRadius:'10px', overflow:'hidden', background:'#000'}}>
+              <iframe key=${media.videoId} src=${'https://www.youtube-nocookie.com/embed/'+media.videoId+'?autoplay=1&rel=0&playsinline=1'} title=${track.title} allow="autoplay; encrypted-media; fullscreen" allowfullscreen style=${{position:'absolute', inset:0, width:'100%', height:'100%', border:0}}></iframe>
+            </div>`}
+          <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+            ${linkingVideo
+              ? html`<${ColetaneaLinkForm} onLink=${(vid)=>{ setVideo({ title: track.title, url:'https://www.youtube.com/watch?v='+vid, videoId: vid }); setLinkingVideo(false); }} onCancel=${()=>setLinkingVideo(false)} />`
+              : media
+              ? html`
+                <a href=${media.url} target="_blank" rel="noopener" style=${{...btnGhost, textDecoration:'none', padding:'5px 9px', fontSize:'10.5px'}}>↗ YouTube</a>
+                <${ProjectButton} churchId=${churchId} media=${media} itemKey=${trackKey+'-'+activeDef.key} />
+                <button type="button" onClick=${()=>setLinkingVideo(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>🔗 Trocar</button>
+                <button type="button" onClick=${()=>setVideo(null)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>✕ Vídeo</button>`
+              : html`
+                <span style=${{fontSize:'11px', color:'var(--text-dim)'}}>Sem vídeo de ${activeDef.label.toLowerCase()} ainda.</span>
+                <a href=${youtubeSearchUrl(searchQuery)} target="_blank" rel="noopener" style=${{...btnGhost, textDecoration:'none', padding:'5px 9px', fontSize:'10.5px'}}>🔎 Buscar Vídeo</a>
+                <button type="button" onClick=${()=>setLinkingVideo(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>🔗 Vincular Vídeo</button>`}
+          </div>
+        </div>`}
+
+      ${view === 'letra' && (editingLyrics
         ? html`
           <div style=${{display:'grid', gap:'6px'}}>
             <textarea value=${lyricsDraft} onChange=${e=>setLyricsDraft(e.target.value)} placeholder="Cole a letra aqui. Deixe uma linha em branco entre as estrofes pra poder projetar uma de cada vez." rows="6" style=${{...inputStyle, fontSize:'11.5px', fontFamily:'inherit', resize:'vertical'}} />
@@ -4379,16 +4422,37 @@ function ColetaneaTrackRow({ churchId, coletaneaId, track, onChange, onRemove })
               <button type="button" onClick=${saveLyrics} style=${{...btnPrimary, width:'auto', padding:'6px 12px', fontSize:'10.5px'}}>💾 Salvar Letra</button>
               <button type="button" onClick=${()=>{setLyricsDraft(track.lyrics||''); setEditingLyrics(false);}} style=${{...btnGhost, padding:'6px 12px', fontSize:'10.5px'}}>Cancelar</button>
             </div>
-          </div>
-        `
+          </div>`
         : track.lyrics
         ? html`
           <div style=${{display:'grid', gap:'6px'}}>
             <${LetraProjectorPanel} churchId=${churchId} lyrics=${track.lyrics} itemKey=${trackKey} />
-            <button type="button" onClick=${()=>setEditingLyrics(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px', justifySelf:'start'}}>✏️ Editar Letra</button>
-          </div>
-        `
-        : html`<button type="button" onClick=${()=>setEditingLyrics(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px', justifySelf:'start'}}>📝 Adicionar Letra</button>`}
+            <button type="button" onClick=${()=>{setLyricsDraft(track.lyrics||''); setEditingLyrics(true);}} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px', justifySelf:'start'}}>✏️ Editar Letra</button>
+          </div>`
+        : html`<div style=${{display:'flex', gap:'6px', flexWrap:'wrap'}}>
+            <a href=${'https://www.letras.mus.br/?q='+encodeURIComponent(track.title+' '+coletaneaTitle)} target="_blank" rel="noopener" style=${{...btnGhost, textDecoration:'none', padding:'5px 9px', fontSize:'10.5px'}}>🔎 Buscar letra (Letras.mus.br)</a>
+            <button type="button" onClick=${()=>setEditingLyrics(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>📝 Colar Letra</button>
+          </div>`)}
+
+      ${view === 'cifra' && (editingChords
+        ? html`
+          <div style=${{display:'grid', gap:'6px'}}>
+            <textarea value=${chordsDraft} onChange=${e=>setChordsDraft(e.target.value)} placeholder=${'Cole a cifra aqui, com os acordes em cima da letra:\n   G          D\nCada dia mais perto'} rows="10" style=${{...inputStyle, fontSize:'12px', fontFamily:'ui-monospace,Consolas,monospace', resize:'vertical', whiteSpace:'pre'}} />
+            <div style=${{display:'flex', gap:'6px'}}>
+              <button type="button" onClick=${saveChords} style=${{...btnPrimary, width:'auto', padding:'6px 12px', fontSize:'10.5px'}}>💾 Salvar Cifra</button>
+              <button type="button" onClick=${()=>{setChordsDraft(track.chords||''); setEditingChords(false);}} style=${{...btnGhost, padding:'6px 12px', fontSize:'10.5px'}}>Cancelar</button>
+            </div>
+          </div>`
+        : track.chords
+        ? html`
+          <div style=${{display:'grid', gap:'6px'}}>
+            <pre style=${{margin:0, padding:'10px', borderRadius:'10px', background:'rgba(99,102,241,0.08)', border:'1px solid var(--border-soft)', fontSize:'12px', lineHeight:1.45, fontFamily:'ui-monospace,Consolas,monospace', overflowX:'auto', maxHeight:'320px', overflowY:'auto', color:'var(--text-hi)'}}>${track.chords}</pre>
+            <button type="button" onClick=${()=>{setChordsDraft(track.chords||''); setEditingChords(true);}} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px', justifySelf:'start'}}>✏️ Editar Cifra</button>
+          </div>`
+        : html`<div style=${{display:'flex', gap:'6px', flexWrap:'wrap'}}>
+            <a href=${'https://www.cifraclub.com.br/?q='+encodeURIComponent(track.title+' '+coletaneaTitle)} target="_blank" rel="noopener" style=${{...btnGhost, textDecoration:'none', padding:'5px 9px', fontSize:'10.5px'}}>🔎 Buscar cifra (Cifra Club)</a>
+            <button type="button" onClick=${()=>setEditingChords(true)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>🎸 Colar Cifra</button>
+          </div>`)}
     </div>
   `;
 }
@@ -4397,20 +4461,51 @@ function ColetaneaTrackRow({ churchId, coletaneaId, track, onChange, onRemove })
 // as músicas do CD do jeito que for tocar (não precisa ser o CD inteiro, só o que interessa).
 function ColetaneaTracksPanel({ churchId, coletanea, onClose }) {
   const [allTracks, setAllTracks] = useState(() => loadColetaneaTracksAll(churchId));
+  const [activeView, setActiveView] = useState(null); // { trackId, view } — só uma faixa toca/abre por vez
+  const [auto, setAuto] = useState(null); // { done, total, current } enquanto vincula vídeos sozinho
   const seed = COLETANEA_TRACKS_SEED[coletanea.id];
-  const tracks = allTracks[coletanea.id] || (seed ? seed.map((t,i) => ({ id:'seed-trk-'+i, title:t.title, duration:t.duration, media:null, lyrics:'' })) : []);
+  const seedTracks = () => seed ? seed.map((t,i) => ({ id:'seed-trk-'+i, title:t.title, duration:t.duration, media:null, playback:null, lyrics:'', chords:'' })) : [];
+  const tracks = allTracks[coletanea.id] || seedTracks();
 
-  const persist = (next) => {
+  // Sempre parte da lista mais recente (inclusive em chamadas seguidas e assíncronas, como a vinculação automática).
+  const mutate = (fn) => {
     setAllTracks(map => {
-      const updated = { ...map, [coletanea.id]: next };
+      const current = map[coletanea.id] || seedTracks();
+      const updated = { ...map, [coletanea.id]: fn(current) };
       saveColetaneaTracksAll(churchId, updated);
       return updated;
     });
   };
+  const addTrack = () => mutate(list => [...list, { id:'trk-'+Date.now(), title:'Nova faixa', duration:'', media:null, playback:null, lyrics:'', chords:'' }]);
+  const updateTrack = (id, next) => mutate(list => list.map(t => t.id === id ? next : t));
+  const removeTrack = (id) => mutate(list => list.filter(t => t.id !== id));
 
-  const addTrack = () => persist([...tracks, { id:'trk-'+Date.now(), title:'Nova faixa', duration:'', media:null, lyrics:'' }]);
-  const updateTrack = (id, next) => persist(tracks.map(t => t.id === id ? next : t));
-  const removeTrack = (id) => persist(tracks.filter(t => t.id !== id));
+  // Procura no YouTube (pelo servidor próprio) e vincula sozinho o vídeo cantado e o playback com letra de
+  // cada faixa que ainda não tem — pra já vir pronto pra tocar, sem precisar buscar música por música.
+  const missingCount = tracks.reduce((n,t) => n + (t.media ? 0 : 1) + (t.playback ? 0 : 1), 0);
+  const autoLink = async () => {
+    const todo = [];
+    tracks.forEach(t => {
+      if (!t.media) todo.push({ id:t.id, field:'media', title:t.title, q: t.title+' '+coletanea.title });
+      if (!t.playback) todo.push({ id:t.id, field:'playback', title:t.title, q: t.title+' '+coletanea.title+' playback com letra' });
+    });
+    if (todo.length === 0) return;
+    let found = 0, failedBackend = false;
+    for (let i = 0; i < todo.length; i++) {
+      const job = todo[i];
+      setAuto({ done:i, total:todo.length, current: job.title });
+      const results = await searchYoutubeServer(job.q);
+      if (results === null) { failedBackend = true; break; }
+      const top = results[0];
+      if (top && top.videoId) {
+        found++;
+        mutate(list => list.map(t => t.id === job.id && !t[job.field] ? { ...t, [job.field]: { title: top.title || job.title, url: top.watchUrl || ('https://www.youtube.com/watch?v='+top.videoId), videoId: top.videoId } } : t));
+      }
+    }
+    setAuto(null);
+    if (failedBackend) alert('Não consegui buscar os vídeos agora (o servidor de busca não respondeu). Tente de novo daqui a pouco — o que já foi vinculado ficou salvo.');
+    else alert('Pronto! '+found+' de '+todo.length+' vídeos vinculados. Confira se cada um é o certo — se algum estiver errado, use "🔗 Trocar".');
+  };
 
   return html`
     <div class="glass fade-up" style=${{borderRadius:'16px', padding:'14px', display:'grid', gap:'10px'}}>
@@ -4421,9 +4516,17 @@ function ColetaneaTracksPanel({ churchId, coletanea, onClose }) {
         </div>
         <button type="button" onClick=${onClose} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}}>✕ Fechar</button>
       </div>
+      ${tracks.length > 0 && missingCount > 0 && html`
+        <button type="button" disabled=${!!auto} onClick=${autoLink} style=${{...btnPrimary, width:'auto', justifySelf:'start', padding:'8px 14px', fontSize:'11.5px', opacity: auto ? 0.7 : 1}}>
+          ${auto ? '⏳ Vinculando '+(auto.done+1)+'/'+auto.total+' — '+auto.current : '✨ Vincular vídeos automaticamente ('+missingCount+' faltando)'}
+        </button>`}
       <div style=${{display:'grid', gap:'8px'}}>
         ${tracks.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhuma faixa cadastrada ainda. Toca em "+ Adicionar Faixa" pra montar as músicas dessa coletânea.</div>`}
-        ${tracks.map(t => html`<${ColetaneaTrackRow} key=${t.id} churchId=${churchId} coletaneaId=${coletanea.id} track=${t} onChange=${(next)=>updateTrack(t.id, next)} onRemove=${()=>removeTrack(t.id)} />`)}
+        ${tracks.map(t => html`<${ColetaneaTrackRow} key=${t.id} churchId=${churchId} coletaneaId=${coletanea.id} coletaneaTitle=${coletanea.title} track=${t}
+          view=${activeView && activeView.trackId === t.id ? activeView.view : null}
+          onSetView=${(v)=>setActiveView(v ? { trackId:t.id, view:v } : null)}
+          autoLinking=${!!auto && auto.current === t.title}
+          onChange=${(next)=>updateTrack(t.id, next)} onRemove=${()=>removeTrack(t.id)} />`)}
       </div>
       <button type="button" onClick=${addTrack} style=${{...btnGhost, justifySelf:'start', padding:'8px 14px', fontSize:'11.5px', border:'1.5px dashed var(--accent-1)', color:'var(--accent-1)', fontWeight:700}}>+ Adicionar Faixa</button>
     </div>
