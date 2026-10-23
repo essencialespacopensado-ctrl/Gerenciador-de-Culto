@@ -135,18 +135,27 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-23.77';
+const APP_VERSION = '2026-10-23.78';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-23.78',
+    date: '23/10/2026',
+    items: [
+      "Congelar agora é como um print da tela: a imagem fica parada e o vídeo continua rodando por baixo (som também). No vídeo do YouTube, a primeira vez pede um clique na tela projetada em \"Liberar o Congelar\" e escolher \"Esta guia\"; depois funciona direto.",
+      "Fader do PROJETOR: mexer no volume agora também tira o mudo e liga o som do vídeo do YouTube.",
+      "A seta do mouse volta a aparecer na tela de projeção (estava escondida por cima do vídeo).",
+    ]
+  },
   {
     version: '2026-10-23.77',
     date: '23/10/2026',
     items: [
       "Novo Console no canto direito (botão 🎚️): os botões da projeção (Play, Pause, Tela Cheia, Fundo, Congelar, Fechar) e o mixer agora ficam juntos, com visual de mesa de som — faders verticais, botão de mudo (M) e barra de sinal em LEDs.",
       "Novo canal PROJETOR no mixer: volume e mudo do vídeo que está na tela de projeção, comandados pelo app (sem precisar clicar na tela projetada).",
-      "Congelar agora segura a IMAGEM da tela, como o Freeze do projetor (vídeo do YouTube fica parado no quadro atual; vídeo do pendrive segura o último quadro e o som continua).",
+      "Congelar agora segura a IMAGEM da tela, como o Freeze do projetor.",
       "Fechar o painel do mixer não corta mais a música de fundo que está tocando.",
       "Momento Vida e Saúde: a atividade da liturgia agora ganha o botão de projetar sozinha (vídeo mais recente do canal), como já acontecia com Informativo e Provai e Vede.",
     ]
@@ -3130,6 +3139,7 @@ function setProjectionVolume(v) {
   projectionAudio.volume = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
   try { localStorage.setItem('gc_proj_audio_v1', JSON.stringify({ volume: projectionAudio.volume })); } catch(e) {}
   postToProjectionWindows({ gcType:'media_volume', value: projectionAudio.volume });
+  if (projectionAudio.muted && projectionAudio.volume > 0) { setProjectionMuted(false); return; }
   projectionAudioNotify();
 }
 function setProjectionMuted(on) {
@@ -3344,7 +3354,7 @@ function projectionShellHtml() {
       + 'var stage=document.getElementById("gc-stage");'
       + 'var overlay=document.getElementById("gc-overlay");'
       + 'var overlayTimer=null,overlayClearTimer=null;'
-      + 'var ytPlayer=null,fading=false;var localVideoEl=null;var lastMute=false;var projVol=100,projMuted=false;var gcSoundPending=false;var gcUserPaused=false;var frozenCanvas=null,frozenYt=false;'
+      + 'var ytPlayer=null,fading=false;var localVideoEl=null;var lastMute=false;var projVol=100,projMuted=false;var gcSoundPending=false;var gcUserPaused=false;var frozenCanvas=null,frozenYt=false,frozenWanted=false,capVideo=null,capBtn=null;'
       + 'function gcNotify(o){try{if(window.opener)window.opener.postMessage(o,"*");}catch(e){}}'
       + 'function gcYtCmd(f,a){try{var fr=document.getElementById("gc-player");if(fr&&fr.contentWindow)fr.contentWindow.postMessage(JSON.stringify({event:"command",func:f,args:a||[]}),"*");}catch(e){}}'
       + 'var cronoInterval=null,cronoItem=null;'
@@ -3462,11 +3472,20 @@ function projectionShellHtml() {
       // (nunca fica parado por causa disso) e avisa o mixer pra ele mostrar o mudo ligado.
       + 'function gcUnmuteGuard(){var n=0;var t=setInterval(function(){n++;var paused=false;try{if(ytPlayer)paused=(ytPlayer.getPlayerState()===2);else if(localVideoEl)paused=localVideoEl.paused;}catch(e){}if(paused&&!gcUserPaused&&!frozenYt){clearInterval(t);try{if(ytPlayer){ytPlayer.mute();ytPlayer.playVideo();}if(localVideoEl){localVideoEl.muted=true;localVideoEl.play().catch(function(){});}}catch(e){}gcSoundPending=true;projMuted=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});return;}if(n>=6)clearInterval(t);},300);}'
       + 'function gcSoundOn(){if(gcSoundPending&&!lastMute){projMuted=false;gcApplyMute();gcNotify({gcEvt:"sound_on"});}}'
+      + 'function gcSnap(src){try{var c=document.createElement("canvas");c.width=src.videoWidth||1280;c.height=src.videoHeight||720;c.getContext("2d").drawImage(src,0,0,c.width,c.height);c.style.cssText="position:fixed;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:4";document.body.appendChild(c);frozenCanvas=c;return true;}catch(e){return false;}}'
+      // Congelar = print da tela. YouTube roda em outro site e o navegador não deixa copiar o quadro; o jeito é a
+      // captura da própria aba (uma permissão, dada com um clique na tela projetada). Depois disso, vale pra sempre naquela janela.
+      + 'function gcAskCapture(){if(capBtn)return;var b=document.createElement("button");capBtn=b;b.textContent="\uD83D\uDCF8 Liberar o Congelar \u2014 clique e escolha Esta guia";b.style.cssText="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:20;padding:18px 26px;border-radius:14px;border:2px solid #00e5ff;background:#001418;color:#00e5ff;font:700 20px sans-serif;cursor:pointer;";b.onclick=function(ev){ev.stopPropagation();navigator.mediaDevices.getDisplayMedia({video:{frameRate:30},audio:false,preferCurrentTab:true,selfBrowserSurface:"include"}).then(function(st){capVideo=document.createElement("video");capVideo.muted=true;capVideo.srcObject=st;capVideo.play();st.getVideoTracks()[0].onended=function(){capVideo=null;};try{b.remove();}catch(e){}capBtn=null;setTimeout(function(){if(frozenWanted&&!frozenCanvas&&capVideo)gcSnap(capVideo);},500);}).catch(function(){try{b.remove();}catch(e){}capBtn=null;});};document.body.appendChild(b);}'
       + 'function gcFreeze(on){'
-        + 'if(on){if(frozenCanvas||frozenYt)return;'
-          + 'if(localVideoEl){try{var c=document.createElement("canvas");c.width=localVideoEl.videoWidth||1280;c.height=localVideoEl.videoHeight||720;c.getContext("2d").drawImage(localVideoEl,0,0,c.width,c.height);c.style.cssText="position:fixed;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:4";document.body.appendChild(c);frozenCanvas=c;}catch(e){}}'
-          + 'else if(document.getElementById("gc-player")){frozenYt=true;try{if(ytPlayer)ytPlayer.pauseVideo();}catch(e){}gcYtCmd("pauseVideo");}'
-        + '}else{'
+        + 'if(on){if(frozenCanvas||frozenYt)return;frozenWanted=true;'
+          + 'if(localVideoEl){gcSnap(localVideoEl);}'
+          + 'else if(document.getElementById("gc-player")){'
+            + 'if(capVideo&&capVideo.readyState>=2){gcSnap(capVideo);}'
+            + 'else if(navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia){gcAskCapture();}'
+            + 'else{frozenYt=true;try{if(ytPlayer)ytPlayer.pauseVideo();}catch(e){}gcYtCmd("pauseVideo");}'
+          + '}'
+        + '}else{frozenWanted=false;'
+          + 'if(capBtn){try{capBtn.remove();}catch(e){}capBtn=null;}'
           + 'if(frozenCanvas){try{frozenCanvas.remove();}catch(e){}frozenCanvas=null;}'
           + 'if(frozenYt){frozenYt=false;try{if(ytPlayer)ytPlayer.playVideo();}catch(e){}gcYtCmd("playVideo");}'
         + '}'
@@ -3499,7 +3518,7 @@ function projectionShellHtml() {
         + 'var iframe=document.createElement("iframe");iframe.id="gc-player";iframe.src=src;'
         + 'iframe.allow="autoplay; encrypted-media; fullscreen";iframe.allowFullscreen=true;'
         + 'stage.appendChild(iframe);'
-        + 'var ov=document.createElement("div");ov.style.cssText="position:fixed;left:0;top:0;right:0;bottom:0;z-index:5;background:transparent;cursor:none;";stage.appendChild(ov);'
+        + 'var ov=document.createElement("div");ov.style.cssText="position:fixed;left:0;top:0;right:0;bottom:0;z-index:5;background:transparent;cursor:default;";stage.appendChild(ov);'
         + 'bindYt(mute);'
       + '}'
       + 'window.onYouTubeIframeAPIReady=function(){if(document.getElementById("gc-player"))bindYt(lastMute);};'
@@ -3507,7 +3526,7 @@ function projectionShellHtml() {
       + 'window.addEventListener("message",function(ev){'
         + 'var d=ev.data;if(!d||typeof d!=="object")return;'
         + 'if(d.gcType==="media"){lastMute=!!d.mute;if(typeof d.vol==="number")projVol=d.vol;projMuted=!!d.pmute;renderVideo(d.media,d.mute);}'
-        + 'else if(d.gcType==="media_volume"){projVol=+d.value;try{if(ytPlayer)ytPlayer.setVolume(projVol);else gcYtCmd("setVolume",[projVol]);}catch(e){}try{if(localVideoEl)localVideoEl.volume=projVol/100;}catch(e){}}'
+        + 'else if(d.gcType==="media_volume"){projVol=+d.value;try{if(ytPlayer)ytPlayer.setVolume(projVol);gcYtCmd("setVolume",[projVol]);}catch(e){}try{if(localVideoEl)localVideoEl.volume=projVol/100;}catch(e){}}'
         + 'else if(d.gcType==="media_mute"){projMuted=!!d.on;gcApplyMute();}'
         + 'else if(d.gcType==="freeze"){gcFreeze(!!d.on);}'
         + 'else if(d.gcType==="imagem"){renderImage(d.item);gcNotify({gcEvt:"state",s:-1});}'
