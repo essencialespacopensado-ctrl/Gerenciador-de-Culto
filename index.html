@@ -68,12 +68,13 @@
   input,select{font-family:inherit;}
   ::placeholder{color:var(--text-dim);}
   /* ---- Visual "Neon Tech": preto + verde neon + azul elétrico (ativa com data-tech="1") ---- */
-  html[data-tech="1"] body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:repeating-linear-gradient(0deg, rgba(0,255,170,0.035) 0, rgba(0,255,170,0.035) 1px, transparent 1px, transparent 3px);}
-  html[data-tech="1"] .grad-text{background-image:linear-gradient(90deg,#19f0a0,#2d9cff,#00ffc6,#19f0a0);filter:drop-shadow(0 0 10px rgba(25,240,160,0.35));}
-  html[data-tech="1"] button:not(:disabled):hover{box-shadow:0 4px 0 rgba(0,0,0,0.35),0 0 18px -2px rgba(25,240,160,0.55);}
-  html[data-tech="1"] input:focus,html[data-tech="1"] select:focus,html[data-tech="1"] textarea:focus{border-color:#19f0a0 !important;box-shadow:0 0 0 2px rgba(25,240,160,0.25),0 0 16px -4px rgba(25,240,160,0.5);outline:none;}
-  html[data-tech="1"] *::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#19f0a0,#2d9cff);}
-  html[data-tech="1"] *{scrollbar-color:rgba(25,240,160,.5) transparent;}
+  html[data-tech="1"] .grad-text{background:none !important;-webkit-background-clip:border-box;background-clip:border-box;color:#00ff9d !important;animation:none;text-shadow:0 0 12px rgba(0,255,157,0.7);}
+  html[data-tech="1"] button:not(:disabled):hover{box-shadow:0 0 0 1px #00ff9d,0 0 18px -2px rgba(0,255,157,0.8);}
+  html[data-tech="1"] input:focus,html[data-tech="1"] select:focus,html[data-tech="1"] textarea:focus{border-color:#00ff9d !important;box-shadow:0 0 0 2px rgba(0,255,157,0.35),0 0 16px -4px rgba(0,255,157,0.7);outline:none;}
+  html[data-tech="1"] *::-webkit-scrollbar-thumb{background:#00ff9d;}
+  html[data-tech="1"] button[style*="linear-gradient"]{background:#0a8cff !important;box-shadow:0 0 14px -4px rgba(10,140,255,0.9) !important;}
+  html[data-tech="1"] button[style*="linear-gradient"]:hover{box-shadow:0 0 0 1px #00ff9d,0 0 18px -2px rgba(0,255,157,0.8) !important;}
+  html[data-tech="1"] *{scrollbar-color:#00ff9d transparent;}
 </style>
 </head>
 <body>
@@ -126,11 +127,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-23.72';
+const APP_VERSION = '2026-10-23.73';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-23.73',
+    date: '23/10/2026',
+    items: [
+      "Neon Tech ajustado a pedido: cores neon bem vivas (verde e azul sobre preto puro) e sem degradê — botões e títulos agora são cores chapadas.",
+    ]
+  },
   {
     version: '2026-10-23.72',
     date: '23/10/2026',
@@ -8383,9 +8391,9 @@ function luminanceOf(hex) {
   return (r*299 + g*587 + b*114) / 1000;
 }
 const THEME_PRESETS = [
-  { name:'Neon Tech', tech:true, a1:'#0b7fe8', a2:'#00a86b', a3:'#19f0a0', bg:'#030708', text:'#e8fff6', highlight:'#19f0a0', success:'#19f0a0', danger:'#ff4d6d',
-    textMid:'#8fb8aa', textDim:'#5f8579', border:'rgba(25,240,160,0.18)', glass:'#071418cc',
-    glow1:'rgba(25,240,160,0.16)', glow2:'rgba(45,156,255,0.18)', glow3:'rgba(0,200,255,0.12)', glow4:'rgba(25,240,160,0.07)', grid:'rgba(25,240,160,0.055)', edge:'rgba(25,240,160,0.30)' },
+  { name:'Neon Tech', tech:true, a1:'#0a8cff', a2:'#0a8cff', a3:'#0a8cff', bg:'#000000', text:'#eafff5', highlight:'#00ff9d', success:'#00ff9d', danger:'#ff2d6f',
+    textMid:'#8fe8c4', textDim:'#5fa88a', border:'rgba(0,255,157,0.38)', glass:'#04090bf2',
+    glow1:'transparent', glow2:'transparent', glow3:'transparent', glow4:'transparent', grid:'rgba(0,255,157,0.05)', edge:'rgba(0,255,157,0.55)' },
   { name:'Azul Tech', a1:'#2563eb', a2:'#0891b2', a3:'#7c3aed', bg:'#0b1120', text:'#f1f5f9', highlight:'#fb923c', success:'#10b981', danger:'#ef4444' },
   { name:'Rosa/Roxo', a1:'#ec4899', a2:'#8b5cf6', a3:'#06b6d4', bg:'#0b1120', text:'#f1f5f9', highlight:'#fb923c', success:'#10b981', danger:'#ef4444' },
   { name:'Verde Esmeralda', a1:'#10b981', a2:'#0891b2', a3:'#065f46', bg:'#0a1410', text:'#f1f5f9', highlight:'#fbbf24', success:'#34d399', danger:'#ef4444' },
@@ -8401,7 +8409,7 @@ function loadTheme() {
       const saved = JSON.parse(raw);
       // "Azul Tech" era o padrão antigo — quem estava nele passa pro novo padrão (Neon Tech). Quem escolheu
       // outro tema ou personalizou as cores continua exatamente como estava.
-      if (saved && saved.name === 'Azul Tech') return THEME_PRESETS[0];
+      if (saved && (saved.name === 'Azul Tech' || (saved.name === 'Neon Tech' && saved.tech))) return THEME_PRESETS[0];
       return saved;
     }
   } catch(e) {}
