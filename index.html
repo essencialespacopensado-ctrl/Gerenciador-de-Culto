@@ -127,11 +127,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-23.75';
+const APP_VERSION = '2026-10-23.76';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-23.76',
+    date: '23/10/2026',
+    items: [
+      "Projeção: corrigido o vídeo que iniciava e pausava logo depois. O navegador pausa vídeo que liga o som sozinho; agora, se ele bloquear o som, o vídeo roda mudo (sem pausar) e um clique na tela projetada liga o som e a tela cheia.",
+    ]
+  },
   {
     version: '2026-10-23.75',
     date: '23/10/2026',
@@ -3391,16 +3398,18 @@ function projectionShellHtml() {
         + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";closeIfStageEmpty();},fadeMs);'
       + '}'
       + 'function gcPrep(){try{ytPlayer.unloadModule&&ytPlayer.unloadModule("captions");}catch(e){}try{ytPlayer.setOption&&ytPlayer.setOption("captions","track",{});}catch(e){}try{ytPlayer.setPlaybackQuality&&ytPlayer.setPlaybackQuality("hd1080");}catch(e){}}'
-      + 'function gcSoundOn(){try{if(ytPlayer&&!lastMute){ytPlayer.unMute();ytPlayer.setVolume(100);}}catch(e){}}'
+      + 'var gcSoundPending=false;'
+      + 'function gcHint(show){var h=document.getElementById("gc-hint");if(!show){if(h)h.style.display="none";return;}if(!h){h=document.createElement("div");h.id="gc-hint";h.textContent="\uD83D\uDD0A Clique na tela para ligar o som";h.style.cssText="position:fixed;right:14px;bottom:12px;z-index:9;padding:6px 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#9fe;font:600 13px sans-serif;pointer-events:none;opacity:.8;";document.body.appendChild(h);setTimeout(function(){h.style.display="none";},12000);}h.style.display="block";}'
+      + 'function gcSoundOn(){try{if(ytPlayer&&gcSoundPending&&!lastMute){ytPlayer.unMute();ytPlayer.setVolume(100);gcSoundPending=false;gcHint(false);}}catch(e){}}'
       + 'function gcEnsurePlay(mute){'
         + 'var tries=0;var t=setInterval(function(){tries++;var st=-2;try{st=ytPlayer.getPlayerState();}catch(e){}'
           + 'if(st===1){clearInterval(t);gcPrep();return;}'
-          + 'if(tries===3&&!mute){try{ytPlayer.mute();}catch(e){}}'
+          + 'if(tries===4&&!mute){try{ytPlayer.mute();gcSoundPending=true;gcHint(true);}catch(e){}}'
           + 'try{ytPlayer.playVideo();}catch(e){}'
           + 'if(tries>=12)clearInterval(t);'
         + '},500);'
       + '}'
-      + 'function bindYt(mute){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onReady:function(){try{if(mute)ytPlayer.mute();else ytPlayer.unMute();}catch(e){}gcPrep();try{ytPlayer.playVideo();}catch(e){}gcEnsurePlay(mute);},onStateChange:function(e){if(e.data===1){gcPrep();if(!mute)setTimeout(gcSoundOn,700);}if(e.data===0){fadeOutEnd();notifyMediaEnded();}}}});}catch(e){}}}'
+      + 'function bindYt(mute){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onReady:function(){try{if(mute)ytPlayer.mute();else ytPlayer.unMute();}catch(e){}gcPrep();try{ytPlayer.playVideo();}catch(e){}gcEnsurePlay(mute);},onStateChange:function(e){if(e.data===1){gcPrep();}if(e.data===0){fadeOutEnd();notifyMediaEnded();}}}});}catch(e){}}}'
       + 'function fadeOutEnd(){'
         + 'if(fading||!ytPlayer)return;fading=true;'
         + 'var startVol=100;try{startVol=ytPlayer.getVolume();}catch(e){}'
