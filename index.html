@@ -75,6 +75,14 @@
   html[data-tech="1"] button[style*="linear-gradient"]{background:#0a8cff !important;box-shadow:0 0 14px -4px rgba(10,140,255,0.9) !important;}
   html[data-tech="1"] button[style*="linear-gradient"]:hover{box-shadow:0 0 0 1px #00ff9d,0 0 18px -2px rgba(0,255,157,0.8) !important;}
   html[data-tech="1"] *{scrollbar-color:#00ff9d transparent;}
+  /* Console de projeção + mixer (faders verticais) */
+  .gc-fader{-webkit-appearance:none;appearance:none;writing-mode:vertical-lr;direction:rtl;width:30px;height:150px;margin:0;padding:0;background:transparent;cursor:pointer;}
+  .gc-fader::-webkit-slider-runnable-track{width:8px;border-radius:4px;background:#04090a;border:1px solid var(--highlight);}
+  .gc-fader::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:30px;height:17px;border-radius:3px;background:#e4eeea;border:2px solid var(--highlight);box-shadow:0 0 8px color-mix(in srgb, var(--highlight) 60%, transparent);margin-left:-12px;}
+  .gc-fader::-moz-range-track{width:8px;border-radius:4px;background:#04090a;border:1px solid var(--highlight);}
+  .gc-fader::-moz-range-thumb{width:26px;height:14px;border-radius:3px;background:#e4eeea;border:2px solid var(--highlight);}
+  .gc-console-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:9px 4px;border-radius:10px;border:1px solid var(--border-soft);background:rgba(0,0,0,0.35);color:var(--text-mid);cursor:pointer;}
+  .gc-console-btn:hover{border-color:var(--highlight);color:var(--text-hi);}
 </style>
 </head>
 <body>
@@ -127,11 +135,22 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-23.76';
+const APP_VERSION = '2026-10-23.77';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-23.77',
+    date: '23/10/2026',
+    items: [
+      "Novo Console no canto direito (botão 🎚️): os botões da projeção (Play, Pause, Tela Cheia, Fundo, Congelar, Fechar) e o mixer agora ficam juntos, com visual de mesa de som — faders verticais, botão de mudo (M) e barra de sinal em LEDs.",
+      "Novo canal PROJETOR no mixer: volume e mudo do vídeo que está na tela de projeção, comandados pelo app (sem precisar clicar na tela projetada).",
+      "Congelar agora segura a IMAGEM da tela, como o Freeze do projetor (vídeo do YouTube fica parado no quadro atual; vídeo do pendrive segura o último quadro e o som continua).",
+      "Fechar o painel do mixer não corta mais a música de fundo que está tocando.",
+      "Momento Vida e Saúde: a atividade da liturgia agora ganha o botão de projetar sozinha (vídeo mais recente do canal), como já acontecia com Informativo e Provai e Vede.",
+    ]
+  },
   {
     version: '2026-10-23.76',
     date: '23/10/2026',
@@ -3098,6 +3117,35 @@ function blankWindowHtml(title, bodyHtml) {
 // Janelas de projeção compartilhadas entre abas/telas da aplicação (evita reabrir com popup toda vez)
 const projectionWindows = {};
 
+// Canal "PROJETOR" do mixer (23/10, pedido do Paulo): volume e mudo do vídeo que está nas telas de
+// projeção, controlados pelo app (não por clique na tela projetada). A tela projetada avisa de volta
+// (sound_blocked / sound_on / state) quando o navegador segura o som, pra o mixer refletir o estado.
+const projectionAudio = { volume: 100, muted: false, playing: false, listeners: new Set() };
+try { const r = JSON.parse(localStorage.getItem('gc_proj_audio_v1') || 'null'); if (r && typeof r.volume === 'number') projectionAudio.volume = Math.max(0, Math.min(100, r.volume)); } catch(e) {}
+function projectionAudioNotify() { projectionAudio.listeners.forEach(f => { try { f(); } catch(e) {} }); }
+function postToProjectionWindows(msg) {
+  Object.keys(projectionWindows).forEach(sig => { const w = projectionWindows[sig]; try { if (w && !w.closed) w.postMessage(msg, '*'); } catch(e) {} });
+}
+function setProjectionVolume(v) {
+  projectionAudio.volume = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+  try { localStorage.setItem('gc_proj_audio_v1', JSON.stringify({ volume: projectionAudio.volume })); } catch(e) {}
+  postToProjectionWindows({ gcType:'media_volume', value: projectionAudio.volume });
+  projectionAudioNotify();
+}
+function setProjectionMuted(on) {
+  projectionAudio.muted = !!on;
+  postToProjectionWindows({ gcType:'media_mute', on: projectionAudio.muted });
+  projectionAudioNotify();
+}
+window.addEventListener('message', (e) => {
+  const d = e.data;
+  if (!d || typeof d !== 'object' || !d.gcEvt || e.origin !== window.location.origin) return;
+  if (d.gcEvt === 'sound_blocked') projectionAudio.muted = true;
+  else if (d.gcEvt === 'sound_on') projectionAudio.muted = false;
+  else if (d.gcEvt === 'state') projectionAudio.playing = (d.s === 1 || d.s === 3);
+  projectionAudioNotify();
+});
+
 // "Congelar" (25/09 - pedido do Paulo): enquanto congelado, o que já está projetado fica intocado —
 // qualquer novo envio (trocar de atividade, próxima música etc.) é só guardado, e só aparece de fato
 // nas telas quando o operador descongelar. Isso deixa o operador preparar o próximo conteúdo por
@@ -3107,6 +3155,10 @@ let frozenPendingBySig = {};
 function isProjectionFrozen() { return projectionFrozen; }
 function setProjectionFrozen(value) {
   projectionFrozen = !!value;
+  // Congela a IMAGEM de verdade nas telas (igual ao "Freeze" do projetor): a tela segura o último
+  // quadro enquanto o operador prepara o próximo conteúdo por baixo dos panos.
+  postToProjectionWindows({ gcType:'freeze', on: projectionFrozen });
+  projectionAudioNotify();
   if (!projectionFrozen) {
     const pending = frozenPendingBySig;
     frozenPendingBySig = {};
@@ -3292,7 +3344,9 @@ function projectionShellHtml() {
       + 'var stage=document.getElementById("gc-stage");'
       + 'var overlay=document.getElementById("gc-overlay");'
       + 'var overlayTimer=null,overlayClearTimer=null;'
-      + 'var ytPlayer=null,fading=false;var localVideoEl=null;var lastMute=false;'
+      + 'var ytPlayer=null,fading=false;var localVideoEl=null;var lastMute=false;var projVol=100,projMuted=false;var gcSoundPending=false;var gcUserPaused=false;var frozenCanvas=null,frozenYt=false;'
+      + 'function gcNotify(o){try{if(window.opener)window.opener.postMessage(o,"*");}catch(e){}}'
+      + 'function gcYtCmd(f,a){try{var fr=document.getElementById("gc-player");if(fr&&fr.contentWindow)fr.contentWindow.postMessage(JSON.stringify({event:"command",func:f,args:a||[]}),"*");}catch(e){}}'
       + 'var cronoInterval=null,cronoItem=null;'
       + 'function tryFullscreen(){'
         + 'try{'
@@ -3351,17 +3405,21 @@ function projectionShellHtml() {
       // Programação Automática do Modo Ao Vivo pra nunca cortar um vídeo no meio, esperando o fim de
       // verdade em vez de um tempo fixo "no chute".
       + 'function notifyMediaEnded(){try{if(window.opener&&!window.opener.closed)window.opener.postMessage({gcType:"gc_media_ended"},"*");}catch(e){}}'
-      + 'function renderLocalVideo(item,mute){stage.innerHTML="";fading=false;ytPlayer=null;clearCronoInterval();var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;v.muted=!!mute;v.addEventListener("ended",notifyMediaEnded);stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
+      + 'function renderLocalVideo(item,mute){stage.innerHTML="";fading=false;ytPlayer=null;clearCronoInterval();var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;v.muted=!!mute||projMuted;v.volume=projVol/100;v.addEventListener("ended",function(){gcNotify({gcEvt:"state",s:0});notifyMediaEnded();});v.addEventListener("playing",function(){gcNotify({gcEvt:"state",s:1});});v.addEventListener("pause",function(){gcNotify({gcEvt:"state",s:2});});gcUserPaused=false;stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
       // Play/Pause explícitos (botões separados, pedido do Paulo 25/09) do vídeo (local ou do
       // YouTube) que estiver tocando agora — usado pelo controle miniatura na janela principal.
       // Sem vídeo nenhum carregado ainda, não faz nada (não dá erro).
       + 'function playMedia(){'
+        + 'gcUserPaused=false;'
         + 'if(localVideoEl){localVideoEl.play().catch(function(){});return;}'
         + 'if(ytPlayer){try{ytPlayer.playVideo();}catch(e){}}'
+        + 'gcYtCmd("playVideo");'
       + '}'
       + 'function pauseMedia(){'
+        + 'gcUserPaused=true;'
         + 'if(localVideoEl){localVideoEl.pause();return;}'
         + 'if(ytPlayer){try{ytPlayer.pauseVideo();}catch(e){}}'
+        + 'gcYtCmd("pauseVideo");'
       + '}'
       // Texto animado por cima (ex: versículo bíblico) — não mexe no #gc-stage, então continua
       // aparecendo o que já estava projetado (foto/slide/vídeo) atrás dele. fadeMs = duração do
@@ -3398,18 +3456,30 @@ function projectionShellHtml() {
         + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";closeIfStageEmpty();},fadeMs);'
       + '}'
       + 'function gcPrep(){try{ytPlayer.unloadModule&&ytPlayer.unloadModule("captions");}catch(e){}try{ytPlayer.setOption&&ytPlayer.setOption("captions","track",{});}catch(e){}try{ytPlayer.setPlaybackQuality&&ytPlayer.setPlaybackQuality("hd1080");}catch(e){}}'
-      + 'var gcSoundPending=false;'
-      + 'function gcHint(show){var h=document.getElementById("gc-hint");if(!show){if(h)h.style.display="none";return;}if(!h){h=document.createElement("div");h.id="gc-hint";h.textContent="\uD83D\uDD0A Clique na tela para ligar o som";h.style.cssText="position:fixed;right:14px;bottom:12px;z-index:9;padding:6px 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#9fe;font:600 13px sans-serif;pointer-events:none;opacity:.8;";document.body.appendChild(h);setTimeout(function(){h.style.display="none";},12000);}h.style.display="block";}'
-      + 'function gcSoundOn(){try{if(ytPlayer&&gcSoundPending&&!lastMute){ytPlayer.unMute();ytPlayer.setVolume(100);gcSoundPending=false;gcHint(false);}}catch(e){}}'
+      + 'function gcHint(show){var h=document.getElementById("gc-hint");if(!show){if(h)h.style.display="none";return;}if(!h){h=document.createElement("div");h.id="gc-hint";h.textContent="\uD83D\uDD07 Som desligado \u2014 ligue no mixer (PROJETOR) do app";h.style.cssText="position:fixed;right:14px;bottom:12px;z-index:9;padding:6px 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#9fe;font:600 13px sans-serif;pointer-events:none;opacity:.8;";document.body.appendChild(h);setTimeout(function(){h.style.display="none";},12000);}h.style.display="block";}'
+      + 'function gcApplyMute(){var m=lastMute||projMuted;try{if(ytPlayer){if(m)ytPlayer.mute();else{ytPlayer.unMute();ytPlayer.setVolume(projVol);}}else{gcYtCmd(m?"mute":"unMute");if(!m)gcYtCmd("setVolume",[projVol]);}}catch(e){}try{if(localVideoEl){localVideoEl.muted=m;localVideoEl.volume=projVol/100;}}catch(e){}if(!m){gcSoundPending=false;gcHint(false);gcUnmuteGuard();}}'
+      // Se o navegador pausar o vídeo por causa do "ligar som" sem clique, volta mudo e continua tocando
+      // (nunca fica parado por causa disso) e avisa o mixer pra ele mostrar o mudo ligado.
+      + 'function gcUnmuteGuard(){var n=0;var t=setInterval(function(){n++;var paused=false;try{if(ytPlayer)paused=(ytPlayer.getPlayerState()===2);else if(localVideoEl)paused=localVideoEl.paused;}catch(e){}if(paused&&!gcUserPaused&&!frozenYt){clearInterval(t);try{if(ytPlayer){ytPlayer.mute();ytPlayer.playVideo();}if(localVideoEl){localVideoEl.muted=true;localVideoEl.play().catch(function(){});}}catch(e){}gcSoundPending=true;projMuted=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});return;}if(n>=6)clearInterval(t);},300);}'
+      + 'function gcSoundOn(){if(gcSoundPending&&!lastMute){projMuted=false;gcApplyMute();gcNotify({gcEvt:"sound_on"});}}'
+      + 'function gcFreeze(on){'
+        + 'if(on){if(frozenCanvas||frozenYt)return;'
+          + 'if(localVideoEl){try{var c=document.createElement("canvas");c.width=localVideoEl.videoWidth||1280;c.height=localVideoEl.videoHeight||720;c.getContext("2d").drawImage(localVideoEl,0,0,c.width,c.height);c.style.cssText="position:fixed;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:4";document.body.appendChild(c);frozenCanvas=c;}catch(e){}}'
+          + 'else if(document.getElementById("gc-player")){frozenYt=true;try{if(ytPlayer)ytPlayer.pauseVideo();}catch(e){}gcYtCmd("pauseVideo");}'
+        + '}else{'
+          + 'if(frozenCanvas){try{frozenCanvas.remove();}catch(e){}frozenCanvas=null;}'
+          + 'if(frozenYt){frozenYt=false;try{if(ytPlayer)ytPlayer.playVideo();}catch(e){}gcYtCmd("playVideo");}'
+        + '}'
+      + '}'
       + 'function gcEnsurePlay(mute){'
         + 'var tries=0;var t=setInterval(function(){tries++;var st=-2;try{st=ytPlayer.getPlayerState();}catch(e){}'
           + 'if(st===1){clearInterval(t);gcPrep();return;}'
-          + 'if(tries===4&&!mute){try{ytPlayer.mute();gcSoundPending=true;gcHint(true);}catch(e){}}'
+          + 'if(tries===4&&!mute&&!projMuted){try{ytPlayer.mute();gcSoundPending=true;projMuted=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});}catch(e){}}'
           + 'try{ytPlayer.playVideo();}catch(e){}'
           + 'if(tries>=12)clearInterval(t);'
         + '},500);'
       + '}'
-      + 'function bindYt(mute){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onReady:function(){try{if(mute)ytPlayer.mute();else ytPlayer.unMute();}catch(e){}gcPrep();try{ytPlayer.playVideo();}catch(e){}gcEnsurePlay(mute);},onStateChange:function(e){if(e.data===1){gcPrep();}if(e.data===0){fadeOutEnd();notifyMediaEnded();}}}});}catch(e){}}}'
+      + 'function bindYt(mute){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onReady:function(){try{if(mute||projMuted)ytPlayer.mute();else ytPlayer.unMute();ytPlayer.setVolume(projVol);}catch(e){}gcPrep();try{ytPlayer.playVideo();}catch(e){}gcEnsurePlay(mute);},onStateChange:function(e){gcNotify({gcEvt:"state",s:e.data});if(e.data===1){gcPrep();}if(e.data===0){fadeOutEnd();notifyMediaEnded();}}}});}catch(e){}}}'
       + 'function fadeOutEnd(){'
         + 'if(fading||!ytPlayer)return;fading=true;'
         + 'var startVol=100;try{startVol=ytPlayer.getVolume();}catch(e){}'
@@ -3421,7 +3491,7 @@ function projectionShellHtml() {
         + '},110);'
       + '}'
       + 'function renderVideo(media,mute){'
-        + 'stage.innerHTML="";fading=false;ytPlayer=null;localVideoEl=null;clearCronoInterval();'
+        + 'stage.innerHTML="";fading=false;ytPlayer=null;localVideoEl=null;clearCronoInterval();gcSoundPending=false;gcUserPaused=false;gcHint(false);if(frozenCanvas){try{frozenCanvas.remove();}catch(e){}frozenCanvas=null;}frozenYt=false;'
         + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=hd1080&playsinline=1&enablejsapi=1&mute="+(mute?1:0);'
         + 'var src=media&&media.videoId?("https://www.youtube-nocookie.com/embed/"+media.videoId+"?"+params)'
           + ':media&&media.playlistId?("https://www.youtube-nocookie.com/embed/videoseries?list="+media.playlistId+"&"+params):null;'
@@ -3436,17 +3506,20 @@ function projectionShellHtml() {
       + 'var ytScript=document.createElement("scr"+"ipt");ytScript.src="https://www.youtube.com/iframe_api";document.head.appendChild(ytScript);'
       + 'window.addEventListener("message",function(ev){'
         + 'var d=ev.data;if(!d||typeof d!=="object")return;'
-        + 'if(d.gcType==="media"){lastMute=!!d.mute;renderVideo(d.media,d.mute);}'
-        + 'else if(d.gcType==="imagem")renderImage(d.item);'
-        + 'else if(d.gcType==="localvideo")renderLocalVideo(d.item,d.mute);'
-        + 'else if(d.gcType==="texto")renderText(d.text);'
-        + 'else if(d.gcType==="cronometro")renderCronometro(d.item);'
-        + 'else if(d.gcType==="relogio")renderRelogio();'
+        + 'if(d.gcType==="media"){lastMute=!!d.mute;if(typeof d.vol==="number")projVol=d.vol;projMuted=!!d.pmute;renderVideo(d.media,d.mute);}'
+        + 'else if(d.gcType==="media_volume"){projVol=+d.value;try{if(ytPlayer)ytPlayer.setVolume(projVol);else gcYtCmd("setVolume",[projVol]);}catch(e){}try{if(localVideoEl)localVideoEl.volume=projVol/100;}catch(e){}}'
+        + 'else if(d.gcType==="media_mute"){projMuted=!!d.on;gcApplyMute();}'
+        + 'else if(d.gcType==="freeze"){gcFreeze(!!d.on);}'
+        + 'else if(d.gcType==="imagem"){renderImage(d.item);gcNotify({gcEvt:"state",s:-1});}'
+        + 'else if(d.gcType==="localvideo"){if(typeof d.vol==="number")projVol=d.vol;projMuted=!!d.pmute;renderLocalVideo(d.item,d.mute);}'
+        + 'else if(d.gcType==="texto"){renderText(d.text);gcNotify({gcEvt:"state",s:-1});}'
+        + 'else if(d.gcType==="cronometro"){renderCronometro(d.item);gcNotify({gcEvt:"state",s:-1});}'
+        + 'else if(d.gcType==="relogio"){renderRelogio();gcNotify({gcEvt:"state",s:-1});}'
         + 'else if(d.gcType==="overlay_texto")renderOverlayText(d.item);'
         + 'else if(d.gcType==="overlay_limpar")clearOverlayText();'
         + 'else if(d.gcType==="media_play")playMedia();'
         + 'else if(d.gcType==="media_pause")pauseMedia();'
-        + 'else if(d.gcType==="blank")renderBlank();'
+        + 'else if(d.gcType==="blank"){renderBlank();gcNotify({gcEvt:"state",s:-1});}'
         + 'else if(d.gcType==="close_self"){try{window.close();}catch(e){}}'
         + 'tryFullscreen();'
       + '});'
@@ -3516,9 +3589,9 @@ async function sendToScreenObj(scr, kind, payload, opts) {
 
     const mute = !!(opts && opts.mute);
     const msg = kind === 'media'
-      ? { gcType:'media', media: (payload && typeof payload === 'object') ? payload : { url: payload }, mute }
+      ? { gcType:'media', media: (payload && typeof payload === 'object') ? payload : { url: payload }, mute, vol: projectionAudio.volume, pmute: projectionAudio.muted }
       : kind === 'imagem' ? { gcType:'imagem', item: payload || {} }
-      : kind === 'localvideo' ? { gcType:'localvideo', item: payload || {}, mute }
+      : kind === 'localvideo' ? { gcType:'localvideo', item: payload || {}, mute, vol: projectionAudio.volume, pmute: projectionAudio.muted }
       : kind === 'texto' ? { gcType:'texto', text: payload || '' }
       : kind === 'cronometro' ? { gcType:'cronometro', item: payload || {} }
       : kind === 'relogio' ? { gcType:'relogio' }
@@ -5684,12 +5757,12 @@ function saveBgMusic(churchId, tracks) {
     localStorage.setItem(bgMusicKey(churchId), JSON.stringify(toSave));
   } catch(e) {}
 }
-function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
+function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSlot }) {
   const [tracks, setTracks] = useState(() => {
     const base = [
-      { name:'Fundo 1', mode:'none', fileName:'', videoId:null, playing:false, volume:0, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
-      { name:'Fundo 2', mode:'none', fileName:'', videoId:null, playing:false, volume:0, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
-      { name:'Fundo 3', mode:'none', fileName:'', videoId:null, playing:false, volume:0, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
+      { name:'Fundo 1', mode:'none', fileName:'', videoId:null, playing:false, muted:false, volume:0, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
+      { name:'Fundo 2', mode:'none', fileName:'', videoId:null, playing:false, muted:false, volume:0, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
+      { name:'Fundo 3', mode:'none', fileName:'', videoId:null, playing:false, muted:false, volume:0, search:'', link:'', suggestions:[], results:null, suggestOpen:false, searching:false },
     ];
     // Prioriza o que estiver salvo na nuvem (funciona em qualquer aparelho); se não tiver, usa o
     // que ficou salvo só neste aparelho (localStorage) de antes dessa opção existir.
@@ -5739,6 +5812,54 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
 
   const updateTrack = (i, patch) => setTracks(list => list.map((t,idx)=>idx===i?{...t,...patch}:t));
 
+  // Barra de sinal: arquivo de áudio local tem nível REAL (analisador de áudio); vídeo do YouTube não
+  // deixa o app "ouvir" o som (o player fica em outro site), então a barra mostra um nível indicativo
+  // enquanto toca, proporcional ao fader.
+  const analyserRefs = useRef({});
+  const ensureAnalyser = (i) => {
+    const el = audioRefs[i].current;
+    if (!el) return;
+    const cur = analyserRefs.current[i];
+    if (cur && cur.el === el) { try { cur.ctx.resume(); } catch(e) {} return; }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AC();
+      const src = ctx.createMediaElementSource(el);
+      const an = ctx.createAnalyser(); an.fftSize = 256;
+      src.connect(an); an.connect(ctx.destination);
+      try { ctx.resume(); } catch(e) {}
+      analyserRefs.current[i] = { el, ctx, an, data: new Uint8Array(an.fftSize) };
+    } catch(e) {}
+  };
+  const [levels, setLevels] = useState([0,0,0,0]);
+  const [, forceProj] = useState(0);
+  const [showDetails, setShowDetails] = useState(false);
+  const tracksRef = useRef(tracks); tracksRef.current = tracks;
+  useEffect(() => { const f = () => forceProj(n => n + 1); projectionAudio.listeners.add(f); return () => { projectionAudio.listeners.delete(f); }; }, []);
+  useEffect(() => {
+    if (!visible) return;
+    const iv = setInterval(() => {
+      const now = Date.now();
+      const wob = (k) => 0.42 + 0.38 * Math.abs(Math.sin(now / (190 + k * 37))) + 0.18 * Math.random();
+      const out = tracksRef.current.map((t, i) => {
+        if (!t.playing || t.muted) return 0;
+        const a = analyserRefs.current[i];
+        if (t.mode === 'file' && a) {
+          try {
+            a.an.getByteTimeDomainData(a.data);
+            let sum = 0; for (let k = 0; k < a.data.length; k++) { const x = (a.data[k] - 128) / 128; sum += x * x; }
+            return Math.min(1, Math.sqrt(sum / a.data.length) * 3.4);
+          } catch(e) {}
+        }
+        return Math.min(1, (t.volume / 100) * wob(i));
+      });
+      const anyProj = Object.keys(projectionWindows).some(k => { const w = projectionWindows[k]; return w && !w.closed; });
+      out.push((anyProj && projectionAudio.playing && !projectionAudio.muted) ? Math.min(1, (projectionAudio.volume / 100) * wob(7)) : 0);
+      setLevels(out);
+    }, 80);
+    return () => clearInterval(iv);
+  }, [visible]);
+
   const runSearch = async (i, q) => {
     updateTrack(i, { searching:true, results:null });
     const serverVideos = await searchYoutubeServer(q);
@@ -5784,7 +5905,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
   const applyLiveVolume = (i, v) => {
     const t = tracks[i];
     if (!t) return;
-    const vol = Math.max(0, Math.min(100, v));
+    const vol = t.muted ? 0 : Math.max(0, Math.min(100, v));
     if (t.mode === 'file') {
       const el = audioRefs[i].current;
       if (el) el.volume = vol / 100;
@@ -5838,6 +5959,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
     updateTrack(i, { mode:'file', videoId:null });
     const url = URL.createObjectURL(file);
     const el = audioRefs[i].current;
+    ensureAnalyser(i);
     if (el) {
       el.src = url;
       el.loop = true;
@@ -5862,6 +5984,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
     if (t.mode === 'file') {
       const el = audioRefs[i].current;
       if (!el || !el.src) { alert('Carregue um arquivo de áudio primeiro.'); return; }
+      ensureAnalyser(i);
       if (el.paused) { duckOthers(i); el.play().catch(()=>{}); updateTrack(i, { playing:true }); }
       else { el.pause(); updateTrack(i, { playing:false }); }
     } else if (t.mode === 'youtube') {
@@ -5911,29 +6034,57 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
     tracks.forEach((t, i) => {
       if (t.mode === 'file') {
         const el = audioRefs[i].current;
-        if (el) el.volume = t.volume / 100;
+        if (el) el.volume = (t.muted ? 0 : t.volume) / 100;
       } else if (t.mode === 'youtube') {
         const frame = iframeRefs[i].current;
         if (frame && frame.contentWindow) {
-          ytPostCommand(frame.contentWindow, 'setVolume', [t.volume]);
-          ytPostCommand(frame.contentWindow, t.volume === 0 ? 'mute' : 'unMute');
+          const effVol = t.muted ? 0 : t.volume;
+          ytPostCommand(frame.contentWindow, 'setVolume', [effVol]);
+          ytPostCommand(frame.contentWindow, effVol === 0 ? 'mute' : 'unMute');
         }
       }
     });
-  }, [tracks]);
+  }, [tracks.map(t=>t.mode+'|'+t.videoId+'|'+t.volume+'|'+t.muted).join(';')]);
 
   const onIframeLoad = (i) => {
     // dá um tempinho pro player do YouTube inicializar antes de mandar comandos
     setTimeout(() => {
       const frame = iframeRefs[i].current;
       if (!frame || !frame.contentWindow) return;
-      ytPostCommand(frame.contentWindow, 'unMute');
-      ytPostCommand(frame.contentWindow, 'setVolume', [tracks[i].volume]);
+      const cur = tracksRef.current[i] || {};
+      const effVol = cur.muted ? 0 : (cur.volume || 0);
+      ytPostCommand(frame.contentWindow, effVol === 0 ? 'mute' : 'unMute');
+      ytPostCommand(frame.contentWindow, 'setVolume', [effVol]);
       ytPostCommand(frame.contentWindow, 'playVideo');
     }, 900);
   };
 
+  const muteBtn = (on, onClick, title) => html`
+    <button type="button" onClick=${onClick} title=${title} style=${{width:'30px', height:'24px', borderRadius:'5px', border:'1px solid '+(on ? '#ff2d6f' : 'var(--border-soft)'), background: on ? '#ff2d6f' : 'rgba(0,0,0,0.4)', color: on ? '#000' : 'var(--text-mid)', fontWeight:900, fontSize:'11px', cursor:'pointer', padding:0}}>M</button>
+  `;
+  const stripCol = (key, label, level, vol, onVol, mutedOn, onMute, extra, accent) => html`
+    <div key=${key} style=${{display:'grid', gap:'6px', justifyItems:'center', padding:'8px 4px', borderRadius:'12px', background:'rgba(0,0,0,0.38)', border:'1px solid var(--border-soft)', minWidth:0}}>
+      <div style=${{fontSize:'9px', fontWeight:800, letterSpacing:'0.08em', textTransform:'uppercase', color: accent, maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${label}</div>
+      <div style=${{display:'flex', gap:'7px', alignItems:'stretch'}}>
+        <${LedMeter} level=${mutedOn ? 0 : level} />
+        <input type="range" class="gc-fader" min="0" max="100" value=${vol} onChange=${e=>onVol(e.target.value)} />
+      </div>
+      <div style=${{fontSize:'10px', fontWeight:800, fontVariantNumeric:'tabular-nums', color:'var(--text-hi)'}}>${vol}</div>
+      <div style=${{display:'flex', gap:'4px'}}>${muteBtn(mutedOn, onMute, mutedOn ? 'Mudo ligado — clique pra liberar o som' : 'Silenciar este canal')}${extra}</div>
+    </div>
+  `;
+  const playBtn = (i) => html`
+    <button type="button" onClick=${()=>togglePlay(i)} title="Tocar / pausar este fundo" style=${{width:'30px', height:'24px', borderRadius:'5px', border:'1px solid var(--border-soft)', background:'rgba(0,0,0,0.4)', color:'var(--text-hi)', fontSize:'11px', cursor:'pointer', padding:0}}>${tracks[i].playing ? '⏸' : '▶'}</button>
+  `;
+
   return html`
+    ${topSlot}
+    <div style=${{display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:'6px', marginTop:'10px'}}>
+      ${tracks.map((t,i) => stripCol('f'+i, t.name, levels[i] || 0, t.volume, (v)=>setVolume(i, v), !!t.muted, ()=>updateTrack(i,{muted:!t.muted}), playBtn(i), 'var(--highlight)'))}
+      ${stripCol('proj', 'Projetor', levels[3] || 0, projectionAudio.volume, (v)=>setProjectionVolume(v), projectionAudio.muted, ()=>setProjectionMuted(!projectionAudio.muted), '', '#00b3ff')}
+    </div>
+    <button type="button" onClick=${()=>setShowDetails(v=>!v)} style=${{...btnGhost, width:'100%', marginTop:'10px', padding:'8px', fontSize:'11px', fontWeight:700}}>${showDetails ? '▲ Esconder' : '⚙️ Detalhes dos fundos'} (arquivo, busca no YouTube, link, nuvem)</button>
+    <div style=${{display: showDetails ? 'block' : 'none', marginTop:'10px'}}>
     <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px', marginBottom:'8px', flexWrap:'wrap'}}>
       <div style=${{fontSize:'10px', color:'var(--text-dim)'}}>Fica salvo neste aparelho sozinho. Pra aparecer também em outros aparelhos, salve na nuvem:</div>
       <button type="button" onClick=${salvarNaNuvem} disabled=${cloudStatus==='saving'} style=${{...btnGhost, padding:'6px 12px', fontSize:'11px', fontWeight:700, opacity: cloudStatus==='saving' ? 0.6 : 1, color: cloudStatus==='saved' ? 'var(--success-1)' : cloudStatus==='error' ? 'var(--danger)' : undefined}}>
@@ -5949,17 +6100,6 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
           </div>
 
           <input type="file" accept="audio/*" ref=${fileInputRefs[i]} style=${{display:'none'}} onChange=${e=>onFileChosen(i,e)} />
-          <audio ref=${audioRefs[i]} />
-          ${t.mode === 'youtube' && t.videoId && html`
-            <iframe
-              key=${t.videoId}
-              ref=${iframeRefs[i]}
-              src=${'https://www.youtube-nocookie.com/embed/'+t.videoId+'?enablejsapi=1&autoplay=1&loop=1&playlist='+t.videoId+'&controls=0&playsinline=1'}
-              allow="autoplay; encrypted-media"
-              onLoad=${()=>onIframeLoad(i)}
-              style=${{width:'1px', height:'1px', opacity:0, position:'absolute', pointerEvents:'none'}}
-            ></iframe>
-          `}
 
           <div style=${{display:'flex', gap:'6px'}}>
             <button type="button" onClick=${()=>pickFile(i)} style=${{...btnGhost, padding:'6px 8px', fontSize:'10px', flex:1}}>📁 Arquivo</button>
@@ -6016,45 +6156,46 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch }) {
         </div>
       `)}
     </div>
-  `;
-}
-
-// Mixer flutuante, visível em qualquer aba (não só na Liturgia) — fica montado uma única vez no
-// painel da igreja inteiro, então o áudio continua tocando normalmente mesmo trocando de aba.
-// Um botãozinho fixo no canto abre/fecha o painel completo por cima da tela atual.
-function GlobalMixerWidget({ churchId, church, onUpdateChurch }) {
-  const [open, setOpen] = useState(false);
-  const isMobile = useIsMobile();
-  return html`
-    <div style=${{position:'fixed', right: isMobile ? '12px' : '20px', bottom: 'calc(14px + env(safe-area-inset-bottom,0px))', zIndex:150, display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'10px'}}>
-      ${open && html`
-        <div class="glass fade-up" style=${{width: isMobile ? 'min(92vw, 380px)' : '420px', maxHeight:'min(70vh, 560px)', overflowY:'auto', padding:'14px', borderRadius:'18px', boxShadow:'0 20px 50px -14px rgba(0,0,0,0.55)'}}>
-          <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px'}}>
-            <div style=${{fontSize:'11px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em'}}>🎚️ Fundos Musicais</div>
-            <button onClick=${()=>setOpen(false)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'16px', padding:'2px 6px'}}>✕</button>
-          </div>
-          <${BackgroundAudioMixer} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} />
-        </div>
-      `}
-      <button onClick=${()=>setOpen(v=>!v)} title="Mixer de volume" style=${{width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color:'#fff', background:'linear-gradient(150deg,var(--accent-1),var(--accent-2))', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
-        ${open ? '✕' : '🎚️'}
-      </button>
+    </div>
+    <div aria-hidden="true" style=${{position:'fixed', right:0, bottom:0, width:'1px', height:'1px', overflow:'hidden', opacity:0, pointerEvents:'none'}}>
+      ${tracks.map((t,i) => html`
+        <span key=${'eng'+i}>
+          <audio ref=${audioRefs[i]} />
+          ${t.mode === 'youtube' && t.videoId && html`
+            <iframe
+              key=${t.videoId}
+              ref=${iframeRefs[i]}
+              src=${'https://www.youtube-nocookie.com/embed/'+t.videoId+'?enablejsapi=1&autoplay=1&loop=1&playlist='+t.videoId+'&controls=0&playsinline=1'}
+              allow="autoplay; encrypted-media"
+              onLoad=${()=>onIframeLoad(i)}
+              style=${{width:'1px', height:'1px', border:0}}
+            ></iframe>
+          `}
+        </span>
+      `)}
     </div>
   `;
 }
 
-// Janelinha flutuante de controle rápido da projeção — fica visível em qualquer aba, pro operador não
-// precisar ficar voltando pra Mensagem/Bíblia toda hora só pra pausar um vídeo, avançar pra próxima
-// foto/slide, pedir tela cheia de novo ou fechar tudo. Só aparece um botão redondo discreto (canto
-// inferior esquerdo, pra não brigar com o mixer de áudio que já fica no canto direito); clicando nele
-// abre o painel com os controles.
-function ProjectionMiniControl({ churchId, church, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
-  const [open, setOpen] = useState(false);
-  const [frozen, setFrozen] = useState(() => isProjectionFrozen());
-  const isMobile = useIsMobile();
+// Barra de sinal em LEDs (cores chapadas: verde → amarelo → vermelho). level vai de 0 a 1.
+function LedMeter({ level }) {
+  const N = 14;
+  const lit = Math.max(0, Math.min(N, Math.round((level || 0) * N)));
+  return html`
+    <div style=${{display:'flex', flexDirection:'column-reverse', gap:'2px', height:'150px', width:'10px'}}>
+      ${Array.from({ length: N }, (_, i) => {
+        const on = i < lit;
+        const color = i >= 12 ? '#ff2d6f' : i >= 9 ? '#ffd400' : '#00ff9d';
+        return html`<div key=${i} style=${{flex:1, borderRadius:'1px', background: on ? color : 'rgba(255,255,255,0.07)', boxShadow: on ? '0 0 5px '+color : 'none'}}></div>`;
+      })}
+    </div>
+  `;
+}
+
+// Botões da projeção dentro do console (antes ficavam num botão separado no canto esquerdo).
+function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCurrent, setMensagemCurrent, frozen }) {
   const items = mensagemItems || [];
   const hasNext = items.length > 0 && mensagemCurrent < items.length - 1;
-
   const proximo = () => {
     if (!hasNext) return;
     const newIdx = mensagemCurrent + 1;
@@ -6064,48 +6205,58 @@ function ProjectionMiniControl({ churchId, church, mensagemItems, mensagemCurren
   const play = () => playAllScreens(churchId);
   const pause = () => pauseAllScreens(churchId);
   const telaCheia = () => retryFullscreenAllScreens(churchId);
-  const fechar = () => { setProjectionFrozen(false); setFrozen(false); closeAllProjectionScreens(); };
+  const fechar = () => { setProjectionFrozen(false); closeAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); };
   const fundo = () => sendBackgroundToAllScreens(churchId, church);
-  const alternarCongelar = () => { const next = !isProjectionFrozen(); setProjectionFrozen(next); setFrozen(next); };
-
-  // Botões só com ícone + legenda curtinha embaixo (em vez de texto longo) — pedido do Paulo (28/09):
-  // "os botões das projeções não estão intuitivos, estão tomando espaço de tela". Grade de 3 colunas
-  // deixa o painel bem mais baixo e compacto, e o "title" dá a dica completa pra quem passar o mouse.
-  const iconBtn = (icon, label, title, onClick, extraStyle) => html`
-    <button type="button" onClick=${onClick} title=${title} style=${{
-      display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'3px',
-      padding:'9px 4px', borderRadius:'12px', border:'1px solid var(--border-soft)', background:'rgba(148,163,184,0.08)',
-      color:'var(--text-mid)', cursor:'pointer', ...extraStyle,
-    }}>
+  const congelar = () => setProjectionFrozen(!isProjectionFrozen());
+  const btn = (icon, label, title, onClick, extra) => html`
+    <button type="button" class="gc-console-btn" onClick=${onClick} title=${title} style=${extra || {}}>
       <span style=${{fontSize:'18px'}}>${icon}</span>
-      <span style=${{fontSize:'9px', fontWeight:700}}>${label}</span>
+      <span style=${{fontSize:'9px', fontWeight:800, letterSpacing:'0.06em', textTransform:'uppercase'}}>${label}</span>
     </button>
   `;
-
   return html`
-    <div style=${{position:'fixed', left: isMobile ? '12px' : '20px', bottom: 'calc(14px + env(safe-area-inset-bottom,0px))', zIndex:150, display:'flex', flexDirection:'column', alignItems:'flex-start', gap:'10px'}}>
-      ${open && html`
-        <div class="glass fade-up" style=${{width: isMobile ? 'min(80vw, 230px)' : '210px', padding:'12px', borderRadius:'18px', boxShadow:'0 20px 50px -14px rgba(0,0,0,0.55)', display:'grid', gap:'8px'}}>
-          <div style=${{fontSize:'10.5px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em'}}>🎛️ Projeção</div>
-          ${frozen && html`<div style=${{fontSize:'10px', fontWeight:700, color:'var(--accent-1)', background:'color-mix(in srgb, var(--accent-1) 16%, transparent)', borderRadius:'8px', padding:'5px 7px'}}>❄️ Congelada — a tela não muda até descongelar.</div>`}
-          ${items.length > 0 && html`
-            <div style=${{fontSize:'10px', color:'var(--text-dim)'}}>${items[Math.min(mensagemCurrent, items.length-1)] ? items[Math.min(mensagemCurrent, items.length-1)].title : ''} (${Math.min(mensagemCurrent, items.length-1)+1}/${items.length})</div>
-          `}
-          <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'6px'}}>
-            ${iconBtn('▶️', 'Play', 'Retomar vídeo/música na tela', play)}
-            ${iconBtn('⏸️', 'Pause', 'Pausar vídeo/música na tela', pause)}
-            ${iconBtn('⛶', 'Tela Cheia', 'Forçar tela cheia de novo', telaCheia)}
-            ${iconBtn('🖼️', 'Fundo', 'Projetar a imagem de plano de fundo cadastrada em Configurações', fundo)}
-            ${iconBtn(frozen ? '▶️' : '❄️', frozen ? 'Descong.' : 'Congelar', frozen ? 'Descongelar — volta a aceitar trocas de conteúdo' : 'Congelar — trava o que está na tela até descongelar', alternarCongelar, frozen ? {background:'color-mix(in srgb, var(--accent-1) 22%, transparent)', borderColor:'var(--accent-1)', color:'var(--accent-1)'} : {})}
-            ${iconBtn('✖️', 'Fechar', 'Fechar de vez as janelas de projeção', fechar, {color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'})}
+    <div style=${{display:'grid', gap:'6px'}}>
+      <div style=${{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'6px'}}>
+        ${btn('▶️', 'Play', 'Retomar o vídeo/música nas telas de projeção', play)}
+        ${btn('⏸️', 'Pause', 'Pausar o vídeo/música nas telas de projeção', pause)}
+        ${btn('⛶', 'Tela cheia', 'Pedir tela cheia nas telas de projeção', telaCheia)}
+        ${btn('🖼️', 'Fundo', 'Projetar a imagem de plano de fundo cadastrada em Configurações', fundo)}
+        ${btn('❄️', frozen ? 'Descongelar' : 'Congelar', frozen ? 'Descongelar — a tela volta a mostrar o que está passando' : 'Congelar — a tela segura a imagem atual até descongelar', congelar, frozen ? {background:'#00e5ff', color:'#001418', borderColor:'#00e5ff'} : {})}
+        ${btn('✖️', 'Fechar', 'Fechar de vez as janelas de projeção', fechar, {color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 45%, transparent)'})}
+      </div>
+      ${items.length > 0 && html`
+        <button type="button" onClick=${proximo} disabled=${!hasNext} class="gc-console-btn" style=${{flexDirection:'row', opacity: hasNext ? 1 : 0.4}}>⏭️ <span style=${{fontSize:'10.5px', fontWeight:800}}>Próximo item da Mensagem (${Math.min(mensagemCurrent, items.length-1)+1}/${items.length})</span></button>
+      `}
+    </div>
+  `;
+}
+
+// Console flutuante (canto direito), visível em qualquer aba: botões da projeção + mixer com faders
+// verticais, mudo e barra de sinal (pedido do Paulo, 23/10). Monta na primeira abertura e depois fica
+// montado (só escondido), então a música de fundo não corta ao fechar o painel nem ao trocar de aba.
+function GlobalMixerWidget({ churchId, church, onUpdateChurch, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [, force] = useState(0);
+  const isMobile = useIsMobile();
+  useEffect(() => { const f = () => force(n => n + 1); projectionAudio.listeners.add(f); return () => { projectionAudio.listeners.delete(f); }; }, []);
+  const frozen = isProjectionFrozen();
+  const toggle = () => { setMounted(true); setOpen(v => !v); };
+  return html`
+    <div style=${{position:'fixed', right: isMobile ? '12px' : '20px', bottom: 'calc(14px + env(safe-area-inset-bottom,0px))', zIndex:150, display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'10px'}}>
+      ${mounted && html`
+        <div class="glass" style=${{display: open ? 'block' : 'none', width: isMobile ? 'min(94vw, 420px)' : '440px', maxHeight:'min(82vh, 700px)', overflowY:'auto', padding:'14px', borderRadius:'18px', boxShadow:'0 20px 50px -14px rgba(0,0,0,0.6)'}}>
+          <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px', marginBottom:'10px'}}>
+            <div style=${{fontSize:'11px', fontWeight:800, color:'var(--highlight)', textTransform:'uppercase', letterSpacing:'0.1em'}}>🎛️ Console · Projeção e Som</div>
+            ${frozen && html`<div style=${{fontSize:'10px', fontWeight:800, color:'#001418', background:'#00e5ff', borderRadius:'6px', padding:'3px 8px'}}>❄️ TELA CONGELADA</div>`}
+            <button onClick=${()=>setOpen(false)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'16px', padding:'2px 6px'}}>✕</button>
           </div>
-          ${items.length > 0 && html`
-            <button type="button" onClick=${proximo} disabled=${!hasNext} style=${{...btnGhost, padding:'10px 8px', fontSize:'11.5px', opacity: hasNext ? 1 : 0.4}}>⏭️ Próximo item da Mensagem</button>
-          `}
+          <${BackgroundAudioMixer} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} visible=${open}
+            topSlot=${html`<${ProjectionConsoleButtons} churchId=${churchId} church=${church} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} frozen=${frozen} />`} />
         </div>
       `}
-      <button onClick=${()=>setOpen(v=>!v)} title="Controle da Projeção" style=${{width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color:'#fff', background: frozen ? 'linear-gradient(150deg,#0891b2,#0e7490)' : 'linear-gradient(150deg,var(--accent-2),var(--accent-1))', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
-        ${open ? '✕' : (frozen ? '❄️' : '🎛️')}
+      <button onClick=${toggle} title="Console: projeção e mixer" style=${{width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color: frozen && !open ? '#001418' : '#fff', background: (frozen && !open) ? '#00e5ff' : '#0a8cff', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
+        ${open ? '✕' : (frozen ? '❄️' : '🎚️')}
       </button>
     </div>
   `;
@@ -6367,6 +6518,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
           let lib = null;
           if (a.id === 'a5' || a.name.toLowerCase().includes('informativo mundial')) lib = MEDIA_LIBRARY.find(m => m.title === 'Informativo Mundial das Missões');
           else if (a.id === 'b3' || a.name.toLowerCase().includes('provai e vede')) lib = MEDIA_LIBRARY.find(m => m.title === 'Provai e Vede - Vídeo Oficial');
+          else if (/vida e sa[úu]de/.test(a.name.toLowerCase())) lib = MEDIA_LIBRARY.find(m => m.title === 'Momento Vida e Saúde');
           if (lib) {
             changed = true;
             return { ...a, media: { title: lib.title, url: mediaLibraryUrl(lib), dynamic:true, libTitle: lib.title, playlistId: lib.playlistId || null } };
@@ -8415,8 +8567,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'ferramentas' ? html`<${FerramentasView} key="ferramentas" churchName=${church.name} churchId=${church.id} churchLogo=${church.logoDataUrl || ''} />` : ''}
       ${tab === 'sugestoes' ? html`<${SugestoesView} key="sugestoes" church=${church} />` : ''}
       ${tab === 'config' ? html`<${ConfiguracoesView} key="config" church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
-      <${GlobalMixerWidget} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />
-      <${ProjectionMiniControl} churchId=${church.id} church=${church} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />
+      <${GlobalMixerWidget} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />
     </div>
   `;
 }
