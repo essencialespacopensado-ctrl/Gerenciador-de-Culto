@@ -560,6 +560,42 @@ app.get("/api/search-weekly-videos", async (req, res) => {
   }
 });
 
+// API: vídeo mais recente de uma playlist do YouTube (feed RSS oficial, do mais novo pro mais antigo,
+// só vídeos já publicados). Usado por Provai e Vede / Informativo / Vida e Saúde. Pula vídeos que não
+// podem ser incorporados (oEmbed 401/404) pra nunca projetar um que não abre.
+app.get("/api/latest-from-playlist", async (req, res) => {
+  const id = String(req.query.id || req.query.playlistId || "").trim();
+  if (!/^[A-Za-z0-9_-]{10,60}$/.test(id)) return res.status(400).json({ error: "playlist inválida" });
+  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  try {
+    const feed = await fetch(`https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(id)}`, { headers: { "User-Agent": UA } });
+    if (!feed.ok) return res.status(502).json({ error: "feed indisponível (" + feed.status + ")" });
+    const xml = await feed.text();
+    const entries: { videoId: string; title: string; published: string }[] = [];
+    const re = /<entry>([\s\S]*?)<\/entry>/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(xml))) {
+      const vid = /<yt:videoId>([\w-]{11})<\/yt:videoId>/.exec(m[1]);
+      const title = /<title>([\s\S]*?)<\/title>/.exec(m[1]);
+      const pub = /<published>([^<]+)<\/published>/.exec(m[1]);
+      if (vid) entries.push({ videoId: vid[1], title: title ? title[1].replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'") : "", published: pub ? pub[1] : "" });
+    }
+    entries.sort((a, b) => (b.published || "").localeCompare(a.published || ""));
+    const now = Date.now();
+    for (const e of entries.slice(0, 6)) {
+      if (e.published && Date.parse(e.published) > now) continue;
+      try {
+        const o = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${e.videoId}&format=json`, { headers: { "User-Agent": UA } });
+        if (!o.ok) continue;
+      } catch { /* sem rede pro oEmbed: aceita o vídeo mesmo assim */ }
+      return res.json({ status: "ok", video: e });
+    }
+    return res.json({ status: "empty", video: null });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao ler a playlist" });
+  }
+});
+
 // API: Check if a video can be embedded and diagnose potential playback blocks
 app.get("/api/check-video-embed", async (req, res) => {
   const videoId = req.query.id as string;
