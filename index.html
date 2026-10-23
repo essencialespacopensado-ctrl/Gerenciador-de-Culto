@@ -127,11 +127,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-23.74';
+const APP_VERSION = '2026-10-23.75';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-23.75',
+    date: '23/10/2026',
+    items: [
+      "Projeção: o vídeo não pausa mais por clique na tela. Uma camada transparente fica por cima do player, então tocar/clicar na tela projetada só liga tela cheia e som, sem pausar o vídeo. Pausa e play continuam nos botões do app.",
+    ]
+  },
   {
     version: '2026-10-23.74',
     date: '23/10/2026',
@@ -3412,7 +3419,9 @@ function projectionShellHtml() {
         + 'if(!src){if(media&&media.url)window.location.href=media.url;return;}'
         + 'var iframe=document.createElement("iframe");iframe.id="gc-player";iframe.src=src;'
         + 'iframe.allow="autoplay; encrypted-media; fullscreen";iframe.allowFullscreen=true;'
-        + 'stage.appendChild(iframe);bindYt(mute);'
+        + 'stage.appendChild(iframe);'
+        + 'var ov=document.createElement("div");ov.style.cssText="position:fixed;left:0;top:0;right:0;bottom:0;z-index:5;background:transparent;cursor:none;";stage.appendChild(ov);'
+        + 'bindYt(mute);'
       + '}'
       + 'window.onYouTubeIframeAPIReady=function(){if(document.getElementById("gc-player"))bindYt(lastMute);};'
       + 'var ytScript=document.createElement("scr"+"ipt");ytScript.src="https://www.youtube.com/iframe_api";document.head.appendChild(ytScript);'
@@ -3433,7 +3442,7 @@ function projectionShellHtml() {
         + 'tryFullscreen();'
       + '});'
       + 'tryFullscreen();'
-      + 'document.addEventListener("click",function(){tryFullscreen();gcSoundOn();try{if(ytPlayer)ytPlayer.playVideo();}catch(e){}});'
+      + 'document.addEventListener("click",function(){tryFullscreen();gcSoundOn();});'
       + 'document.addEventListener("touchend",tryFullscreen);'
     + '})();<\/scr'+'ipt>'
     + '</body></html>';
