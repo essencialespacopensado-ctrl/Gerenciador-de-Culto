@@ -42,19 +42,19 @@
       radial-gradient(950px 480px at 108% 6%, var(--glow-2), transparent 60%),
       radial-gradient(800px 460px at 100% 100%, var(--glow-3), transparent 60%),
       radial-gradient(700px 400px at 0% 115%, var(--glow-4), transparent 60%);
-    background-color: var(--bg-page); background-size: 42px 42px, 42px 42px, 200% 200%, 200% 200%, 200% 200%, 200% 200%; animation: aurora 24s ease-in-out infinite;
+    background-color: var(--bg-page); background-size: 42px 42px, 42px 42px, 200% 200%, 200% 200%, 200% 200%, 200% 200%; 
   }
   @keyframes aurora { 0%,100%{background-position:0% 0%;} 50%{background-position:100% 60%;} }
   * { scrollbar-width: thin; scrollbar-color: rgba(99,102,241,.45) transparent; }
   *::-webkit-scrollbar{width:8px;height:8px;} *::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--accent-1),var(--accent-2));border-radius:999px;}
-  .glass{background:var(--glass-bg, #0f172acc);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--border-soft);box-shadow:0 0 22px -12px var(--edge-glow), inset 0 0 0 1px var(--edge-glow);}
+  .glass{background:var(--glass-bg, #0f172acc);border:1px solid var(--border-soft);box-shadow:0 0 22px -12px var(--edge-glow), inset 0 0 0 1px var(--edge-glow);}
   @media (prefers-color-scheme: light){ :root:not([data-theme="dark"]) .glass{background:var(--glass-bg, #ffffffee);} }
   :root[data-theme="dark"] .glass{background:var(--glass-bg, #0f172acc);}
-  .grad-text{background:linear-gradient(90deg,var(--accent-1),var(--accent-3),var(--accent-2),var(--accent-1));background-size:300% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:gf 7s linear infinite;}
+  .grad-text{background:linear-gradient(90deg,var(--accent-1),var(--accent-3),var(--accent-2),var(--accent-1));background-size:300% auto;-webkit-background-clip:text;background-clip:text;color:transparent;}
   @keyframes gf{to{background-position:300% center;}}
   @keyframes fadeUp{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}
   .fade-up{animation:fadeUp .4s cubic-bezier(.22,1,.36,1) both;}
-  .breathe{animation:breathe 4s ease-in-out infinite;} @keyframes breathe{0%,100%{transform:scale(1);}50%{transform:scale(1.05);}}
+  .breathe{} @keyframes breathe{0%,100%{transform:scale(1);}50%{transform:scale(1.05);}}
   button{font-family:inherit;cursor:pointer;box-shadow:0 3px 0 rgba(0,0,0,0.28),0 4px 10px -2px rgba(0,0,0,0.35);transition:transform .16s cubic-bezier(.34,1.56,.64,1),box-shadow .16s ease,filter .16s ease;transform:translateY(0) scale(1);}
   button:not(:disabled):hover{filter:brightness(1.1);transform:translateY(-2px) scale(1.035);box-shadow:0 4px 0 rgba(0,0,0,0.28),0 10px 20px -5px rgba(0,0,0,0.42);}
   button:not(:disabled):active{transform:translateY(1px) scale(0.965);box-shadow:0 1px 0 rgba(0,0,0,0.28),0 2px 4px -1px rgba(0,0,0,0.3);filter:brightness(0.95);}
@@ -127,11 +127,20 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-23.73';
+const APP_VERSION = '2026-10-23.74';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-23.74',
+    date: '23/10/2026',
+    items: [
+      "Projetor = Play: o vídeo agora começa sozinho ao projetar (se o navegador segurar o som, ele inicia mudo e o som liga em seguida; um toque na tela garante o som).",
+      "Vídeos projetados pedem alta resolução (1080p) e vêm com legendas desligadas.",
+      "App mais leve: removidas animações contínuas do fundo e o desfoque de vidro, que pesavam no computador.",
+    ]
+  },
   {
     version: '2026-10-23.73',
     date: '23/10/2026',
@@ -3183,7 +3192,7 @@ function videoEmbedHtml(media) {
   // a reprodução automática). modestbranding/rel/iv_load_policy tiram distrações da tela; playsinline
   // evita que o celular assuma um player nativo separado em vez da nossa própria tela cheia;
   // enablejsapi permite mandar o comando de "play" por script se a reprodução automática for bloqueada.
-  const params = 'autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1&mute=0';
+  const params = 'autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=hd1080&playsinline=1&enablejsapi=1&mute=0';
   const src = media.videoId
     ? 'https://www.youtube-nocookie.com/embed/'+media.videoId+'?'+params
     : media.playlistId
@@ -3374,7 +3383,17 @@ function projectionShellHtml() {
         + 'var fadeMs=500;overlay.style.transition="opacity "+fadeMs+"ms ease";overlay.style.opacity="0";'
         + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";closeIfStageEmpty();},fadeMs);'
       + '}'
-      + 'function bindYt(mute){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onReady:function(){try{if(mute)ytPlayer.mute();else ytPlayer.unMute();}catch(e){}},onStateChange:function(e){if(e.data===0){fadeOutEnd();notifyMediaEnded();}}}});}catch(e){}}}'
+      + 'function gcPrep(){try{ytPlayer.unloadModule&&ytPlayer.unloadModule("captions");}catch(e){}try{ytPlayer.setOption&&ytPlayer.setOption("captions","track",{});}catch(e){}try{ytPlayer.setPlaybackQuality&&ytPlayer.setPlaybackQuality("hd1080");}catch(e){}}'
+      + 'function gcSoundOn(){try{if(ytPlayer&&!lastMute){ytPlayer.unMute();ytPlayer.setVolume(100);}}catch(e){}}'
+      + 'function gcEnsurePlay(mute){'
+        + 'var tries=0;var t=setInterval(function(){tries++;var st=-2;try{st=ytPlayer.getPlayerState();}catch(e){}'
+          + 'if(st===1){clearInterval(t);gcPrep();return;}'
+          + 'if(tries===3&&!mute){try{ytPlayer.mute();}catch(e){}}'
+          + 'try{ytPlayer.playVideo();}catch(e){}'
+          + 'if(tries>=12)clearInterval(t);'
+        + '},500);'
+      + '}'
+      + 'function bindYt(mute){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onReady:function(){try{if(mute)ytPlayer.mute();else ytPlayer.unMute();}catch(e){}gcPrep();try{ytPlayer.playVideo();}catch(e){}gcEnsurePlay(mute);},onStateChange:function(e){if(e.data===1){gcPrep();if(!mute)setTimeout(gcSoundOn,700);}if(e.data===0){fadeOutEnd();notifyMediaEnded();}}}});}catch(e){}}}'
       + 'function fadeOutEnd(){'
         + 'if(fading||!ytPlayer)return;fading=true;'
         + 'var startVol=100;try{startVol=ytPlayer.getVolume();}catch(e){}'
@@ -3387,7 +3406,7 @@ function projectionShellHtml() {
       + '}'
       + 'function renderVideo(media,mute){'
         + 'stage.innerHTML="";fading=false;ytPlayer=null;localVideoEl=null;clearCronoInterval();'
-        + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1&mute="+(mute?1:0);'
+        + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=hd1080&playsinline=1&enablejsapi=1&mute="+(mute?1:0);'
         + 'var src=media&&media.videoId?("https://www.youtube-nocookie.com/embed/"+media.videoId+"?"+params)'
           + ':media&&media.playlistId?("https://www.youtube-nocookie.com/embed/videoseries?list="+media.playlistId+"&"+params):null;'
         + 'if(!src){if(media&&media.url)window.location.href=media.url;return;}'
@@ -3414,7 +3433,7 @@ function projectionShellHtml() {
         + 'tryFullscreen();'
       + '});'
       + 'tryFullscreen();'
-      + 'document.addEventListener("click",tryFullscreen);'
+      + 'document.addEventListener("click",function(){tryFullscreen();gcSoundOn();try{if(ytPlayer)ytPlayer.playVideo();}catch(e){}});'
       + 'document.addEventListener("touchend",tryFullscreen);'
     + '})();<\/scr'+'ipt>'
     + '</body></html>';
