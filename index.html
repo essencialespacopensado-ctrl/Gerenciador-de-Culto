@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-23.80';
+const APP_VERSION = '2026-10-23.81';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-23.81',
+    date: '23/10/2026',
+    items: [
+      "Momento Vida e Saúde não aparece mais repetido: tirei do Hinário o item falso nº 560 (não é hino). O vídeo continua na aba Buscas Semanais e na Liturgia.",
+    ]
+  },
   {
     version: '2026-10-23.80',
     date: '23/10/2026',
@@ -1667,7 +1674,6 @@ const HYMNS = [
   {n:515,t:'Lá no Céu',c:'Pátria Celestial',k:'F',s:'Lá no céu, onde a dor não tem lugar...'},
   {n:530,t:'Quem Sou Eu?',c:'Graça e Salvação',k:'C',s:'Quem sou eu para que o Senhor de todo o mundo conheça o meu nome?...'},
   {n:550,t:'Provai e Vede',c:'Fidelidade e Mordomia',k:'Eb',s:'Provai e vede que o Senhor é bom...'},
-  {n:560,t:'Momento Vida e Saúde',c:'Saúde e Temperança',k:'C',s:'Vídeos informativos sobre saúde e estilo de vida...'},
 ];
 
 const SECTION_LABELS = { escola_sabatina: 'Escola Sabatina', culto_divino: 'Culto Divino', culto: 'Programação' };
