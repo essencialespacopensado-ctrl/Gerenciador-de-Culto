@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-23.79';
+const APP_VERSION = '2026-10-23.80';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-23.80',
+    date: '23/10/2026',
+    items: [
+      "Projeção: o vídeo não pausa mais ao liberar o som. O navegador só deixa ligar o som depois de UM clique na tela projetada; então o vídeo começa mudo, aparece o aviso \"Clique uma vez em qualquer lugar desta tela para liberar o som\", e depois desse clique o som, o M e o fader do PROJETOR passam a funcionar só pelo app (nos vídeos seguintes, já abre com som).",
+    ]
+  },
   {
     version: '2026-10-23.79',
     date: '23/10/2026',
@@ -3425,7 +3432,7 @@ function projectionShellHtml() {
       // Programação Automática do Modo Ao Vivo pra nunca cortar um vídeo no meio, esperando o fim de
       // verdade em vez de um tempo fixo "no chute".
       + 'function notifyMediaEnded(){try{if(window.opener&&!window.opener.closed)window.opener.postMessage({gcType:"gc_media_ended"},"*");}catch(e){}}'
-      + 'function renderLocalVideo(item,mute){stage.innerHTML="";fading=false;ytPlayer=null;clearCronoInterval();var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;v.muted=!!mute||projMuted;v.volume=projVol/100;v.addEventListener("ended",function(){gcNotify({gcEvt:"state",s:0});notifyMediaEnded();});v.addEventListener("playing",function(){gcNotify({gcEvt:"state",s:1});});v.addEventListener("pause",function(){gcNotify({gcEvt:"state",s:2});});gcUserPaused=false;stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
+      + 'function renderLocalVideo(item,mute){if(!mute&&!projMuted&&!gcCanSound()){projMuted=true;gcSoundPending=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});}stage.innerHTML="";fading=false;ytPlayer=null;clearCronoInterval();var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;v.muted=!!mute||projMuted;v.volume=projVol/100;v.addEventListener("ended",function(){gcNotify({gcEvt:"state",s:0});notifyMediaEnded();});v.addEventListener("playing",function(){gcNotify({gcEvt:"state",s:1});});v.addEventListener("pause",function(){gcNotify({gcEvt:"state",s:2});});gcUserPaused=false;stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
       // Play/Pause explícitos (botões separados, pedido do Paulo 25/09) do vídeo (local ou do
       // YouTube) que estiver tocando agora — usado pelo controle miniatura na janela principal.
       // Sem vídeo nenhum carregado ainda, não faz nada (não dá erro).
@@ -3476,8 +3483,9 @@ function projectionShellHtml() {
         + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";closeIfStageEmpty();},fadeMs);'
       + '}'
       + 'function gcPrep(){try{ytPlayer.unloadModule&&ytPlayer.unloadModule("captions");}catch(e){}try{ytPlayer.setOption&&ytPlayer.setOption("captions","track",{});}catch(e){}try{ytPlayer.setPlaybackQuality&&ytPlayer.setPlaybackQuality("hd1080");}catch(e){}}'
-      + 'function gcHint(show){var h=document.getElementById("gc-hint");if(!show){if(h)h.style.display="none";return;}if(!h){h=document.createElement("div");h.id="gc-hint";h.textContent="\uD83D\uDD07 Som desligado \u2014 ligue no mixer (PROJETOR) do app";h.style.cssText="position:fixed;right:14px;bottom:12px;z-index:9;padding:6px 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#9fe;font:600 13px sans-serif;pointer-events:none;opacity:.8;";document.body.appendChild(h);setTimeout(function(){h.style.display="none";},12000);}h.style.display="block";}'
-      + 'function gcApplyMute(){var m=lastMute||projMuted;try{if(ytPlayer){if(m)ytPlayer.mute();else{ytPlayer.unMute();ytPlayer.setVolume(projVol);}}else{gcYtCmd(m?"mute":"unMute");if(!m)gcYtCmd("setVolume",[projVol]);}}catch(e){}try{if(localVideoEl){localVideoEl.muted=m;localVideoEl.volume=projVol/100;}}catch(e){}if(!m){gcSoundPending=false;gcHint(false);gcUnmuteGuard();}}'
+      + 'function gcHint(show){var h=document.getElementById("gc-hint");if(!show){if(h)h.style.display="none";return;}if(!h){h=document.createElement("div");h.id="gc-hint";h.textContent="\uD83D\uDD0A Clique uma vez em qualquer lugar desta tela para liberar o som";h.style.cssText="position:fixed;right:14px;bottom:12px;z-index:9;padding:6px 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#9fe;font:600 13px sans-serif;pointer-events:none;opacity:.8;";document.body.appendChild(h);setTimeout(function(){h.style.display="none";},30000);}h.style.display="block";}'
+      + 'function gcCanSound(){return !navigator.userActivation||navigator.userActivation.hasBeenActive;}'
+      + 'function gcApplyMute(){var m=lastMute||projMuted;if(!m&&!gcCanSound()){projMuted=true;gcSoundPending=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});m=true;}try{if(ytPlayer){if(m)ytPlayer.mute();else{ytPlayer.unMute();ytPlayer.setVolume(projVol);}}else{gcYtCmd(m?"mute":"unMute");if(!m)gcYtCmd("setVolume",[projVol]);}}catch(e){}try{if(localVideoEl){localVideoEl.muted=m;localVideoEl.volume=projVol/100;}}catch(e){}if(!m){gcSoundPending=false;gcHint(false);gcUnmuteGuard();}}'
       // Se o navegador pausar o vídeo por causa do "ligar som" sem clique, volta mudo e continua tocando
       // (nunca fica parado por causa disso) e avisa o mixer pra ele mostrar o mudo ligado.
       + 'function gcUnmuteGuard(){var n=0;var t=setInterval(function(){n++;var paused=false;try{if(ytPlayer)paused=(ytPlayer.getPlayerState()===2);else if(localVideoEl)paused=localVideoEl.paused;}catch(e){}if(paused&&!gcUserPaused&&!frozenYt){clearInterval(t);try{if(ytPlayer){ytPlayer.mute();ytPlayer.playVideo();}if(localVideoEl){localVideoEl.muted=true;localVideoEl.play().catch(function(){});}}catch(e){}gcSoundPending=true;projMuted=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});return;}if(n>=6)clearInterval(t);},300);}'
@@ -3521,7 +3529,8 @@ function projectionShellHtml() {
       + '}'
       + 'function renderVideo(media,mute){'
         + 'stage.innerHTML="";fading=false;ytPlayer=null;localVideoEl=null;clearCronoInterval();gcSoundPending=false;gcAutoTried=false;gcUserPaused=false;gcHint(false);if(frozenCanvas){try{frozenCanvas.remove();}catch(e){}frozenCanvas=null;}frozenYt=false;'
-        + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=hd1080&playsinline=1&enablejsapi=1&mute="+(mute?1:0);'
+        + 'if(!mute&&!projMuted&&!gcCanSound()){projMuted=true;gcSoundPending=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});}'
+        + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=hd1080&playsinline=1&enablejsapi=1&mute="+((mute||projMuted)?1:0);'
         + 'var src=media&&media.videoId?("https://www.youtube-nocookie.com/embed/"+media.videoId+"?"+params)'
           + ':media&&media.playlistId?("https://www.youtube-nocookie.com/embed/videoseries?list="+media.playlistId+"&"+params):null;'
         + 'if(!src){if(media&&media.url)window.location.href=media.url;return;}'
