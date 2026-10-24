@@ -135,11 +135,21 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-23.78';
+const APP_VERSION = '2026-10-23.79';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-23.79',
+    date: '23/10/2026',
+    items: [
+      "Console fixo no lado direito da tela (como uma gaveta): o conteúdo do app se ajusta e nada fica por baixo dele.",
+      "Vídeo projetado agora tenta ligar o som sozinho assim que começa a tocar; se o navegador não deixar, continua mudo e o M do PROJETOR libera.",
+      "Fader do PROJETOR funciona mesmo com o canal no mudo: ao mexer, ele já libera o som.",
+      "Mais leve: os fundos musicais agora abrem pausados e com volume baixo, e só carregam o player do YouTube quando você dá play.",
+    ]
+  },
   {
     version: '2026-10-23.78',
     date: '23/10/2026',
@@ -3354,7 +3364,7 @@ function projectionShellHtml() {
       + 'var stage=document.getElementById("gc-stage");'
       + 'var overlay=document.getElementById("gc-overlay");'
       + 'var overlayTimer=null,overlayClearTimer=null;'
-      + 'var ytPlayer=null,fading=false;var localVideoEl=null;var lastMute=false;var projVol=100,projMuted=false;var gcSoundPending=false;var gcUserPaused=false;var frozenCanvas=null,frozenYt=false,frozenWanted=false,capVideo=null,capBtn=null;'
+      + 'var ytPlayer=null,fading=false;var localVideoEl=null;var lastMute=false;var projVol=100,projMuted=false;var gcSoundPending=false;var gcUserPaused=false;var frozenCanvas=null,frozenYt=false,frozenWanted=false,capVideo=null,capBtn=null,gcAutoTried=false;'
       + 'function gcNotify(o){try{if(window.opener)window.opener.postMessage(o,"*");}catch(e){}}'
       + 'function gcYtCmd(f,a){try{var fr=document.getElementById("gc-player");if(fr&&fr.contentWindow)fr.contentWindow.postMessage(JSON.stringify({event:"command",func:f,args:a||[]}),"*");}catch(e){}}'
       + 'var cronoInterval=null,cronoItem=null;'
@@ -3492,7 +3502,7 @@ function projectionShellHtml() {
       + '}'
       + 'function gcEnsurePlay(mute){'
         + 'var tries=0;var t=setInterval(function(){tries++;var st=-2;try{st=ytPlayer.getPlayerState();}catch(e){}'
-          + 'if(st===1){clearInterval(t);gcPrep();return;}'
+          + 'if(st===1){clearInterval(t);gcPrep();if(gcSoundPending&&!lastMute&&!gcAutoTried){gcAutoTried=true;setTimeout(gcSoundOn,700);}return;}'
           + 'if(tries===4&&!mute&&!projMuted){try{ytPlayer.mute();gcSoundPending=true;projMuted=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});}catch(e){}}'
           + 'try{ytPlayer.playVideo();}catch(e){}'
           + 'if(tries>=12)clearInterval(t);'
@@ -3510,7 +3520,7 @@ function projectionShellHtml() {
         + '},110);'
       + '}'
       + 'function renderVideo(media,mute){'
-        + 'stage.innerHTML="";fading=false;ytPlayer=null;localVideoEl=null;clearCronoInterval();gcSoundPending=false;gcUserPaused=false;gcHint(false);if(frozenCanvas){try{frozenCanvas.remove();}catch(e){}frozenCanvas=null;}frozenYt=false;'
+        + 'stage.innerHTML="";fading=false;ytPlayer=null;localVideoEl=null;clearCronoInterval();gcSoundPending=false;gcAutoTried=false;gcUserPaused=false;gcHint(false);if(frozenCanvas){try{frozenCanvas.remove();}catch(e){}frozenCanvas=null;}frozenYt=false;'
         + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=hd1080&playsinline=1&enablejsapi=1&mute="+(mute?1:0);'
         + 'var src=media&&media.videoId?("https://www.youtube-nocookie.com/embed/"+media.videoId+"?"+params)'
           + ':media&&media.playlistId?("https://www.youtube-nocookie.com/embed/videoseries?list="+media.playlistId+"&"+params):null;'
@@ -3526,7 +3536,7 @@ function projectionShellHtml() {
       + 'window.addEventListener("message",function(ev){'
         + 'var d=ev.data;if(!d||typeof d!=="object")return;'
         + 'if(d.gcType==="media"){lastMute=!!d.mute;if(typeof d.vol==="number")projVol=d.vol;projMuted=!!d.pmute;renderVideo(d.media,d.mute);}'
-        + 'else if(d.gcType==="media_volume"){projVol=+d.value;try{if(ytPlayer)ytPlayer.setVolume(projVol);gcYtCmd("setVolume",[projVol]);}catch(e){}try{if(localVideoEl)localVideoEl.volume=projVol/100;}catch(e){}}'
+        + 'else if(d.gcType==="media_volume"){projVol=+d.value;if(projVol>0&&(projMuted||gcSoundPending)){projMuted=false;gcApplyMute();gcNotify({gcEvt:"sound_on"});}try{if(ytPlayer)ytPlayer.setVolume(projVol);gcYtCmd("setVolume",[projVol]);}catch(e){}try{if(localVideoEl)localVideoEl.volume=projVol/100;}catch(e){}}'
         + 'else if(d.gcType==="media_mute"){projMuted=!!d.on;gcApplyMute();}'
         + 'else if(d.gcType==="freeze"){gcFreeze(!!d.on);}'
         + 'else if(d.gcType==="imagem"){renderImage(d.item);gcNotify({gcEvt:"state",s:-1});}'
@@ -5791,7 +5801,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
       const s = saved[i];
       if (!s) return b;
       const isYoutube = s.mode === 'youtube' && s.videoId;
-      return { ...b, name: s.name || b.name, mode: isYoutube ? 'youtube' : 'none', videoId: isYoutube ? s.videoId : null, playing: isYoutube, volume: typeof s.volume === 'number' ? s.volume : b.volume };
+      return { ...b, name: s.name || b.name, mode: isYoutube ? 'youtube' : 'none', videoId: isYoutube ? s.videoId : null, playing: false, volume: typeof s.volume === 'number' ? Math.min(20, s.volume) : b.volume };
     });
   });
   const [cloudStatus, setCloudStatus] = useState('idle'); // idle | saving | saved | error
@@ -6008,7 +6018,8 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
       else { el.pause(); updateTrack(i, { playing:false }); }
     } else if (t.mode === 'youtube') {
       const frame = iframeRefs[i].current;
-      if (!frame) { alert('Cole um link do YouTube primeiro.'); return; }
+      if (!frame && !t.videoId) { alert('Cole um link do YouTube primeiro.'); return; }
+      if (!frame) { duckOthers(i); updateTrack(i, { playing:true }); return; }
       if (t.playing) { ytPostCommand(frame.contentWindow, 'pauseVideo'); updateTrack(i, { playing:false }); }
       else { duckOthers(i); ytPostCommand(frame.contentWindow, 'playVideo'); updateTrack(i, { playing:true }); }
     } else {
@@ -6180,7 +6191,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
       ${tracks.map((t,i) => html`
         <span key=${'eng'+i}>
           <audio ref=${audioRefs[i]} />
-          ${t.mode === 'youtube' && t.videoId && html`
+          ${t.mode === 'youtube' && t.videoId && t.playing && html`
             <iframe
               key=${t.videoId}
               ref=${iframeRefs[i]}
@@ -6259,25 +6270,33 @@ function GlobalMixerWidget({ churchId, church, onUpdateChurch, mensagemItems, me
   const [, force] = useState(0);
   const isMobile = useIsMobile();
   useEffect(() => { const f = () => force(n => n + 1); projectionAudio.listeners.add(f); return () => { projectionAudio.listeners.delete(f); }; }, []);
+  // Gaveta fixa no lado direito: no computador o app encolhe pra ela não ficar por cima do conteúdo.
+  useEffect(() => {
+    const el = document.body;
+    el.style.boxSizing = 'border-box';
+    el.style.paddingRight = (open && !isMobile) ? '452px' : '';
+    return () => { el.style.paddingRight = ''; };
+  }, [open, isMobile]);
   const frozen = isProjectionFrozen();
   const toggle = () => { setMounted(true); setOpen(v => !v); };
+  const drawerW = isMobile ? 'min(94vw, 420px)' : '440px';
   return html`
-    <div style=${{position:'fixed', right: isMobile ? '12px' : '20px', bottom: 'calc(14px + env(safe-area-inset-bottom,0px))', zIndex:150, display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'10px'}}>
-      ${mounted && html`
-        <div class="glass" style=${{display: open ? 'block' : 'none', width: isMobile ? 'min(94vw, 420px)' : '440px', maxHeight:'min(82vh, 700px)', overflowY:'auto', padding:'14px', borderRadius:'18px', boxShadow:'0 20px 50px -14px rgba(0,0,0,0.6)'}}>
-          <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px', marginBottom:'10px'}}>
-            <div style=${{fontSize:'11px', fontWeight:800, color:'var(--highlight)', textTransform:'uppercase', letterSpacing:'0.1em'}}>🎛️ Console · Projeção e Som</div>
-            ${frozen && html`<div style=${{fontSize:'10px', fontWeight:800, color:'#001418', background:'#00e5ff', borderRadius:'6px', padding:'3px 8px'}}>❄️ TELA CONGELADA</div>`}
-            <button onClick=${()=>setOpen(false)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'16px', padding:'2px 6px'}}>✕</button>
-          </div>
-          <${BackgroundAudioMixer} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} visible=${open}
-            topSlot=${html`<${ProjectionConsoleButtons} churchId=${churchId} church=${church} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} frozen=${frozen} />`} />
+    ${mounted && html`
+      <div class="glass" style=${{display: open ? 'block' : 'none', position:'fixed', top:0, right:0, bottom:0, width: drawerW, zIndex:150, overflowY:'auto', padding:'14px', borderRadius:'18px 0 0 18px', boxShadow:'-14px 0 40px -16px rgba(0,0,0,0.7)'}}>
+        <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px', marginBottom:'10px'}}>
+          <div style=${{fontSize:'11px', fontWeight:800, color:'var(--highlight)', textTransform:'uppercase', letterSpacing:'0.1em'}}>🎛️ Console · Projeção e Som</div>
+          ${frozen && html`<div style=${{fontSize:'10px', fontWeight:800, color:'#001418', background:'#00e5ff', borderRadius:'6px', padding:'3px 8px'}}>❄️ TELA CONGELADA</div>`}
+          <button onClick=${()=>setOpen(false)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'16px', padding:'2px 6px'}}>✕</button>
         </div>
-      `}
-      <button onClick=${toggle} title="Console: projeção e mixer" style=${{width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color: frozen && !open ? '#001418' : '#fff', background: (frozen && !open) ? '#00e5ff' : '#0a8cff', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
+        <${BackgroundAudioMixer} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} visible=${open}
+          topSlot=${html`<${ProjectionConsoleButtons} churchId=${churchId} church=${church} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} frozen=${frozen} />`} />
+      </div>
+    `}
+    ${!(open && isMobile) && html`
+      <button onClick=${toggle} title="Console: projeção e mixer" style=${{position:'fixed', right: (open && !isMobile) ? '452px' : (isMobile ? '12px' : '20px'), bottom:'calc(14px + env(safe-area-inset-bottom,0px))', zIndex:151, width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color: frozen && !open ? '#001418' : '#fff', background: (frozen && !open) ? '#00e5ff' : '#0a8cff', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
         ${open ? '✕' : (frozen ? '❄️' : '🎚️')}
       </button>
-    </div>
+    `}
   `;
 }
 
