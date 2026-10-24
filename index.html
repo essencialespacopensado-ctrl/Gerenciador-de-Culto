@@ -135,11 +135,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-23.81';
+const APP_VERSION = '2026-10-23.82';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-23.82',
+    date: '23/10/2026',
+    items: [
+      "Console/mixer agora fica FIXO aberto no lado direito (no computador) assim que o app abre; o botão 🎚️ ou o ✕ fecha, e ele lembra a sua escolha.",
+      "Corrigido: o botão de projetar do Momento Vida e Saúde (e Provai e Vede/Informativo) não aparecia sozinho na Liturgia depois de ligar o vídeo da semana; agora aparece na hora.",
+    ]
+  },
   {
     version: '2026-10-23.81',
     date: '23/10/2026',
@@ -2574,7 +2582,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
   // Quando é "fixo semanal", a mídia é atualizada de fora (pela Trilhas Fixas, em Gestão) — sem isso,
   // o estado local `media` (que só reflete o valor de quando o card foi montado) ficava desatualizado
   // e o botão de Projetar nunca aparecia mesmo depois de cadastrar a URL.
-  useEffect(() => { if (act.weeklyFixed) setMedia(act.media || null); }, [act.weeklyFixed, act.media]);
+  useEffect(() => { if (act.weeklyFixed || (act.media && act.media.dynamic)) setMedia(act.media || null); }, [act.weeklyFixed, act.media]);
 
   const save = () => {
     onEdit({ ...act, name: name.trim() || act.name, responsible: responsible.trim() || 'A definir', category, time: time || '--:--', media: media || null, idleSeconds: idleSeconds === '' ? null : Math.max(0, Number(idleSeconds) || 0) });
@@ -6280,10 +6288,13 @@ function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCur
 // verticais, mudo e barra de sinal (pedido do Paulo, 23/10). Monta na primeira abertura e depois fica
 // montado (só escondido), então a música de fundo não corta ao fechar o painel nem ao trocar de aba.
 function GlobalMixerWidget({ churchId, church, onUpdateChurch, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
-  const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  const [, force] = useState(0);
   const isMobile = useIsMobile();
+  // Fixo no lado direito: no computador já abre sozinho (e lembra se o Paulo fechou).
+  const startOpen = (() => { try { return !isMobile && localStorage.getItem('gc_console_open') !== '0'; } catch (e) { return !isMobile; } })();
+  const [open, setOpen] = useState(startOpen);
+  const [mounted, setMounted] = useState(startOpen);
+  const [, force] = useState(0);
+  useEffect(() => { try { localStorage.setItem('gc_console_open', open ? '1' : '0'); } catch (e) {} }, [open]);
   useEffect(() => { const f = () => force(n => n + 1); projectionAudio.listeners.add(f); return () => { projectionAudio.listeners.delete(f); }; }, []);
   // Gaveta fixa no lado direito: no computador o app encolhe pra ela não ficar por cima do conteúdo.
   useEffect(() => {
