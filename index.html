@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.83';
+const APP_VERSION = '2026-10-30.84';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.84',
+    date: '30/10/2026',
+    items: [
+      "Provai e Vede agora pula a versão em Libras e pega sempre o vídeo normal mais novo.",
+    ]
+  },
   {
     version: '2026-10-30.83',
     date: '30/10/2026',
@@ -1725,7 +1732,7 @@ const MEDIA_LIBRARY = [
   { title:'Ele Vem - Fernanda Brum', query:'ele vem fernanda brum playback' },
   { title:'Grande é o Senhor', query:'grande e o senhor playback adventista' },
   { title:'Águas Purificadoras', query:'aguas purificadoras playback adventista' },
-  { title:'Provai e Vede - Vídeo Oficial', query:'provai e vede adventista video oficial', dynamic:true, directUrl:'https://www.youtube.com/@provaievedeoficial', playlistId:'UUR5me469JF9P-ZkOG3TkPmg' },
+  { title:'Provai e Vede - Vídeo Oficial', query:'provai e vede adventista video oficial', dynamic:true, directUrl:'https://www.youtube.com/@provaievedeoficial', exclude:'libras', playlistId:'UUR5me469JF9P-ZkOG3TkPmg' },
   // O canal @daniellocutor (Daniel Gonçalves) faz locução/dublagem pra vários projetos, não só esse —
   // por isso o "último vídeo do canal" às vezes vinha em outro idioma (era de outro projeto dele).
   // Corrigido pra usar a PLAYLIST oficial da Adventistas Brasil dedicada só a esse programa (2026),
@@ -5229,7 +5236,7 @@ function BuscasSemanaisView({ churchId }) {
       const lib = MEDIA_LIBRARY.find(m => m.title === libTitleFor(it.key));
       if (!lib) return;
       let v = null;
-      if (lib.playlistId) v = await fetchLatestFromPlaylist(lib.playlistId);
+      if (lib.playlistId) v = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude);
       if (!v || !v.videoId) {
         const r = await searchYoutubeServer(lib.query);
         if (r && r[0] && r[0].videoId) v = { videoId: r[0].videoId, title: r[0].title || '' };
@@ -5790,11 +5797,11 @@ async function searchYoutubeServer(query) {
 // trazia um vídeo antigo/popular em vez do lançado no sábado mais recente; a playlist de uploads é
 // sempre do mais novo pro mais antigo de verdade). Usada pelos 3 itens que mudam toda semana
 // (Provai e Vede, Informativo Mundial das Missões, Momento Vida e Saúde).
-async function fetchLatestFromPlaylist(playlistId) {
+async function fetchLatestFromPlaylist(playlistId, exclude) {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch('/api/latest-from-playlist?id=' + encodeURIComponent(playlistId), { signal: ctrl.signal });
+    const res = await fetch('/api/latest-from-playlist?id=' + encodeURIComponent(playlistId) + (exclude ? '&exclude=' + encodeURIComponent(exclude) : ''), { signal: ctrl.signal });
     clearTimeout(timer);
     if (!res.ok) return null;
     const data = await res.json();
@@ -5805,7 +5812,7 @@ async function fetchLatestFromPlaylist(playlistId) {
 // só cai pra busca por palavra-chave se a playlist falhar ou o item não tiver playlistId.
 async function fetchDynamicVideoId(lib) {
   if (lib.playlistId) {
-    const fromPlaylist = await fetchLatestFromPlaylist(lib.playlistId);
+    const fromPlaylist = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude);
     if (fromPlaylist && fromPlaylist.videoId) return fromPlaylist.videoId;
   }
   const results = await searchYoutubeServer(lib.query);
