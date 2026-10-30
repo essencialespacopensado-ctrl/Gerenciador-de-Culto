@@ -584,6 +584,11 @@ app.get("/api/latest-from-playlist", async (req, res) => {
     const now = Date.now();
     let excludeRe: RegExp | null = null;
     try { const ex = String(req.query.exclude || "").trim(); if (ex && ex.length < 60) excludeRe = new RegExp(ex, "i"); } catch { excludeRe = null; }
+    // byEp=1: o "último" é o de maior número de episódio no título ("EP 135 - ..."), não o que subiu por último.
+    if (String(req.query.byEp || "") === "1") {
+      const epNum = (t: string) => { const m = /\bEP\.?\s*(\d{1,4})\b/i.exec(t); return m ? parseInt(m[1], 10) : -1; };
+      entries.sort((a, b) => (epNum(b.title) - epNum(a.title)) || (b.published || "").localeCompare(a.published || ""));
+    }
     for (const e of entries.slice(0, 15)) {
       if (e.published && Date.parse(e.published) > now) continue;
       if (excludeRe && excludeRe.test(e.title)) continue;
