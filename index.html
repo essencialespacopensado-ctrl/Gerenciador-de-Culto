@@ -135,11 +135,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.91';
+const APP_VERSION = '2026-10-30.92';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.92',
+    date: '30/10/2026',
+    items: [
+      "Provai e Vede, Informativo e Vida e Saúde da Liturgia agora são conferidos de novo todo dia ao abrir o app (antes ficavam presos no vídeo escolhido na primeira vez).",
+      "Controle Remoto: se o celular mandar projetar com a projeção fechada no computador, o celular avisa o motivo; e o 📱 do computador principal ganha uma bolinha vermelha quando a projeção está fechada.",
+    ]
+  },
   {
     version: '2026-10-30.91',
     date: '30/10/2026',
@@ -6418,6 +6426,8 @@ function useChurchDoc(docId) {
   return d;
 }
 function remoteProjectMedia(churchId, media, itemKey, which) {
+  let abertas = 0; try { abertas = Object.keys(projectionWindows).filter(k => projectionWindows[k] && !projectionWindows[k].closed).length; } catch (e) {}
+  if (abertas === 0) return 'A projeção não está aberta no computador principal. Lá, toque em 📱 > "Preparar projeção e som" e tente de novo.';
   const enabled = loadEnabledScreens(churchId);
   if (enabled.length === 0) return 'Nenhuma tela habilitada na aba Telas.';
   let targets;
@@ -6574,7 +6584,7 @@ function RemoteControl({ churchId, church }) {
   const btnRight = gcReservedRight ? gcReservedRight : (isMobile ? 12 : 20);
 
   return html`
-    <button type="button" onClick=${()=>setOpen(true)} title="Controle Remoto: comandar o computador principal pelo celular" style=${{position:'fixed', right: btnRight+'px', bottom:'calc(76px + env(safe-area-inset-bottom,0px))', zIndex:151, width:'46px', height:'46px', borderRadius:'50%', border:'1px solid var(--border-soft)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', color:'#fff', background:'#0f172a', boxShadow:'0 10px 24px -10px rgba(0,0,0,0.55)'}}>📱</button>
+    <button type="button" onClick=${()=>setOpen(true)} title="Controle Remoto: comandar o computador principal pelo celular" style=${{position:'fixed', right: btnRight+'px', bottom:'calc(76px + env(safe-area-inset-bottom,0px))', zIndex:151, width:'46px', height:'46px', borderRadius:'50%', border:'1px solid var(--border-soft)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', color:'#fff', background:'#0f172a', boxShadow:'0 10px 24px -10px rgba(0,0,0,0.55)'}}>📱${isMain && !Object.keys(projectionWindows).some(k => projectionWindows[k] && !projectionWindows[k].closed) && html`<span title="Projeção fechada: toque aqui e em Preparar projeção e som" style=${{position:'absolute', top:'2px', right:'2px', width:'11px', height:'11px', borderRadius:'50%', background:'#ef4444', border:'2px solid #0f172a'}}></span>`}</button>
     ${open && html`
       <div style=${{position:'fixed', inset:0, background:'rgba(2,6,23,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:220, padding:'12px'}} onClick=${()=>setOpen(false)}>
         <div class="glass fade-up" style=${{maxWidth:'520px', width:'100%', padding:'18px', borderRadius:'20px', display:'grid', gap:'12px', maxHeight:'90vh', overflowY:'auto'}} onClick=${e=>e.stopPropagation()}>
@@ -6982,7 +6992,9 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   // pulando pré-estreias agendadas), com a busca por palavra-chave só como reserva.
   useEffect(() => {
     const suffix = weekDateSuffix();
-    const stale = activities.filter(a => a.media && a.media.dynamic && a.media.libTitle && !(a.media.title || '').includes(suffix));
+    const hojeKey = remoteToday();
+    // Re-confere o vídeo da semana pelo menos 1 vez por dia (antes só quando mudava a semana, e ficava preso num vídeo antigo/errado).
+    const stale = activities.filter(a => a.media && a.media.dynamic && a.media.libTitle && (!(a.media.title || '').includes(suffix) || a.media.fetchedOn !== hojeKey));
     if (stale.length === 0) return;
     let cancelled = false;
     (async () => {
@@ -6993,7 +7005,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
         if (cancelled) return;
         setActivities(list => list.map(act => {
           if (act.id !== a.id || !act.media || !act.media.dynamic) return act;
-          return { ...act, media: { ...act.media, title: lib.title + ' (' + suffix + ')', videoId: videoId || act.media.videoId || null } };
+          return { ...act, media: { ...act.media, title: lib.title + ' (' + suffix + ')', videoId: videoId || act.media.videoId || null, ...(videoId ? { fetchedOn: hojeKey } : {}) } };
         }));
       }
     })();
