@@ -596,6 +596,15 @@ app.get("/api/latest-from-playlist", async (req, res) => {
         const o = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${e.videoId}&format=json`, { headers: { "User-Agent": UA } });
         if (!o.ok) continue;
       } catch { /* sem rede pro oEmbed: aceita o vídeo mesmo assim */ }
+      // Pula estreias agendadas / vídeos que ainda não estão no ar (o feed lista eles com a data do upload).
+      try {
+        const w = await fetch(`https://www.youtube.com/watch?v=${e.videoId}`, { headers: { "User-Agent": UA, "Accept-Language": "pt-BR,pt;q=0.9", "Cookie": "CONSENT=YES+1; SOCS=CAI" } });
+        if (w.ok) {
+          const html = await w.text();
+          const st = /"playabilityStatus":\{"status":"([A-Z_]+)"/.exec(html);
+          if (/"isUpcoming":true/.test(html) || (st && st[1] !== "OK")) continue;
+        }
+      } catch { /* sem rede pra checar: aceita o vídeo */ }
       return res.json({ status: "ok", video: e });
     }
     return res.json({ status: "empty", video: null });
