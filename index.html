@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-23.82';
+const APP_VERSION = '2026-10-30.83';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.83',
+    date: '30/10/2026',
+    items: [
+      "Buscas Semanais agora procura sozinha, ao abrir a aba, o vídeo mais novo de Provai e Vede, Informativo e Momento Vida e Saúde, mostra o título achado e toca exatamente esse vídeo.",
+    ]
+  },
   {
     version: '2026-10-23.82',
     date: '23/10/2026',
@@ -5210,10 +5217,34 @@ function BuscasSemanaisView({ churchId }) {
     { key:'informativo', title:'Informativo Mundial das Missões', sub:'Playlist oficial: Adventistas Brasil (2026)' },
     { key:'saude', title:'Momento Vida e Saúde', sub:'Canal oficial: Quero Vida e Saúde (@querovidaesaude)' },
   ];
+  // Busca sozinho, ao abrir a aba, o vídeo mais novo de cada canal (antes ficava sem vídeo definido
+  // e dependia da playlist embutida, que não garante o mais recente).
+  const [latest, setLatest] = useState({});
+  const [loadingLatest, setLoadingLatest] = useState(true);
+  const libTitleFor = (key) => (key==='provai' ? 'Provai e Vede - Vídeo Oficial' : key==='informativo' ? 'Informativo Mundial das Missões' : 'Momento Vida e Saúde');
+  const loadLatest = async () => {
+    setLoadingLatest(true);
+    const out = {};
+    await Promise.all(items.map(async it => {
+      const lib = MEDIA_LIBRARY.find(m => m.title === libTitleFor(it.key));
+      if (!lib) return;
+      let v = null;
+      if (lib.playlistId) v = await fetchLatestFromPlaylist(lib.playlistId);
+      if (!v || !v.videoId) {
+        const r = await searchYoutubeServer(lib.query);
+        if (r && r[0] && r[0].videoId) v = { videoId: r[0].videoId, title: r[0].title || '' };
+      }
+      if (v && v.videoId) out[it.key] = v;
+    }));
+    setLatest(out);
+    setLoadingLatest(false);
+  };
+  useEffect(() => { loadLatest(); }, []);
   const mediaFor = (key) => {
-    const lib = MEDIA_LIBRARY.find(m => m.title === (key==='provai' ? 'Provai e Vede - Vídeo Oficial' : key==='informativo' ? 'Informativo Mundial das Missões' : 'Momento Vida e Saúde'));
+    const lib = MEDIA_LIBRARY.find(m => m.title === libTitleFor(key));
     if (!lib) return null;
-    return { title: lib.title + (lib.dynamic ? ' ('+weekDateSuffix()+')' : ''), url: mediaLibraryUrl(lib), playlistId: lib.playlistId || null, videoId: null };
+    const v = latest[key];
+    return { title: v && v.title ? v.title : lib.title + (lib.dynamic ? ' ('+weekDateSuffix()+')' : ''), url: v ? 'https://www.youtube.com/watch?v='+v.videoId : mediaLibraryUrl(lib), playlistId: v ? null : (lib.playlistId || null), videoId: v ? v.videoId : null };
   };
 
   return html`
@@ -5228,6 +5259,7 @@ function BuscasSemanaisView({ churchId }) {
               <div>
                 <div style=${{fontWeight:800, fontSize:'13.5px'}}>🎬 ${it.title}</div>
                 <div style=${{fontSize:'11px', color:'var(--text-mid)', marginTop:'2px'}}>${it.sub}</div>
+                <div style=${{fontSize:'11px', color:'var(--highlight)', marginTop:'4px'}}>${loadingLatest ? '⏳ buscando o vídeo mais novo…' : (latest[it.key] ? '✅ Mais novo: '+latest[it.key].title : '⚠️ Não achei o vídeo novo agora — vai tocar a lista do canal')}</div>
               </div>
               ${media && html`
                 <div style=${{display:'flex', gap:'8px', flexWrap:'wrap', alignItems:'center'}}>
