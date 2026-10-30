@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.89';
+const APP_VERSION = '2026-10-30.90';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.90',
+    date: '30/10/2026',
+    items: [
+      "Controle Remoto: agora dá pra trocar o computador principal. Em qualquer computador, toque em 📱 e em \"Este é o computador principal\" (o anterior deixa de ser); ou, pelo celular habilitado, use \"Mudar o principal para…\".",
+    ]
+  },
   {
     version: '2026-10-30.89',
     date: '30/10/2026',
@@ -6444,7 +6451,12 @@ function RemoteControl({ churchId, church }) {
   const data = useChurchDoc(docId);
   const devId = remoteDeviceId();
   const [open, setOpen] = useState(false);
-  const [isMain, setIsMain] = useState(() => remoteIsMain(churchId));
+  const [localMain, setLocalMain] = useState(() => remoteIsMain(churchId));
+  const [compName, setCompName] = useState(() => { try { return localStorage.getItem('gc_remote_cname') || ''; } catch (e) { return ''; } });
+  const mainInfo = data && data.remoteMain;
+  // Principal = quem está registrado no banco como principal (assim dá pra trocar de computador de qualquer lugar).
+  const isMain = data ? (mainInfo ? mainInfo.id === devId : false) : localMain;
+  const computers = (data && data.remoteComputers) || {};
   const [phoneName, setPhoneName] = useState('');
   const [ov, setOv] = useState({});
   const [, tick] = useState(0);
@@ -6460,12 +6472,20 @@ function RemoteControl({ churchId, church }) {
   const online = !!(st && (Date.now() - st.ts) < 50000);
   useEffect(() => { const t = setInterval(() => tick(n => n + 1), 5000); return () => clearInterval(t); }, []);
 
-  const setMain = (on) => {
-    try { localStorage.setItem('gc_remote_main_' + churchId, on ? '1' : '0'); } catch (e) {}
-    setIsMain(on);
-    if (on) { try { window.dispatchEvent(new Event('gc-remote-mount')); } catch (e) {} }
+  const setLocal = (on) => { try { localStorage.setItem('gc_remote_main_' + churchId, on ? '1' : '0'); } catch (e) {} setLocalMain(on); };
+  const claimMain = () => {
+    const n = (compName || '').trim() || 'Computador';
+    try { localStorage.setItem('gc_remote_cname', n); } catch (e) {}
+    setLocal(true);
+    if (docId) w({ remoteMain: { id: devId, name: n, ts: Date.now() }, ['remoteComputers.' + devId]: { name: n, ts: Date.now() } });
   };
-  useEffect(() => { if (isMain) { try { window.dispatchEvent(new Event('gc-remote-mount')); } catch (e) {} } }, []);
+  const releaseMain = () => { setLocal(false); if (docId && isMain) w({ remoteMain: null }); };
+  const switchTo = (id) => { const c = computers[id]; if (c) w({ remoteMain: { id, name: c.name, ts: Date.now() } }); };
+  // Migração: aparelho que já era principal (marcado só neste aparelho) passa a constar no banco.
+  useEffect(() => { if (data && !mainInfo && localMain) claimMain(); }, [!!data]);
+  // Outro aparelho virou o principal: este deixa de executar comandos.
+  useEffect(() => { if (data && mainInfo && mainInfo.id !== devId && localMain) setLocal(false); }, [mainInfo && mainInfo.id]);
+  useEffect(() => { if (isMain) { try { window.dispatchEvent(new Event('gc-remote-mount')); } catch (e) {} } else handled.current = null; }, [isMain]);
 
   // COMPUTADOR PRINCIPAL: executa os comandos dos celulares cadastrados e habilitados hoje.
   useEffect(() => {
@@ -6553,7 +6573,7 @@ function RemoteControl({ churchId, church }) {
             <div class="glass" style=${cardS}>
               <div style=${{fontWeight:800, fontSize:'12.5px', color:'var(--success-1)'}}>💻 Este é o computador principal</div>
               <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>Ele executa o que os celulares habilitados mandarem (projetar, play/pause, volumes). Deixe o app aberto aqui e a projeção já aberta uma vez no dia.</div>
-              <button type="button" onClick=${()=>setMain(false)} style=${small}>Deixar de ser o principal</button>
+              <button type="button" onClick=${releaseMain} style=${small}>Deixar de ser o principal</button>
             </div>
             <div class="glass" style=${cardS}>
               <div style=${{fontWeight:800, fontSize:'12.5px'}}>Celulares</div>
@@ -6602,7 +6622,12 @@ function RemoteControl({ churchId, church }) {
                   </div>`)}
                 ` : html`<div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Esperando o computador principal enviar o estado…</div>`}
               </div>`}
-            <button type="button" onClick=${()=>{ if (confirm('Tornar ESTE aparelho o computador principal? Só um aparelho deve ser o principal.')) setMain(true); }} style=${{...small, justifySelf:'start'}}>💻 Este é o computador principal</button>
+            ${mainInfo && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>💻 Computador principal agora: <b>${mainInfo.name}</b></div>`}
+            ${meOk && Object.keys(computers).filter(id => !(mainInfo && mainInfo.id === id)).map(id => html`<button key=${id} type="button" onClick=${()=>switchTo(id)} style=${{...small, justifySelf:'start'}}>🔁 Mudar o principal para ${computers[id].name}</button>`)}
+            <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+              <input placeholder="Nome deste computador" value=${compName} onInput=${e=>setCompName(e.target.value)} style=${{...inputStyle, flex:1, minWidth:'140px'}} />
+              <button type="button" onClick=${()=>{ if (confirm('Tornar ESTE aparelho o computador principal? O principal atual deixa de ser.')) claimMain(); }} style=${small}>💻 Este é o computador principal</button>
+            </div>
           `}
         </div>
       </div>
