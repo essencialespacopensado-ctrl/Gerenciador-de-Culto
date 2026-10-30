@@ -595,6 +595,19 @@ app.get("/api/latest-from-playlist", async (req, res) => {
       if (excludeRe && excludeRe.test(e.title)) continue;
       // Estreia agendada (ainda não foi ao ar) aparece no feed com 0 visualizações — pula, vai pro episódio anterior.
       if (e.views === 0) continue;
+      // Título com data de estreia no futuro, ex. "Provai e Vede 2026 (31/Out)": ainda não é pra passar — pula.
+      const dm = /\((\d{1,2})\/(\d{1,2}|jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-zç]*\)/i.exec(e.title);
+      if (dm) {
+        const meses = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+        const mo = /^\d+$/.test(dm[2]) ? parseInt(dm[2], 10) - 1 : meses.indexOf(dm[2].toLowerCase());
+        if (mo >= 0 && mo < 12) {
+          const pubD = e.published ? new Date(e.published) : new Date();
+          let yr = pubD.getUTCFullYear(); if (mo + 6 < pubD.getUTCMonth()) yr += 1;
+          const hojeSP = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+          const alvo = new Date(yr, mo, parseInt(dm[1], 10), 23, 59, 59);
+          if (alvo.getTime() > hojeSP.getTime() && new Date(yr, mo, parseInt(dm[1], 10)).getTime() > new Date(hojeSP.getFullYear(), hojeSP.getMonth(), hojeSP.getDate()).getTime()) continue;
+        }
+      }
       try {
         const o = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${e.videoId}&format=json`, { headers: { "User-Agent": UA } });
         if (!o.ok) continue;
