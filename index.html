@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.88';
+const APP_VERSION = '2026-10-30.89';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.89',
+    date: '30/10/2026',
+    items: [
+      "NOVO: Controle Remoto 📱 — o celular comanda o computador principal (projetar a Liturgia, Play/Pause, Tela cheia, Fundo, Congelar, Fechar, volume do PROJETOR e dos Fundos). Cada celular precisa ser cadastrado (aprovado no computador principal) e habilitado no dia (vale até meia-noite); todos os habilitados podem mexer ao mesmo tempo.",
+    ]
+  },
   {
     version: '2026-10-30.88',
     date: '30/10/2026',
@@ -6185,6 +6192,20 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
   const muteBtn = (on, onClick, title) => html`
     <button type="button" onClick=${onClick} title=${title} style=${{width:'30px', height:'24px', borderRadius:'5px', border:'1px solid '+(on ? '#ff2d6f' : 'var(--border-soft)'), background: on ? '#ff2d6f' : 'rgba(0,0,0,0.4)', color: on ? '#000' : 'var(--text-mid)', fontWeight:900, fontSize:'11px', cursor:'pointer', padding:0}}>M</button>
   `;
+  // Controle Remoto: expõe o estado dos fundos e aceita comandos vindos do celular (via computador principal).
+  const remoteApi = useRef(null); remoteApi.current = { tracks, setVolume, updateTrack, togglePlay };
+  useEffect(() => { gcBgState.tracks = tracks.map(t => ({ name: t.name, vol: t.volume, muted: !!t.muted, playing: !!t.playing, has: t.mode !== 'none' })); });
+  useEffect(() => {
+    const h = (e) => {
+      const d = (e && e.detail) || {}; const api = remoteApi.current; const i = d.i;
+      if (!api || !(i >= 0 && i < api.tracks.length)) return;
+      if (d.action === 'volume') api.setVolume(i, d.value);
+      else if (d.action === 'mute') api.updateTrack(i, { muted: !api.tracks[i].muted });
+      else if (d.action === 'play') api.togglePlay(i);
+    };
+    window.addEventListener('gc-remote-bg', h);
+    return () => window.removeEventListener('gc-remote-bg', h);
+  }, []);
   const stripCol = (key, label, level, vol, onVol, mutedOn, onMute, extra, accent) => html`
     <div key=${key} style=${{display:'grid', gap:'6px', justifyItems:'center', padding:'8px 4px', borderRadius:'12px', background:'rgba(0,0,0,0.38)', border:'1px solid var(--border-soft)', minWidth:0}}>
       <div style=${{fontSize:'9px', fontWeight:800, letterSpacing:'0.08em', textTransform:'uppercase', color: accent, maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${label}</div>
@@ -6354,6 +6375,241 @@ function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCur
   `;
 }
 
+// ===== Controle Remoto (30/10, pedido do Paulo) =====
+// O celular (já logado na mesma igreja) manda comandos pelo banco compartilhado; o COMPUTADOR PRINCIPAL
+// (o aparelho marcado como principal) executa. Cada celular precisa ser CADASTRADO (o principal aprova)
+// e HABILITADO NO DIA (vale só até meia-noite). Todos os habilitados podem mexer ao mesmo tempo: cada um
+// escreve no seu próprio "espaço" de comando (remoteCmds.<id do celular>), então um não apaga o do outro.
+const gcBgState = { tracks: [] };
+function remoteToday() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function remoteDeviceId() {
+  try {
+    let v = localStorage.getItem('gc_remote_dev_v1');
+    if (!v) { v = 'dev-' + Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4); localStorage.setItem('gc_remote_dev_v1', v); }
+    return v;
+  } catch (e) { return 'dev-temp'; }
+}
+function remoteIsMain(churchId) { try { return localStorage.getItem('gc_remote_main_' + churchId) === '1'; } catch (e) { return false; } }
+function fbListenChurchDoc(docId, cb) {
+  return fbListenWhenReady(() => {
+    try {
+      const { doc, onSnapshot } = window.__fb.helpers;
+      return onSnapshot(doc(window.__fb.db, 'igrejas', docId), snap => cb(snap.exists() ? snap.data() : null), () => {});
+    } catch (e) { return () => {}; }
+  });
+}
+function useChurchDoc(docId) {
+  const [d, setD] = useState(null);
+  useEffect(() => { if (!docId) return; return fbListenChurchDoc(docId, setD); }, [docId]);
+  return d;
+}
+function remoteProjectMedia(churchId, media, itemKey, which) {
+  const enabled = loadEnabledScreens(churchId);
+  if (enabled.length === 0) return 'Nenhuma tela habilitada na aba Telas.';
+  let targets;
+  if (which === 'projetor') {
+    const projectors = enabled.filter(s => s.isProjector);
+    targets = projectors.length > 0 ? projectors : pickTargetScreens(churchId, itemKey, enabled);
+  } else {
+    targets = enabled.filter(s => !s.isProjector);
+    if (targets.length === 0) return 'Nenhuma tela de operador configurada na aba Telas.';
+  }
+  targets.forEach(scr => sendToScreenObj(scr, 'media', media, { mute: which === 'operador' }));
+  return '';
+}
+function remoteExecute(churchId, church, cmd) {
+  const a = cmd.arg || {};
+  switch (cmd.type) {
+    case 'play': playAllScreens(churchId); return '';
+    case 'pause': pauseAllScreens(churchId); return '';
+    case 'fullscreen': retryFullscreenAllScreens(churchId); return '';
+    case 'background': sendBackgroundToAllScreens(churchId, church); return '';
+    case 'freeze': setProjectionFrozen(!isProjectionFrozen()); return '';
+    case 'close': setProjectionFrozen(false); closeAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); return '';
+    case 'pvol': setProjectionVolume(a.value); return '';
+    case 'pmute': setProjectionMuted(!projectionAudio.muted); return '';
+    case 'bg': window.dispatchEvent(new CustomEvent('gc-remote-bg', { detail: a })); return '';
+    case 'project': {
+      const act = loadActivities(churchId).find(x => x.id === a.actId);
+      if (!act || !act.media || !act.media.title) return 'Essa atividade não tem vídeo/música.';
+      return remoteProjectMedia(churchId, act.media, act.id, a.which === 'operador' ? 'operador' : 'projetor');
+    }
+  }
+  return '';
+}
+
+function RemoteControl({ churchId, church }) {
+  const isMobile = useIsMobile();
+  const docId = church && (church.fbDocId || church.docId);
+  const data = useChurchDoc(docId);
+  const devId = remoteDeviceId();
+  const [open, setOpen] = useState(false);
+  const [isMain, setIsMain] = useState(() => remoteIsMain(churchId));
+  const [phoneName, setPhoneName] = useState('');
+  const [ov, setOv] = useState({});
+  const [, tick] = useState(0);
+  const handled = useRef(null);
+  const lastErr = useRef('');
+  const lastSent = useRef({});
+  const churchRef = useRef(church); churchRef.current = church;
+  const today = remoteToday();
+  const phones = (data && data.remotePhones) || {};
+  const me = phones[devId];
+  const meOk = !!(me && me.status === 'registered' && me.enabledDay === today);
+  const st = data && data.remoteState;
+  const online = !!(st && (Date.now() - st.ts) < 50000);
+  useEffect(() => { const t = setInterval(() => tick(n => n + 1), 5000); return () => clearInterval(t); }, []);
+
+  const setMain = (on) => {
+    try { localStorage.setItem('gc_remote_main_' + churchId, on ? '1' : '0'); } catch (e) {}
+    setIsMain(on);
+    if (on) { try { window.dispatchEvent(new Event('gc-remote-mount')); } catch (e) {} }
+  };
+  useEffect(() => { if (isMain) { try { window.dispatchEvent(new Event('gc-remote-mount')); } catch (e) {} } }, []);
+
+  // COMPUTADOR PRINCIPAL: executa os comandos dos celulares cadastrados e habilitados hoje.
+  useEffect(() => {
+    if (!isMain || !data) return;
+    const cmds = data.remoteCmds || {};
+    if (handled.current === null) { handled.current = {}; Object.keys(cmds).forEach(k => { if (cmds[k] && cmds[k].id) handled.current[cmds[k].id] = 1; }); return; }
+    Object.keys(cmds).forEach(did => {
+      const c = cmds[did];
+      if (!c || !c.id || handled.current[c.id]) return;
+      handled.current[c.id] = 1;
+      const ph = phones[did];
+      if (!ph || ph.status !== 'registered' || ph.enabledDay !== remoteToday()) { lastErr.current = 'Comando recusado: celular ' + (ph && ph.name ? ph.name : did) + ' não está habilitado hoje.'; return; }
+      let err = '';
+      try { err = remoteExecute(churchId, churchRef.current, c) || ''; } catch (e) { err = String((e && e.message) || e); }
+      lastErr.current = err ? (ph.name + ': ' + err) : '';
+    });
+  }, [data, isMain]);
+
+  // COMPUTADOR PRINCIPAL: publica o estado (só quando muda, ou a cada 20 s, pra economizar gravações).
+  useEffect(() => {
+    if (!isMain || !docId) return;
+    let lastJson = '', lastAt = 0;
+    const push = () => {
+      let acts = [];
+      try { acts = loadActivities(churchId).map(a => ({ id: a.id, name: a.name, time: a.time || '', media: !!(a.media && a.media.title), done: !!a.done })); } catch (e) {}
+      const s = { pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, err: lastErr.current || '' };
+      const json = JSON.stringify(s);
+      if (json === lastJson && Date.now() - lastAt < 20000) return;
+      fbUpdateChurchFields(docId, { remoteState: { ...s, ts: Date.now() } }).then(ok => { if (ok) { lastJson = json; lastAt = Date.now(); } });
+    };
+    push();
+    const t = setInterval(push, 1500);
+    return () => clearInterval(t);
+  }, [isMain, docId]);
+
+  const w = (fields) => fbUpdateChurchFields(docId, fields);
+  const send = (type, arg) => { if (!docId) return; w({ ['remoteCmds.' + devId]: { id: Date.now() + '-' + Math.random().toString(36).slice(2,6), type, arg: arg || null, ts: Date.now() } }); };
+  const slide = (key, type, arg, value) => {
+    setOv(o => ({ ...o, [key]: value }));
+    const now = Date.now();
+    if (now - (lastSent.current[key] || 0) > 150) { lastSent.current[key] = now; send(type, { ...arg, value: Number(value) }); }
+  };
+  const slideEnd = (key, type, arg, value) => {
+    send(type, { ...arg, value: Number(value) });
+    setTimeout(() => setOv(o => { const n = { ...o }; delete n[key]; return n; }), 1800);
+  };
+  const askRegister = () => { const n = phoneName.trim(); if (!n) { alert('Escreva um nome pra esse celular (ex: Celular do Paulo).'); return; } w({ ['remotePhones.' + devId]: { name: n, status: 'pending', requestedAt: Date.now() } }); };
+  const approve = (id) => w({ ['remotePhones.' + id + '.status']: 'registered' });
+  const refuse = (id) => w({ ['remotePhones.' + id + '.status']: 'removed', ['remotePhones.' + id + '.enabledDay']: '' });
+  const enableToday = (id, on) => w({ ['remotePhones.' + id + '.enabledDay']: on ? remoteToday() : '' });
+  const enableAll = () => { const f = {}; Object.keys(phones).forEach(id => { if (phones[id].status === 'registered') f['remotePhones.' + id + '.enabledDay'] = remoteToday(); }); if (Object.keys(f).length) w(f); };
+
+  const cardS = { padding:'12px', borderRadius:'14px', display:'grid', gap:'8px', border:'1px solid var(--border-soft)' };
+  const small = { ...btnGhost, padding:'6px 10px', fontSize:'11px' };
+  const rbtn = (icon, label, type, extra) => html`<button type="button" class="gc-console-btn" onClick=${()=>send(type)} style=${extra || {}}><span style=${{fontSize:'18px'}}>${icon}</span><span style=${{fontSize:'9px', fontWeight:800, letterSpacing:'0.06em', textTransform:'uppercase'}}>${label}</span></button>`;
+  const fader = (key, label, val, onIn, onEnd, mutedOn, onMute, onPlay, playing) => {
+    const v = ov[key] !== undefined ? ov[key] : val;
+    return html`<div style=${{display:'grid', gap:'6px', alignItems:'center'}}>
+      <div style=${{display:'flex', justifyContent:'space-between', fontSize:'11px', fontWeight:800}}><span>${label}</span><span>${v}</span></div>
+      <input type="range" min="0" max="100" value=${v} onInput=${e=>onIn(e.target.value)} onChange=${e=>onEnd(e.target.value)} style=${{width:'100%'}} />
+      <div style=${{display:'flex', gap:'6px'}}>
+        <button type="button" onClick=${onMute} style=${{...small, color: mutedOn ? 'var(--danger)' : undefined}}>${mutedOn ? '🔇 Mudo' : '🔊 M'}</button>
+        ${onPlay && html`<button type="button" onClick=${onPlay} style=${small}>${playing ? '⏸ Pausar' : '▶ Tocar'}</button>`}
+      </div>
+    </div>`;
+  };
+
+  const phoneIds = Object.keys(phones).filter(id => phones[id].status !== 'removed');
+  const pending = phoneIds.filter(id => phones[id].status === 'pending');
+  const registered = phoneIds.filter(id => phones[id].status === 'registered');
+  const btnRight = gcReservedRight ? gcReservedRight : (isMobile ? 12 : 20);
+
+  return html`
+    <button type="button" onClick=${()=>setOpen(true)} title="Controle Remoto: comandar o computador principal pelo celular" style=${{position:'fixed', right: btnRight+'px', bottom:'calc(76px + env(safe-area-inset-bottom,0px))', zIndex:151, width:'46px', height:'46px', borderRadius:'50%', border:'1px solid var(--border-soft)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', color:'#fff', background:'#0f172a', boxShadow:'0 10px 24px -10px rgba(0,0,0,0.55)'}}>📱</button>
+    ${open && html`
+      <div style=${{position:'fixed', inset:0, background:'rgba(2,6,23,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:220, padding:'12px'}} onClick=${()=>setOpen(false)}>
+        <div class="glass fade-up" style=${{maxWidth:'520px', width:'100%', padding:'18px', borderRadius:'20px', display:'grid', gap:'12px', maxHeight:'90vh', overflowY:'auto'}} onClick=${e=>e.stopPropagation()}>
+          <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <div style=${{fontWeight:800, fontSize:'15px'}}>📱 Controle Remoto</div>
+            <button type="button" onClick=${()=>setOpen(false)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'18px'}}>✕</button>
+          </div>
+          ${!docId && html`<div style=${{fontSize:'12px', color:'var(--danger)'}}>Sem conexão com o banco compartilhado — o controle remoto precisa de internet e da igreja sincronizada.</div>`}
+
+          ${isMain ? html`
+            <div class="glass" style=${cardS}>
+              <div style=${{fontWeight:800, fontSize:'12.5px', color:'var(--success-1)'}}>💻 Este é o computador principal</div>
+              <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>Ele executa o que os celulares habilitados mandarem (projetar, play/pause, volumes). Deixe o app aberto aqui e a projeção já aberta uma vez no dia.</div>
+              <button type="button" onClick=${()=>setMain(false)} style=${small}>Deixar de ser o principal</button>
+            </div>
+            <div class="glass" style=${cardS}>
+              <div style=${{fontWeight:800, fontSize:'12.5px'}}>Celulares</div>
+              ${pending.length === 0 && registered.length === 0 && html`<div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Nenhum celular pediu cadastro ainda. No celular: abra o app, entre nesta mesma igreja e toque no botão 📱.</div>`}
+              ${pending.map(id => html`<div key=${id} style=${{display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap'}}>
+                <div style=${{flex:1, fontSize:'12px'}}>📲 <b>${phones[id].name}</b> pediu cadastro</div>
+                <button type="button" onClick=${()=>approve(id)} style=${{...btnPrimary, width:'auto', padding:'6px 12px', fontSize:'11px'}}>Cadastrar</button>
+                <button type="button" onClick=${()=>refuse(id)} style=${small}>Recusar</button>
+              </div>`)}
+              ${registered.map(id => { const on = phones[id].enabledDay === today; return html`<div key=${id} style=${{display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap'}}>
+                <div style=${{flex:1, fontSize:'12px'}}>📱 <b>${phones[id].name}</b> — ${on ? '✅ habilitado hoje' : '⛔ não habilitado hoje'}</div>
+                <button type="button" onClick=${()=>enableToday(id, !on)} style=${{...small, color: on ? 'var(--danger)' : 'var(--success-1)'}}>${on ? 'Desabilitar' : 'Habilitar hoje'}</button>
+                <button type="button" onClick=${()=>{ if (confirm('Remover o cadastro de '+phones[id].name+'?')) refuse(id); }} style=${small}>Remover</button>
+              </div>`; })}
+              ${registered.length > 1 && html`<button type="button" onClick=${enableAll} style=${small}>Habilitar todos hoje</button>`}
+              <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>A habilitação vale só até meia-noite; no próximo dia precisa habilitar de novo. Todos os habilitados podem mexer ao mesmo tempo.</div>
+            </div>
+          ` : html`
+            <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>Aqui você comanda o computador principal da igreja pelo celular. ${online ? '🟢 Computador principal conectado.' : '🔴 Computador principal não está conectado agora.'}</div>
+            ${!me || me.status === 'removed' ? html`
+              <div class="glass" style=${cardS}>
+                <div style=${{fontWeight:800, fontSize:'12.5px'}}>Cadastrar este celular</div>
+                <input placeholder="Nome deste celular (ex: Celular do Paulo)" value=${phoneName} onInput=${e=>setPhoneName(e.target.value)} style=${inputStyle} />
+                <button type="button" onClick=${askRegister} style=${btnPrimary}>Pedir cadastro</button>
+                <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Depois, no computador principal, toque em 📱 e aprove este celular.</div>
+              </div>` : me.status === 'pending' ? html`
+              <div class="glass" style=${cardS}><div style=${{fontSize:'12px'}}>⏳ Pedido enviado como <b>${me.name}</b>. Aguardando aprovação no computador principal.</div></div>`
+              : !meOk ? html`
+              <div class="glass" style=${cardS}><div style=${{fontSize:'12px'}}>📱 <b>${me.name}</b> está cadastrado, mas <b>não está habilitado hoje</b>. No computador principal, toque em 📱 e use "Habilitar hoje".</div></div>`
+              : html`
+              <div class="glass" style=${cardS}>
+                <div style=${{fontSize:'11px', color:'var(--success-1)', fontWeight:800}}>✅ ${me.name} habilitado hoje</div>
+                ${st && st.err && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>⚠️ ${st.err}</div>`}
+                <div style=${{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'6px'}}>
+                  ${rbtn('▶️','Play','play')}${rbtn('⏸️','Pause','pause')}${rbtn('⛶','Tela cheia','fullscreen')}
+                  ${rbtn('🖼️','Fundo','background')}${rbtn('❄️', st && st.frozen ? 'Descongelar' : 'Congelar','freeze')}${rbtn('✖️','Fechar','close',{color:'var(--danger)'})}
+                </div>
+                ${st ? html`
+                  ${fader('pvol','PROJETOR (vídeo na tela)', st.pvol, v=>slide('pvol','pvol',{},v), v=>slideEnd('pvol','pvol',{},v), st.pmuted, ()=>send('pmute'))}
+                  ${(st.bg || []).map((t,i) => fader('bg'+i, t.name, t.vol, v=>slide('bg'+i,'bg',{i, action:'volume'},v), v=>slideEnd('bg'+i,'bg',{i, action:'volume'},v), t.muted, ()=>send('bg',{i, action:'mute'}), t.has ? ()=>send('bg',{i, action:'play'}) : null, t.playing))}
+                  <div style=${{fontWeight:800, fontSize:'12px', marginTop:'4px'}}>Liturgia (Sábado)</div>
+                  ${(st.acts || []).filter(a => a.media).map(a => html`<div key=${a.id} style=${{display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap'}}>
+                    <div style=${{flex:1, fontSize:'11.5px', minWidth:'120px'}}>${a.time ? a.time+' · ' : ''}${a.name}</div>
+                    <button type="button" onClick=${()=>send('project',{actId:a.id, which:'projetor'})} style=${small}>🔊 Projetor</button>
+                    <button type="button" onClick=${()=>send('project',{actId:a.id, which:'operador'})} style=${small}>🎧 Operador</button>
+                  </div>`)}
+                ` : html`<div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Esperando o computador principal enviar o estado…</div>`}
+              </div>`}
+            <button type="button" onClick=${()=>{ if (confirm('Tornar ESTE aparelho o computador principal? Só um aparelho deve ser o principal.')) setMain(true); }} style=${{...small, justifySelf:'start'}}>💻 Este é o computador principal</button>
+          `}
+        </div>
+      </div>
+    `}
+  `;
+}
+
 // Console flutuante (canto direito), visível em qualquer aba: botões da projeção + mixer com faders
 // verticais, mudo e barra de sinal (pedido do Paulo, 23/10). Monta na primeira abertura e depois fica
 // montado (só escondido), então a música de fundo não corta ao fechar o painel nem ao trocar de aba.
@@ -6366,7 +6622,8 @@ function GlobalMixerWidget({ churchId, church, onUpdateChurch, mensagemItems, me
   // Fixo no lado direito: no computador já abre sozinho (e lembra se o Paulo fechou).
   const startOpen = (() => { try { return !isMobile && localStorage.getItem('gc_console_open') !== '0'; } catch (e) { return !isMobile; } })();
   const [open, setOpen] = useState(startOpen);
-  const [mounted, setMounted] = useState(startOpen);
+  const [mounted, setMounted] = useState(startOpen || remoteIsMain(churchId));
+  useEffect(() => { const f = () => setMounted(true); window.addEventListener('gc-remote-mount', f); return () => window.removeEventListener('gc-remote-mount', f); }, []);
   const [, force] = useState(0);
   useEffect(() => { try { localStorage.setItem('gc_console_open', open ? '1' : '0'); } catch (e) {} }, [open]);
   useEffect(() => { const f = () => force(n => n + 1); projectionAudio.listeners.add(f); return () => { projectionAudio.listeners.delete(f); }; }, []);
@@ -8711,6 +8968,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'sugestoes' ? html`<${SugestoesView} key="sugestoes" church=${church} />` : ''}
       ${tab === 'config' ? html`<${ConfiguracoesView} key="config" church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       <${GlobalMixerWidget} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />
+      <${RemoteControl} churchId=${church.id} church=${church} />
     </div>
   `;
 }
