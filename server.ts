@@ -597,15 +597,17 @@ app.get("/api/latest-from-playlist", async (req, res) => {
         if (!o.ok) continue;
       } catch { /* sem rede pro oEmbed: aceita o vídeo mesmo assim */ }
       // Pula estreias agendadas / vídeos que ainda não estão no ar (o feed lista eles com a data do upload).
+      let dbg: any = null;
       try {
         const w = await fetch(`https://www.youtube.com/watch?v=${e.videoId}`, { headers: { "User-Agent": UA, "Accept-Language": "pt-BR,pt;q=0.9", "Cookie": "CONSENT=YES+1; SOCS=CAI" } });
         if (w.ok) {
           const html = await w.text();
           const st = /"playabilityStatus":\{"status":"([A-Z_]+)"/.exec(html);
+          dbg = { len: html.length, st: st ? st[1] : null, up: /"isUpcoming":true/.test(html), consent: /consent\.youtube\.com|CONSENT/.test(html.slice(0, 3000)) };
           if (/"isUpcoming":true/.test(html) || (st && st[1] !== "OK")) continue;
-        }
-      } catch { /* sem rede pra checar: aceita o vídeo */ }
-      return res.json({ status: "ok", video: e });
+        } else { dbg = { http: w.status }; }
+      } catch (er: any) { dbg = { err: String(er && er.message || er) }; /* sem rede pra checar: aceita o vídeo */ }
+      return res.json({ status: "ok", video: e, check: dbg });
     }
     return res.json({ status: "empty", video: null });
   } catch (err: any) {
