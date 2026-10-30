@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.87';
+const APP_VERSION = '2026-10-30.88';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.88',
+    date: '30/10/2026',
+    items: [
+      "Console fixo de verdade: fica sempre encaixado na direita e o app se ajusta ao espaço que sobra (layout compacto quando a janela é pequena), sem ficar cortado atrás do Console.",
+    ]
+  },
   {
     version: '2026-10-30.87',
     date: '30/10/2026',
@@ -2166,9 +2173,12 @@ function TabTile({ text, active, onClick, idx, delay }) {
 // num celular. Olha tanto a largura (celular em pé) quanto a altura (celular deitado — na
 // horizontal a largura fica grande, mas a altura fica bem curta, e é isso que faz o cabeçalho
 // tomar a tela toda e esconder os botões de baixo). Reage a giro de tela / redimensionamento.
+// Espaço reservado à direita pelo Console fixo (px): o app enxerga só o que sobra, e vira layout
+// compacto se o que sobra for pequeno — assim nada fica cortado atrás do Console.
+let gcReservedRight = 0;
 function isCompactScreen() {
   if (typeof window === 'undefined') return false;
-  return window.innerWidth <= 680 || window.innerHeight <= 480;
+  return (window.innerWidth - gcReservedRight) <= 680 || window.innerHeight <= 480;
 }
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(isCompactScreen);
@@ -6348,7 +6358,11 @@ function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCur
 // verticais, mudo e barra de sinal (pedido do Paulo, 23/10). Monta na primeira abertura e depois fica
 // montado (só escondido), então a música de fundo não corta ao fechar o painel nem ao trocar de aba.
 function GlobalMixerWidget({ churchId, church, onUpdateChurch, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
-  const isMobile = useIsMobile();
+  // Janela pequena de verdade (celular): o Console vira gaveta por cima. Em janela de computador, fica FIXO ao lado.
+  const rawNarrow = () => window.innerWidth <= 680 || window.innerHeight <= 480;
+  const [isMobile, setIsMobile] = useState(rawNarrow);
+  useEffect(() => { const f = () => setIsMobile(rawNarrow()); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
+  const dockW = Math.min(440, Math.max(300, Math.round(window.innerWidth * 0.38)));
   // Fixo no lado direito: no computador já abre sozinho (e lembra se o Paulo fechou).
   const startOpen = (() => { try { return !isMobile && localStorage.getItem('gc_console_open') !== '0'; } catch (e) { return !isMobile; } })();
   const [open, setOpen] = useState(startOpen);
@@ -6360,12 +6374,15 @@ function GlobalMixerWidget({ churchId, church, onUpdateChurch, mensagemItems, me
   useEffect(() => {
     const el = document.body;
     el.style.boxSizing = 'border-box';
-    el.style.paddingRight = (open && !isMobile) ? '452px' : '';
-    return () => { el.style.paddingRight = ''; };
-  }, [open, isMobile]);
+    const reserve = (open && !isMobile) ? dockW + 12 : 0;
+    el.style.paddingRight = reserve ? reserve + 'px' : '';
+    gcReservedRight = reserve;
+    try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+    return () => { el.style.paddingRight = ''; gcReservedRight = 0; try { window.dispatchEvent(new Event('resize')); } catch (e) {} };
+  }, [open, isMobile, dockW]);
   const frozen = isProjectionFrozen();
   const toggle = () => { setMounted(true); setOpen(v => !v); };
-  const drawerW = isMobile ? 'min(94vw, 420px)' : '440px';
+  const drawerW = isMobile ? 'min(94vw, 420px)' : dockW + 'px';
   return html`
     ${mounted && html`
       <div class="glass" style=${{display: open ? 'block' : 'none', position:'fixed', top:0, right:0, bottom:0, width: drawerW, zIndex:150, overflowY:'auto', padding:'14px', borderRadius:'18px 0 0 18px', boxShadow:'-14px 0 40px -16px rgba(0,0,0,0.7)'}}>
@@ -6379,7 +6396,7 @@ function GlobalMixerWidget({ churchId, church, onUpdateChurch, mensagemItems, me
       </div>
     `}
     ${!(open && isMobile) && html`
-      <button onClick=${toggle} title="Console: projeção e mixer" style=${{position:'fixed', right: (open && !isMobile) ? '452px' : (isMobile ? '12px' : '20px'), bottom:'calc(14px + env(safe-area-inset-bottom,0px))', zIndex:151, width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color: frozen && !open ? '#001418' : '#fff', background: (frozen && !open) ? '#00e5ff' : '#0a8cff', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
+      <button onClick=${toggle} title="Console: projeção e mixer" style=${{position:'fixed', right: (open && !isMobile) ? (dockW + 12) + 'px' : (isMobile ? '12px' : '20px'), bottom:'calc(14px + env(safe-area-inset-bottom,0px))', zIndex:151, width:'52px', height:'52px', borderRadius:'50%', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', color: frozen && !open ? '#001418' : '#fff', background: (frozen && !open) ? '#00e5ff' : '#0a8cff', boxShadow:'0 14px 30px -10px rgba(0,0,0,0.55)'}}>
         ${open ? '✕' : (frozen ? '❄️' : '🎚️')}
       </button>
     `}
