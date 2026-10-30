@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.86';
+const APP_VERSION = '2026-10-30.87';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.87',
+    date: '30/10/2026',
+    items: [
+      "Momento Vida e Saúde agora pula os episódios que ainda não estrearam (estreia agendada) e pega o último que realmente roda.",
+    ]
+  },
   {
     version: '2026-10-30.86',
     date: '30/10/2026',
@@ -1753,7 +1760,7 @@ const MEDIA_LIBRARY = [
   // sempre em português e com o episódio mais novo aparecendo primeiro.
   { title:'Informativo Mundial das Missões', query:'informativo mundial das missoes adventista', dynamic:true, directUrl:'https://www.youtube.com/playlist?list=PLtT7fGpN_s4LFJT9TOe88jv4duR7ANaVc', playlistId:'PLtT7fGpN_s4LFJT9TOe88jv4duR7ANaVc' },
   // Canal confirmado pelo Paulo: Quero Vida e Saúde (@querovidaesaude).
-  { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video', dynamic:true, directUrl:'https://www.youtube.com/@VidaeSaudeUCB', byEp:true, playlistId:'UUufCWU_e8Q_ONyBgf90fZdA' },
+  { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video', dynamic:true, directUrl:'https://www.youtube.com/@VidaeSaudeUCB', byEp:true, rule:2, playlistId:'UUufCWU_e8Q_ONyBgf90fZdA' },
   { title:'Vinheta de Anúncios da Igreja', query:'vinheta comunicados igreja adventista' },
   { title:'Deixai Vir a Mim os Pequeninos', query:'deixai vir a mim os pequeninos adventista' },
 ];
@@ -6623,11 +6630,11 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
           const lib = MEDIA_LIBRARY.find(m => m.title === a.media.libTitle);
           if (lib) {
             const freshUrl = mediaLibraryUrl(lib);
-            const regraEp = !!lib.byEp !== !!a.media.byEp; // regra "último episódio" mudou: busca de novo
+            const regraEp = (lib.rule || 0) !== (a.media.rule || 0); // regra "último episódio" mudou: busca de novo
             if (freshUrl !== a.media.url || lib.playlistId !== a.media.playlistId || regraEp) {
               changed = true;
               const trocouCanal = lib.playlistId !== a.media.playlistId || regraEp; // canal/regra mudou: esquece o vídeo antigo pra buscar o novo
-              return { ...a, media: { ...a.media, url: freshUrl, playlistId: lib.playlistId || null, byEp: !!lib.byEp, ...(trocouCanal ? { title: lib.title, videoId: null } : {}) } };
+              return { ...a, media: { ...a.media, url: freshUrl, playlistId: lib.playlistId || null, rule: lib.rule || 0, ...(trocouCanal ? { title: lib.title, videoId: null } : {}) } };
             }
           }
           return a;
