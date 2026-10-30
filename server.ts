@@ -571,14 +571,15 @@ app.get("/api/latest-from-playlist", async (req, res) => {
     const feed = await fetch(`https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(id)}`, { headers: { "User-Agent": UA } });
     if (!feed.ok) return res.status(502).json({ error: "feed indisponível (" + feed.status + ")" });
     const xml = await feed.text();
-    const entries: { videoId: string; title: string; published: string }[] = [];
+    const entries: { videoId: string; title: string; published: string; views: number }[] = [];
     const re = /<entry>([\s\S]*?)<\/entry>/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(xml))) {
       const vid = /<yt:videoId>([\w-]{11})<\/yt:videoId>/.exec(m[1]);
       const title = /<title>([\s\S]*?)<\/title>/.exec(m[1]);
       const pub = /<published>([^<]+)<\/published>/.exec(m[1]);
-      if (vid) entries.push({ videoId: vid[1], title: title ? title[1].replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'") : "", published: pub ? pub[1] : "" });
+      const vw = /<media:statistics views="(\d+)"/.exec(m[1]);
+      if (vid) entries.push({ views: vw ? parseInt(vw[1], 10) : -1, videoId: vid[1], title: title ? title[1].replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'") : "", published: pub ? pub[1] : "" });
     }
     entries.sort((a, b) => (b.published || "").localeCompare(a.published || ""));
     const now = Date.now();
@@ -592,6 +593,8 @@ app.get("/api/latest-from-playlist", async (req, res) => {
     for (const e of entries.slice(0, 15)) {
       if (e.published && Date.parse(e.published) > now) continue;
       if (excludeRe && excludeRe.test(e.title)) continue;
+      // Estreia agendada (ainda não foi ao ar) aparece no feed com 0 visualizações — pula, vai pro episódio anterior.
+      if (e.views === 0) continue;
       try {
         const o = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${e.videoId}&format=json`, { headers: { "User-Agent": UA } });
         if (!o.ok) continue;
@@ -607,7 +610,7 @@ app.get("/api/latest-from-playlist", async (req, res) => {
           if (/"isUpcoming":true/.test(html) || (st && st[1] !== "OK")) continue;
         } else { dbg = { http: w.status }; }
       } catch (er: any) { dbg = { err: String(er && er.message || er) }; /* sem rede pra checar: aceita o vídeo */ }
-      return res.json({ status: "ok", video: e, check: dbg });
+      return res.json({ status: "ok", video: { videoId: e.videoId, title: e.title, published: e.published }, check: dbg });
     }
     return res.json({ status: "empty", video: null });
   } catch (err: any) {
