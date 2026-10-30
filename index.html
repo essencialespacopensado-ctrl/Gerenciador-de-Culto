@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.84';
+const APP_VERSION = '2026-10-30.85';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.85',
+    date: '30/10/2026',
+    items: [
+      "Momento Vida e Saúde agora usa o canal Vida e Saúde UCB (@VidaeSaudeUCB): busca sozinho o vídeo mais novo de lá, na Liturgia e nas Buscas Semanais.",
+    ]
+  },
   {
     version: '2026-10-30.84',
     date: '30/10/2026',
@@ -1739,7 +1746,7 @@ const MEDIA_LIBRARY = [
   // sempre em português e com o episódio mais novo aparecendo primeiro.
   { title:'Informativo Mundial das Missões', query:'informativo mundial das missoes adventista', dynamic:true, directUrl:'https://www.youtube.com/playlist?list=PLtT7fGpN_s4LFJT9TOe88jv4duR7ANaVc', playlistId:'PLtT7fGpN_s4LFJT9TOe88jv4duR7ANaVc' },
   // Canal confirmado pelo Paulo: Quero Vida e Saúde (@querovidaesaude).
-  { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video', dynamic:true, directUrl:'https://www.youtube.com/@querovidaesaude', playlistId:'UUmUYgKrrfFg4O1izdSjkLfg' },
+  { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video', dynamic:true, directUrl:'https://www.youtube.com/@VidaeSaudeUCB', playlistId:'UUufCWU_e8Q_ONyBgf90fZdA' },
   { title:'Vinheta de Anúncios da Igreja', query:'vinheta comunicados igreja adventista' },
   { title:'Deixai Vir a Mim os Pequeninos', query:'deixai vir a mim os pequeninos adventista' },
 ];
@@ -5222,7 +5229,7 @@ function BuscasSemanaisView({ churchId }) {
   const items = [
     { key:'provai', title:'Provai e Vede - Vídeo Oficial', sub:'Canal oficial: @provaievedeoficial' },
     { key:'informativo', title:'Informativo Mundial das Missões', sub:'Playlist oficial: Adventistas Brasil (2026)' },
-    { key:'saude', title:'Momento Vida e Saúde', sub:'Canal oficial: Quero Vida e Saúde (@querovidaesaude)' },
+    { key:'saude', title:'Momento Vida e Saúde', sub:'Canal oficial: Vida e Saúde UCB (@VidaeSaudeUCB)' },
   ];
   // Busca sozinho, ao abrir a aba, o vídeo mais novo de cada canal (antes ficava sem vídeo definido
   // e dependia da playlist embutida, que não garante o mais recente).
@@ -6611,7 +6618,8 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
             const freshUrl = mediaLibraryUrl(lib);
             if (freshUrl !== a.media.url || lib.playlistId !== a.media.playlistId) {
               changed = true;
-              return { ...a, media: { ...a.media, url: freshUrl, playlistId: lib.playlistId || null } };
+              const trocouCanal = lib.playlistId !== a.media.playlistId; // canal mudou: esquece o vídeo antigo pra buscar o novo
+              return { ...a, media: { ...a.media, url: freshUrl, playlistId: lib.playlistId || null, ...(trocouCanal ? { title: lib.title, videoId: null } : {}) } };
             }
           }
           return a;
