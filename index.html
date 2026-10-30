@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.85';
+const APP_VERSION = '2026-10-30.86';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.86',
+    date: '30/10/2026',
+    items: [
+      "Momento Vida e Saúde agora pega sempre o ÚLTIMO EPISÓDIO (maior número de EP) do canal Vida e Saúde UCB, e não só o que foi postado por último.",
+    ]
+  },
   {
     version: '2026-10-30.85',
     date: '30/10/2026',
@@ -1746,7 +1753,7 @@ const MEDIA_LIBRARY = [
   // sempre em português e com o episódio mais novo aparecendo primeiro.
   { title:'Informativo Mundial das Missões', query:'informativo mundial das missoes adventista', dynamic:true, directUrl:'https://www.youtube.com/playlist?list=PLtT7fGpN_s4LFJT9TOe88jv4duR7ANaVc', playlistId:'PLtT7fGpN_s4LFJT9TOe88jv4duR7ANaVc' },
   // Canal confirmado pelo Paulo: Quero Vida e Saúde (@querovidaesaude).
-  { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video', dynamic:true, directUrl:'https://www.youtube.com/@VidaeSaudeUCB', playlistId:'UUufCWU_e8Q_ONyBgf90fZdA' },
+  { title:'Momento Vida e Saúde', query:'momento vida e saude adventista video', dynamic:true, directUrl:'https://www.youtube.com/@VidaeSaudeUCB', byEp:true, playlistId:'UUufCWU_e8Q_ONyBgf90fZdA' },
   { title:'Vinheta de Anúncios da Igreja', query:'vinheta comunicados igreja adventista' },
   { title:'Deixai Vir a Mim os Pequeninos', query:'deixai vir a mim os pequeninos adventista' },
 ];
@@ -5243,7 +5250,7 @@ function BuscasSemanaisView({ churchId }) {
       const lib = MEDIA_LIBRARY.find(m => m.title === libTitleFor(it.key));
       if (!lib) return;
       let v = null;
-      if (lib.playlistId) v = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude);
+      if (lib.playlistId) v = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude, lib.byEp);
       if (!v || !v.videoId) {
         const r = await searchYoutubeServer(lib.query);
         if (r && r[0] && r[0].videoId) v = { videoId: r[0].videoId, title: r[0].title || '' };
@@ -5804,11 +5811,11 @@ async function searchYoutubeServer(query) {
 // trazia um vídeo antigo/popular em vez do lançado no sábado mais recente; a playlist de uploads é
 // sempre do mais novo pro mais antigo de verdade). Usada pelos 3 itens que mudam toda semana
 // (Provai e Vede, Informativo Mundial das Missões, Momento Vida e Saúde).
-async function fetchLatestFromPlaylist(playlistId, exclude) {
+async function fetchLatestFromPlaylist(playlistId, exclude, byEp) {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch('/api/latest-from-playlist?id=' + encodeURIComponent(playlistId) + (exclude ? '&exclude=' + encodeURIComponent(exclude) : ''), { signal: ctrl.signal });
+    const res = await fetch('/api/latest-from-playlist?id=' + encodeURIComponent(playlistId) + (exclude ? '&exclude=' + encodeURIComponent(exclude) : '') + (byEp ? '&byEp=1' : ''), { signal: ctrl.signal });
     clearTimeout(timer);
     if (!res.ok) return null;
     const data = await res.json();
@@ -5819,7 +5826,7 @@ async function fetchLatestFromPlaylist(playlistId, exclude) {
 // só cai pra busca por palavra-chave se a playlist falhar ou o item não tiver playlistId.
 async function fetchDynamicVideoId(lib) {
   if (lib.playlistId) {
-    const fromPlaylist = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude);
+    const fromPlaylist = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude, lib.byEp);
     if (fromPlaylist && fromPlaylist.videoId) return fromPlaylist.videoId;
   }
   const results = await searchYoutubeServer(lib.query);
@@ -6616,10 +6623,11 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
           const lib = MEDIA_LIBRARY.find(m => m.title === a.media.libTitle);
           if (lib) {
             const freshUrl = mediaLibraryUrl(lib);
-            if (freshUrl !== a.media.url || lib.playlistId !== a.media.playlistId) {
+            const regraEp = !!lib.byEp !== !!a.media.byEp; // regra "último episódio" mudou: busca de novo
+            if (freshUrl !== a.media.url || lib.playlistId !== a.media.playlistId || regraEp) {
               changed = true;
-              const trocouCanal = lib.playlistId !== a.media.playlistId; // canal mudou: esquece o vídeo antigo pra buscar o novo
-              return { ...a, media: { ...a.media, url: freshUrl, playlistId: lib.playlistId || null, ...(trocouCanal ? { title: lib.title, videoId: null } : {}) } };
+              const trocouCanal = lib.playlistId !== a.media.playlistId || regraEp; // canal/regra mudou: esquece o vídeo antigo pra buscar o novo
+              return { ...a, media: { ...a.media, url: freshUrl, playlistId: lib.playlistId || null, byEp: !!lib.byEp, ...(trocouCanal ? { title: lib.title, videoId: null } : {}) } };
             }
           }
           return a;
