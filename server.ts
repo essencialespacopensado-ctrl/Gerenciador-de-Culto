@@ -582,8 +582,11 @@ app.get("/api/latest-from-playlist", async (req, res) => {
     }
     entries.sort((a, b) => (b.published || "").localeCompare(a.published || ""));
     const now = Date.now();
-    for (const e of entries.slice(0, 6)) {
+    let excludeRe: RegExp | null = null;
+    try { const ex = String(req.query.exclude || "").trim(); if (ex && ex.length < 60) excludeRe = new RegExp(ex, "i"); } catch { excludeRe = null; }
+    for (const e of entries.slice(0, 15)) {
       if (e.published && Date.parse(e.published) > now) continue;
+      if (excludeRe && excludeRe.test(e.title)) continue;
       try {
         const o = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${e.videoId}&format=json`, { headers: { "User-Agent": UA } });
         if (!o.ok) continue;
