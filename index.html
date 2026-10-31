@@ -135,11 +135,20 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.95';
+const APP_VERSION = '2026-10-30.96';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.96',
+    date: '30/10/2026',
+    items: [
+      "Projeção: se a janela de projeção for fechada, ela reabre sozinha na próxima projeção — tanto pelo computador quanto pelo celular (o celular não recusa mais o comando com a projeção fechada). Pra abrir sem clique no computador, o Chrome de lá precisa permitir pop-ups pro site; se bloquear, o celular mostra o que liberar.",
+      "Controle Remoto: comandos vindos do celular nunca mais abrem caixas de aviso no computador principal (que travavam o app); os avisos vão pro celular.",
+      "Som: janela de projeção reaberta tenta tocar com som primeiro e só cai pro mudo se o navegador barrar.",
+    ]
+  },
   {
     version: '2026-10-30.95',
     date: '30/10/2026',
@@ -3542,7 +3551,7 @@ function openImageInNewTab(item) {
 // a tela cheia (pedida uma vez, no primeiro toque) e a permissão de tocar som automaticamente
 // (concedida pelo navegador depois desse primeiro toque nesta janela) continuam valendo pros
 // próximos vídeos, porque a janela nunca é recriada.
-function projectionShellHtml() {
+function projectionShellHtml(openerActive) {
   return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Projeção</title><style>'
     + 'html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#fff;font-family:-apple-system,sans-serif;}'
     + '#gc-stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:1;}'
@@ -3681,7 +3690,11 @@ function projectionShellHtml() {
       + '}'
       + 'function gcPrep(){try{ytPlayer.unloadModule&&ytPlayer.unloadModule("captions");}catch(e){}try{ytPlayer.setOption&&ytPlayer.setOption("captions","track",{});}catch(e){}try{ytPlayer.setPlaybackQuality&&ytPlayer.setPlaybackQuality("hd1080");}catch(e){}}'
       + 'function gcHint(show){var h=document.getElementById("gc-hint");if(!show){if(h)h.style.display="none";return;}if(!h){h=document.createElement("div");h.id="gc-hint";h.textContent="\uD83D\uDD0A Clique uma vez em qualquer lugar desta tela para liberar o som";h.style.cssText="position:fixed;right:14px;bottom:12px;z-index:9;padding:6px 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#9fe;font:600 13px sans-serif;pointer-events:none;opacity:.8;";document.body.appendChild(h);setTimeout(function(){h.style.display="none";},30000);}h.style.display="block";}'
-      + 'function gcCanSound(){return !navigator.userActivation||navigator.userActivation.hasBeenActive;}'
+      // gcOpenerActive: a janela principal já tinha recebido clique do operador quando abriu esta janela
+      // (v.96) — aí o navegador costuma liberar o som aqui também, então tenta com som primeiro e só cai
+      // pro mudo se o vídeo não começar (gcEnsurePlay/gcUnmuteGuard cuidam disso).
+      + 'var gcOpenerActive=' + (openerActive ? 'true' : 'false') + ';'
+      + 'function gcCanSound(){return !navigator.userActivation||navigator.userActivation.hasBeenActive||gcOpenerActive;}'
       + 'function gcApplyMute(){var m=lastMute||projMuted;if(!m&&!gcCanSound()){projMuted=true;gcSoundPending=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});m=true;}try{if(ytPlayer){if(m)ytPlayer.mute();else{ytPlayer.unMute();ytPlayer.setVolume(projVol);}}else{gcYtCmd(m?"mute":"unMute");if(!m)gcYtCmd("setVolume",[projVol]);}}catch(e){}try{if(localVideoEl){localVideoEl.muted=m;localVideoEl.volume=projVol/100;}}catch(e){}if(!m){gcSoundPending=false;gcHint(false);gcUnmuteGuard();}}'
       // Se o navegador pausar o vídeo por causa do "ligar som" sem clique, volta mudo e continua tocando
       // (nunca fica parado por causa disso) e avisa o mixer pra ele mostrar o mudo ligado.
@@ -3765,12 +3778,18 @@ function projectionShellHtml() {
     + '</body></html>';
 }
 
+// Mensagem padrão quando o navegador barra a janela de projeção (v.96): acontece quando o comando não
+// veio de um clique neste computador (ex.: celular) e o Chrome ainda não tem pop-ups liberados pro site.
+const GC_POPUP_BLOCKED_MSG = 'O navegador do computador bloqueou abrir a janela de projeção. No Chrome DESTE computador, clique no ícone à esquerda do endereço do site → "Pop-ups e redirecionamentos" → Permitir (só uma vez). Depois a projeção abre sozinha, inclusive pelo celular.';
+// opts.quiet (v.96): não mostra alert (comando vindo do celular) — devolve a mensagem de erro ('' = ok).
 async function sendToScreenObj(scr, kind, payload, opts) {
+  const quiet = !!(opts && opts.quiet);
+  const fail = (msg) => { if (!quiet) alert(msg); return msg; };
   try {
     const sig = screenSig(scr);
     // Enquanto estiver congelado, guarda só a última tentativa de troca pra essa tela e não toca em
     // nada que já esteja sendo exibido — é isso que garante o "congelamento" de verdade.
-    if (projectionFrozen) { frozenPendingBySig[sig] = { scr, kind, payload, opts }; return; }
+    if (projectionFrozen) { frozenPendingBySig[sig] = { scr, kind, payload, opts }; return ''; }
     const features = 'left='+scr.left+',top='+scr.top+',width='+scr.width+',height='+scr.height;
     let win = projectionWindows[sig];
     let isNewWindow = false;
@@ -3793,13 +3812,14 @@ async function sendToScreenObj(scr, kind, payload, opts) {
     } else {
       try { win.moveTo(scr.left, scr.top); win.resizeTo(scr.width, scr.height); } catch(e) {}
     }
-    if (!win) { alert('Erro: o navegador bloqueou a abertura da janela de projeção. Vá nas configurações do navegador e permita pop-ups pra este site (só precisa autorizar uma vez).'); return; }
+    if (!win) return fail(GC_POPUP_BLOCKED_MSG);
 
     if (isNewWindow) {
       // Só escreve a página inteira UMA vez, na primeira abertura desta tela — as próximas trocas
       // de conteúdo (mesmo de outra atividade, minutos depois) reaproveitam essa mesma janela.
+      let openerActive = false; try { openerActive = !!(navigator.userActivation && navigator.userActivation.hasBeenActive); } catch (e) {}
       win.document.open();
-      win.document.write(projectionShellHtml());
+      win.document.write(projectionShellHtml(openerActive));
       win.document.close();
       // Pede tela cheia aqui mesmo, ainda dentro do clique do usuário. Quando o navegador suporta a
       // API de múltiplas telas (fsScreen preenchido), a tela cheia é pedida JÁ na tela de destino
@@ -3839,9 +3859,10 @@ async function sendToScreenObj(scr, kind, payload, opts) {
     // Numa janela recém-criada, dá um tiquinho pro script da página terminar de registrar o "ouvinte"
     // de mensagens antes de mandar o conteúdo; numa janela já aberta, manda na hora.
     if (isNewWindow) { setTimeout(post, 60); } else { post(); }
-    win.focus();
+    try { win.focus(); } catch (e) {}
+    return '';
   } catch (e) {
-    alert('Erro ao enviar para a tela: ' + (e && e.message ? e.message : String(e)));
+    return fail('Erro ao enviar para a tela: ' + (e && e.message ? e.message : String(e)));
   }
 }
 
@@ -3863,12 +3884,14 @@ function closeAllProjectionScreens() {
 // Envia a imagem de plano de fundo cadastrada em Configurações pra todas as telas habilitadas —
 // útil pra manter algo bonito na tela nos momentos em que não há nada específico sendo projetado,
 // em vez de ficar preto.
-function sendBackgroundToAllScreens(churchId, church) {
+function sendBackgroundToAllScreens(churchId, church, quiet, onErr) {
   const url = church && church.backgroundImageDataUrl;
-  if (!url) { alert('Nenhuma imagem de plano de fundo cadastrada ainda. Cadastre em Configurações > Dados da Igreja.'); return; }
+  const fail = (m) => { if (!quiet) alert(m); return m; };
+  if (!url) return fail('Nenhuma imagem de plano de fundo cadastrada ainda. Cadastre em Configurações > Dados da Igreja.');
   const enabled = loadEnabledScreens(churchId);
-  if (!enabled.length) { alert('Nenhuma tela de projeção habilitada. Habilite em Telas.'); return; }
-  enabled.forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }); } catch(e) {} });
+  if (!enabled.length) return fail('Nenhuma tela de projeção habilitada. Habilite em Telas.');
+  enabled.forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet }).then(err => { if (err && onErr) onErr(err); }); } catch(e) {} });
+  return '';
 }
 
 // Play/Pause/Tela Cheia/Fechar do controle miniatura (ProjectionMiniControl) — pedido do Paulo
@@ -6554,9 +6577,10 @@ function useChurchDoc(docId) {
   useEffect(() => { if (!docId) return; return fbListenChurchDocShared(docId, setD); }, [docId]);
   return d;
 }
-function remoteProjectMedia(churchId, media, itemKey, which) {
-  let abertas = 0; try { abertas = Object.keys(projectionWindows).filter(k => projectionWindows[k] && !projectionWindows[k].closed).length; } catch (e) {}
-  if (abertas === 0) return 'A projeção não está aberta no computador principal. Lá, toque em 📱 > "Preparar projeção e som" e tente de novo.';
+// v.96: se a janela de projeção estiver fechada, ela é REABERTA aqui mesmo (sem precisar de clique no
+// computador). Se o navegador barrar (pop-up sem liberação), o erro vai pro celular com a instrução.
+// Nunca usa alert() nesse caminho: um alert travaria o app no computador principal.
+function remoteProjectMedia(churchId, media, itemKey, which, onErr) {
   const enabled = loadEnabledScreens(churchId);
   if (enabled.length === 0) return 'Nenhuma tela habilitada na aba Telas.';
   let targets;
@@ -6567,16 +6591,16 @@ function remoteProjectMedia(churchId, media, itemKey, which) {
     targets = enabled.filter(s => !s.isProjector);
     if (targets.length === 0) return 'Nenhuma tela de operador configurada na aba Telas.';
   }
-  targets.forEach(scr => sendToScreenObj(scr, 'media', media, { mute: which === 'operador' }));
+  targets.forEach(scr => { try { sendToScreenObj(scr, 'media', media, { mute: which === 'operador', quiet: true }).then(err => { if (err && onErr) onErr(err); }); } catch (e) { if (onErr) onErr(String((e && e.message) || e)); } });
   return '';
 }
-function remoteExecute(churchId, church, cmd) {
+function remoteExecute(churchId, church, cmd, onErr) {
   const a = cmd.arg || {};
   switch (cmd.type) {
     case 'play': playAllScreens(churchId); return '';
     case 'pause': pauseAllScreens(churchId); return '';
     case 'fullscreen': retryFullscreenAllScreens(churchId); return '';
-    case 'background': sendBackgroundToAllScreens(churchId, church); return '';
+    case 'background': return sendBackgroundToAllScreens(churchId, church, true, onErr) || '';
     case 'freeze': setProjectionFrozen(!isProjectionFrozen()); return '';
     case 'close': setProjectionFrozen(false); closeAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); return '';
     case 'pvol': setProjectionVolume(a.value); return '';
@@ -6585,7 +6609,7 @@ function remoteExecute(churchId, church, cmd) {
     case 'project': {
       const act = loadActivities(churchId).find(x => x.id === a.actId);
       if (!act || !act.media || !act.media.title) return 'Essa atividade não tem vídeo/música.';
-      return remoteProjectMedia(churchId, act.media, act.id, a.which === 'operador' ? 'operador' : 'projetor');
+      return remoteProjectMedia(churchId, act.media, act.id, a.which === 'operador' ? 'operador' : 'projetor', onErr);
     }
   }
   return '';
@@ -6651,7 +6675,8 @@ function RemoteControl({ churchId, church }) {
       const ph = phones[did];
       if (!remotePhoneOn(ph)) { lastErr.current = 'Comando recusado: celular ' + (ph && ph.name ? ph.name : did) + ' não está habilitado.'; return; }
       let err = '';
-      try { err = remoteExecute(churchId, churchRef.current, c) || ''; } catch (e) { err = String((e && e.message) || e); }
+      const onErr = (m) => { lastErr.current = ph.name + ': ' + m; };
+      try { err = remoteExecute(churchId, churchRef.current, c, onErr) || ''; } catch (e) { err = String((e && e.message) || e); }
       lastErr.current = err ? (ph.name + ': ' + err) : '';
     });
   }, [data, isMain]);
@@ -6726,7 +6751,7 @@ function RemoteControl({ churchId, church }) {
           ${isMain ? html`
             <div class="glass" style=${cardS}>
               <div style=${{fontWeight:800, fontSize:'12.5px', color:'var(--success-1)'}}>💻 Este é o computador principal</div>
-              <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>Ele executa o que os celulares habilitados mandarem (projetar, play/pause, volumes). Deixe o app aberto aqui e a projeção já aberta uma vez no dia.</div>
+              <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>Ele executa o que os celulares habilitados mandarem (projetar, play/pause, volumes). Deixe o app aberto aqui. Se a janela de projeção for fechada, ela reabre sozinha na próxima projeção — pra isso o Chrome deste computador precisa permitir pop-ups pro site (o celular avisa se bloquear).</div>
               <button type="button" onClick=${prepareScreens} style=${btnPrimary}>🔊 Preparar projeção e som (1 clique por dia)</button>
               <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>O navegador só libera o som da projeção depois de um clique feito NESTE computador. Toque aqui uma vez antes do culto; depois o celular manda o som normalmente.</div>
               <button type="button" onClick=${releaseMain} style=${small}>Deixar de ser o principal</button>
@@ -6762,7 +6787,7 @@ function RemoteControl({ churchId, church }) {
               : html`
               <div class="glass" style=${cardS}>
                 <div style=${{fontSize:'11px', color:'var(--success-1)', fontWeight:800}}>✅ ${me.name} habilitado</div>
-                ${st && st.wins === 0 && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>⚠️ A projeção não está aberta no computador principal. Lá, toque em 📱 > "Preparar projeção e som".</div>`}
+                ${st && st.wins === 0 && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>ℹ️ A projeção está fechada no computador principal — ela abre sozinha quando você projetar. Pro som sair, lá no computador: 📱 > "Preparar projeção e som" (1 clique).</div>`}
                 ${st && st.blocked && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>🔇 O navegador do computador bloqueou o som. Lá, toque em 📱 > "Preparar projeção e som" (ou clique uma vez na tela de projeção).</div>`}
                 ${st && st.err && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>⚠️ ${st.err}</div>`}
                 <div style=${{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'6px'}}>
