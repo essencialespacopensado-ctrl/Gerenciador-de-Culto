@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 
@@ -560,6 +561,74 @@ app.get("/api/search-weekly-videos", async (req, res) => {
   }
 });
 
+
+// ===== Lista de vídeos de uma playlist do YouTube, com 3 camadas (o feed do YouTube responde 404/429 de vez em quando pro IP do servidor) =====
+type PlEntry = { videoId: string; title: string; published: string; views: number };
+let plWhy = "";
+const plCache = new Map<string, { ts: number; entries: PlEntry[] }>();
+const PL_CACHE_FILE = "/tmp/gc-playlist-cache.json";
+try { const raw = JSON.parse(fs.readFileSync(PL_CACHE_FILE, "utf-8")); Object.keys(raw).forEach(k => plCache.set(k, raw[k])); } catch { /* sem cache ainda */ }
+function plCacheSave(id: string, entries: PlEntry[]) {
+  plCache.set(id, { ts: Date.now(), entries });
+  try { fs.writeFileSync(PL_CACHE_FILE, JSON.stringify(Object.fromEntries(plCache))); } catch { /* ignora */ }
+}
+function parseFeedEntries(xml: string): PlEntry[] {
+  const out: PlEntry[] = [];
+  const re = /<entry>([\s\S]*?)<\/entry>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml))) {
+    const vid = /<yt:videoId>([\w-]{11})<\/yt:videoId>/.exec(m[1]);
+    const title = /<title>([\s\S]*?)<\/title>/.exec(m[1]);
+    const pub = /<published>([^<]+)<\/published>/.exec(m[1]);
+    const vw = /<media:statistics views="(\d+)"/.exec(m[1]);
+    if (vid) out.push({ views: vw ? parseInt(vw[1], 10) : -1, videoId: vid[1], title: title ? title[1].replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'") : "", published: pub ? pub[1] : "" });
+  }
+  return out;
+}
+function walkFind(o: any, key: string, acc: any[]) {
+  if (!o || typeof o !== "object") return;
+  if (Array.isArray(o)) { o.forEach(x => walkFind(x, key, acc)); return; }
+  if (o[key]) acc.push(o[key]);
+  Object.keys(o).forEach(k => walkFind(o[k], key, acc));
+}
+async function playlistViaInnertube(id: string, UA: string): Promise<PlEntry[]> {
+  const r = await fetch("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false", {
+    method: "POST",
+    headers: { "User-Agent": UA, "Content-Type": "application/json", "Accept-Language": "pt-BR,pt;q=0.9", "Origin": "https://www.youtube.com" },
+    body: JSON.stringify({ context: { client: { clientName: "WEB", clientVersion: "2.20241030.01.00", hl: "pt-BR", gl: "BR" } }, browseId: "VL" + id })
+  });
+  if (!r.ok) throw new Error("innertube " + r.status);
+  const j: any = await r.json();
+  const items: any[] = [];
+  walkFind(j, "playlistVideoRenderer", items);
+  const now = Date.now();
+  return items.filter(it => it.videoId).slice(0, 30).map((it, idx) => {
+    const t = (it.title && (it.title.runs ? it.title.runs.map((x: any) => x.text).join("") : it.title.simpleText)) || "";
+    const raw = JSON.stringify(it);
+    const upcoming = /"UPCOMING"|upcomingEventData|"isUpcoming":true/.test(raw);
+    // Mantém a ordem da playlist (do mais novo pro mais antigo) usando uma data sintética decrescente.
+    return { videoId: it.videoId as string, title: t, published: new Date(now - (idx + 1) * 60000).toISOString(), views: upcoming ? 0 : -1 };
+  });
+}
+async function loadPlaylistEntries(id: string, UA: string): Promise<{ entries: PlEntry[]; src: string } | null> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      const feed = await fetch(`https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(id)}`, { headers: { "User-Agent": UA } });
+      if (feed.ok) { const e = parseFeedEntries(await feed.text()); if (e.length) { plCacheSave(id, e); return { entries: e, src: "feed" }; } plWhy = "feed vazio"; }
+      else plWhy = "feed " + feed.status;
+    } catch (er: any) { plWhy = "feed erro " + String(er && er.message || er); }
+    await new Promise(r => setTimeout(r, 400 * (i + 1)));
+  }
+  try {
+    const e = await playlistViaInnertube(id, UA);
+    if (e.length) { plCacheSave(id, e); return { entries: e, src: "innertube" }; }
+    plWhy += "; innertube vazio";
+  } catch (er: any) { plWhy += "; " + String(er && er.message || er); }
+  const c = plCache.get(id);
+  if (c && c.entries.length && Date.now() - c.ts < 3 * 24 * 3600 * 1000) return { entries: c.entries, src: "feed-cache" };
+  return null;
+}
+
 // API: vídeo mais recente de uma playlist do YouTube (feed RSS oficial, do mais novo pro mais antigo,
 // só vídeos já publicados). Usado por Provai e Vede / Informativo / Vida e Saúde. Pula vídeos que não
 // podem ser incorporados (oEmbed 401/404) pra nunca projetar um que não abre.
@@ -568,20 +637,11 @@ app.get("/api/latest-from-playlist", async (req, res) => {
   if (!/^[A-Za-z0-9_-]{10,60}$/.test(id)) return res.status(400).json({ error: "playlist inválida" });
   const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
   try {
-    const feed = await fetch(`https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(id)}`, { headers: { "User-Agent": UA } });
-    if (!feed.ok) return res.status(502).json({ error: "feed indisponível (" + feed.status + ")" });
-    const xml = await feed.text();
-    const entries: { videoId: string; title: string; published: string; views: number }[] = [];
-    const re = /<entry>([\s\S]*?)<\/entry>/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(xml))) {
-      const vid = /<yt:videoId>([\w-]{11})<\/yt:videoId>/.exec(m[1]);
-      const title = /<title>([\s\S]*?)<\/title>/.exec(m[1]);
-      const pub = /<published>([^<]+)<\/published>/.exec(m[1]);
-      const vw = /<media:statistics views="(\d+)"/.exec(m[1]);
-      if (vid) entries.push({ views: vw ? parseInt(vw[1], 10) : -1, videoId: vid[1], title: title ? title[1].replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'") : "", published: pub ? pub[1] : "" });
-    }
-    entries.sort((a, b) => (b.published || "").localeCompare(a.published || ""));
+    const got = await loadPlaylistEntries(id, UA);
+    if (!got) return res.status(502).json({ error: "YouTube indisponível agora (" + plWhy + "), sem cache" });
+    const entries = got.entries.map(e => ({ ...e }));
+    const srcInfo = got.src;
+    if (got.src.startsWith("feed")) entries.sort((a, b) => (b.published || "").localeCompare(a.published || ""));
     const now = Date.now();
     let excludeRe: RegExp | null = null;
     try { const ex = String(req.query.exclude || "").trim(); if (ex && ex.length < 60) excludeRe = new RegExp(ex, "i"); } catch { excludeRe = null; }
@@ -623,7 +683,7 @@ app.get("/api/latest-from-playlist", async (req, res) => {
           if (/"isUpcoming":true/.test(html) || (st && st[1] !== "OK")) continue;
         } else { dbg = { http: w.status }; }
       } catch (er: any) { dbg = { err: String(er && er.message || er) }; /* sem rede pra checar: aceita o vídeo */ }
-      return res.json({ status: "ok", video: { videoId: e.videoId, title: e.title, published: e.published }, check: dbg });
+      return res.json({ status: "ok", video: { videoId: e.videoId, title: e.title, published: e.published }, check: { ...(dbg || {}), src: srcInfo } });
     }
     return res.json({ status: "empty", video: null });
   } catch (err: any) {
