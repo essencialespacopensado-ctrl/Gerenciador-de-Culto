@@ -115,12 +115,12 @@
       const cfg = window.__FIREBASE_CONFIG__;
       if (!cfg) { window.__fb.error = 'no-config'; return; }
       const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js');
-      const { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, getDocs, runTransaction } =
+      const { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, getDocs, runTransaction, deleteField } =
         await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js');
       const app = initializeApp(cfg);
       const db = getFirestore(app);
       window.__fb.db = db;
-      window.__fb.helpers = { collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, getDocs, runTransaction };
+      window.__fb.helpers = { collection, addDoc, doc, updateDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, getDocs, runTransaction, deleteField };
       window.__fb.ready = true;
       window.dispatchEvent(new Event('fb-ready'));
     } catch (e) {
@@ -135,11 +135,20 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.94';
+const APP_VERSION = '2026-10-30.95';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.95',
+    date: '30/10/2026',
+    items: [
+      "NOVO: aba 💬 Chat — conversa em tempo real entre todos os aparelhos logados na mesma igreja (celulares e computadores). O selo vermelho no menu avisa quantas mensagens novas chegaram.",
+      "Controle Remoto: a habilitação do celular agora é permanente — só se perde quando alguém clica em \"Desabilitar\" ou \"Remover\" no computador principal (não vence mais à meia-noite).",
+      "Console (mixer): no computador fica sempre fixo ao lado e abre sozinho em toda abertura do app, mesmo em janela estreita; vira gaveta só no celular/tablet.",
+    ]
+  },
   {
     version: '2026-10-30.94',
     date: '30/10/2026',
@@ -2231,6 +2240,7 @@ const NAV_ITEMS = [
   { tab:'liturgia', icon:'📋', label:'Liturgia', group:'Culto', c1:'#7c3aed', c2:'#5b21b6' },
   { tab:'telas', icon:'📺', label:'Telas', group:'Culto', c1:'#8b5cf6', c2:'#6d28d9' },
   { tab:'mensagem', icon:'🎤', label:'Mensagem', group:'Culto', c1:'#9333ea', c2:'#6d28d9' },
+  { tab:'chat', icon:'💬', label:'Chat', group:'Culto', c1:'#db2777', c2:'#9d174d' },
   { tab:'musicas', icon:'🎶', label:'Músicas', group:'Músicas', c1:'#2563eb', c2:'#1e3a8a' },
   { tab:'buscas', icon:'🔎', label:'Buscas', group:'Organização', c1:'#0f766e', c2:'#134e4a' },
   { tab:'gestao', icon:'👥', label:'Gestão', group:'Organização', c1:'#0891b2', c2:'#155e75' },
@@ -2240,9 +2250,9 @@ const NAV_ITEMS = [
 ];
 const NAV_GROUPS = ['Culto', 'Músicas', 'Organização', 'Sistema'];
 
-function NavTile({ icon, label, c1, c2, active, onClick, delay }) {
+function NavTile({ icon, label, c1, c2, active, onClick, delay, badge }) {
   return html`
-    <button onClick=${onClick} class="nav-tile fade-up" style=${{
+    <button onClick=${onClick} class="nav-tile fade-up" style=${{position:'relative',
       '--tc1':c1, '--tc2':c2, animationDelay:(delay*0.035)+'s',
       display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'5px',
       width:'74px', height:'74px', borderRadius:'18px', border: active ? '1px solid rgba(255,255,255,0.25)' : '1px solid transparent', cursor:'pointer',
@@ -2252,6 +2262,7 @@ function NavTile({ icon, label, c1, c2, active, onClick, delay }) {
     }}>
       <span style=${{fontSize:'22px', filter: active ? 'drop-shadow(0 2px 4px rgba(0,0,0,0.35))' : 'none'}}>${icon}</span>
       <span style=${{lineHeight:1.1, textAlign:'center'}}>${label}</span>
+      ${badge > 0 && html`<span style=${{position:'absolute', top:'-5px', right:'-5px', minWidth:'20px', height:'20px', padding:'0 6px', borderRadius:'999px', background:'#ef4444', color:'#fff', fontSize:'11px', fontWeight:800, display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 2px 6px rgba(0,0,0,0.4)', border:'2px solid #0f172a'}}>${badge > 99 ? '99+' : badge}</span>`}
     </button>
   `;
 }
@@ -2294,6 +2305,14 @@ function TabTile({ text, active, onClick, idx, delay }) {
 // Espaço reservado à direita pelo Console fixo (px): o app enxerga só o que sobra, e vira layout
 // compacto se o que sobra for pequeno — assim nada fica cortado atrás do Console.
 let gcReservedRight = 0;
+// Aparelho de toque de verdade (celular/tablet) — diferente de "janela estreita" num computador.
+function gcIsTouchDevice() {
+  try {
+    if (/Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent || '')) return true;
+    if (navigator.maxTouchPoints > 1 && window.matchMedia && window.matchMedia('(pointer: coarse)').matches && !window.matchMedia('(pointer: fine)').matches) return true;
+  } catch (e) {}
+  return false;
+}
 function isCompactScreen() {
   if (typeof window === 'undefined') return false;
   return (window.innerWidth - gcReservedRight) <= 680 || window.innerHeight <= 480;
@@ -2341,7 +2360,7 @@ async function shareLinkUrl(url, title) {
   }
 }
 
-function ChurchHeader({ church, tab, setTab, onLogout }) {
+function ChurchHeader({ church, tab, setTab, onLogout, badges }) {
   const [clock, setClock] = useState('');
   const [navOpen, setNavOpen] = useState(false);
   const isMobile = useIsMobile();
@@ -2369,6 +2388,7 @@ function ChurchHeader({ church, tab, setTab, onLogout }) {
           ${isMobile && html`
             <button onClick=${()=>setNavOpen(o=>!o)} style=${{...btnGhost, display:'flex', alignItems:'center', gap:'6px', fontSize:'11px'}}>
               <span>${activeItem ? activeItem.icon+' '+activeItem.label : '☰ Menu'}</span>
+              ${badges && badges.chat > 0 && tab !== 'chat' && html`<span style=${{minWidth:'18px', height:'18px', padding:'0 5px', borderRadius:'999px', background:'#ef4444', color:'#fff', fontSize:'10px', fontWeight:800, display:'flex', alignItems:'center', justifyContent:'center'}}>💬 ${badges.chat > 99 ? '99+' : badges.chat}</span>`}
               <span>${navOpen ? '▲' : '▼'}</span>
             </button>
           `}
@@ -2382,7 +2402,7 @@ function ChurchHeader({ church, tab, setTab, onLogout }) {
           <div key=${g} style=${{display:'flex', flexDirection:'column', gap:'7px'}}>
             <div style=${{fontSize:'10px', fontWeight:800, letterSpacing:'0.08em', textTransform:'uppercase', color:'var(--text-dim)', paddingLeft:'2px'}}>${g}</div>
             <nav style=${{display:'flex', gap:'8px', flexWrap:'wrap'}}>
-              ${NAV_ITEMS.filter(n => n.group === g).map(n => html`<${NavTile} key=${n.tab} icon=${n.icon} label=${n.label} c1=${n.c1} c2=${n.c2} active=${tab===n.tab} onClick=${()=>selectTab(n.tab)} delay=${tileIdx++} />`)}
+              ${NAV_ITEMS.filter(n => n.group === g).map(n => html`<${NavTile} key=${n.tab} icon=${n.icon} label=${n.label} c1=${n.c1} c2=${n.c2} active=${tab===n.tab} onClick=${()=>selectTab(n.tab)} delay=${tileIdx++} badge=${badges && tab !== n.tab ? badges[n.tab] : 0} />`)}
             </nav>
           </div>
         `)}
@@ -6492,10 +6512,14 @@ function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCur
 // ===== Controle Remoto (30/10, pedido do Paulo) =====
 // O celular (já logado na mesma igreja) manda comandos pelo banco compartilhado; o COMPUTADOR PRINCIPAL
 // (o aparelho marcado como principal) executa. Cada celular precisa ser CADASTRADO (o principal aprova)
-// e HABILITADO NO DIA (vale só até meia-noite). Todos os habilitados podem mexer ao mesmo tempo: cada um
-// escreve no seu próprio "espaço" de comando (remoteCmds.<id do celular>), então um não apaga o do outro.
+// e HABILITADO. A habilitação é PERMANENTE (v.95, pedido do Paulo): só se perde quando alguém clica em
+// "Desabilitar" ou "Remover" no computador principal — nunca vence sozinha. Todos os habilitados podem
+// mexer ao mesmo tempo: cada um escreve no seu próprio "espaço" (remoteCmds.<id do celular>).
 const gcBgState = { tracks: [] };
 function remoteToday() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+// Celular habilitado = cadastrado e com a habilitação ligada. Quem foi habilitado antes da v.95 (só com a
+// data do dia gravada) continua valendo — não precisa habilitar de novo.
+function remotePhoneOn(ph) { return !!(ph && ph.status === 'registered' && (ph.enabled === true || (ph.enabled === undefined && ph.enabledDay))); }
 function remoteDeviceId() {
   try {
     let v = localStorage.getItem('gc_remote_dev_v1');
@@ -6512,9 +6536,22 @@ function fbListenChurchDoc(docId, cb) {
     } catch (e) { return () => {}; }
   });
 }
+// Uma única escuta do documento da igreja por aba, compartilhada entre a sessão, o Controle Remoto, o
+// Chat e o selo de não lidas (v.95) — economiza leituras no banco e todo mundo vê a mesma coisa na hora.
+const gcDocSubs = {};
+function fbListenChurchDocShared(docId, cb) {
+  let sub = gcDocSubs[docId];
+  if (!sub) {
+    sub = gcDocSubs[docId] = { cbs: new Set(), data: undefined, unsub: null };
+    sub.unsub = fbListenChurchDoc(docId, d => { sub.data = d; sub.cbs.forEach(f => { try { f(d); } catch (e) {} }); });
+  }
+  sub.cbs.add(cb);
+  if (sub.data !== undefined) { try { cb(sub.data); } catch (e) {} }
+  return () => { sub.cbs.delete(cb); if (sub.cbs.size === 0 && gcDocSubs[docId] === sub) { try { sub.unsub && sub.unsub(); } catch (e) {} delete gcDocSubs[docId]; } };
+}
 function useChurchDoc(docId) {
-  const [d, setD] = useState(null);
-  useEffect(() => { if (!docId) return; return fbListenChurchDoc(docId, setD); }, [docId]);
+  const [d, setD] = useState(() => (docId && gcDocSubs[docId] && gcDocSubs[docId].data) || null);
+  useEffect(() => { if (!docId) return; return fbListenChurchDocShared(docId, setD); }, [docId]);
   return d;
 }
 function remoteProjectMedia(churchId, media, itemKey, which) {
@@ -6573,10 +6610,9 @@ function RemoteControl({ churchId, church }) {
   const lastErr = useRef('');
   const lastSent = useRef({});
   const churchRef = useRef(church); churchRef.current = church;
-  const today = remoteToday();
   const phones = (data && data.remotePhones) || {};
   const me = phones[devId];
-  const meOk = !!(me && me.status === 'registered' && me.enabledDay === today);
+  const meOk = remotePhoneOn(me);
   const st = data && data.remoteState;
   const online = !!(st && (Date.now() - st.ts) < 50000);
   useEffect(() => { const t = setInterval(() => tick(n => n + 1), 5000); return () => clearInterval(t); }, []);
@@ -6603,7 +6639,7 @@ function RemoteControl({ churchId, church }) {
   useEffect(() => { if (data && mainInfo && mainInfo.id !== devId && localMain) setLocal(false); }, [mainInfo && mainInfo.id]);
   useEffect(() => { if (isMain) { try { window.dispatchEvent(new Event('gc-remote-mount')); } catch (e) {} } else handled.current = null; }, [isMain]);
 
-  // COMPUTADOR PRINCIPAL: executa os comandos dos celulares cadastrados e habilitados hoje.
+  // COMPUTADOR PRINCIPAL: executa os comandos dos celulares cadastrados e habilitados.
   useEffect(() => {
     if (!isMain || !data) return;
     const cmds = data.remoteCmds || {};
@@ -6613,7 +6649,7 @@ function RemoteControl({ churchId, church }) {
       if (!c || !c.id || handled.current[c.id]) return;
       handled.current[c.id] = 1;
       const ph = phones[did];
-      if (!ph || ph.status !== 'registered' || ph.enabledDay !== remoteToday()) { lastErr.current = 'Comando recusado: celular ' + (ph && ph.name ? ph.name : did) + ' não está habilitado hoje.'; return; }
+      if (!remotePhoneOn(ph)) { lastErr.current = 'Comando recusado: celular ' + (ph && ph.name ? ph.name : did) + ' não está habilitado.'; return; }
       let err = '';
       try { err = remoteExecute(churchId, churchRef.current, c) || ''; } catch (e) { err = String((e && e.message) || e); }
       lastErr.current = err ? (ph.name + ': ' + err) : '';
@@ -6651,9 +6687,10 @@ function RemoteControl({ churchId, church }) {
   };
   const askRegister = () => { const n = phoneName.trim(); if (!n) { alert('Escreva um nome pra esse celular (ex: Celular do Paulo).'); return; } w({ ['remotePhones.' + devId]: { name: n, status: 'pending', requestedAt: Date.now() } }); };
   const approve = (id) => w({ ['remotePhones.' + id + '.status']: 'registered' });
-  const refuse = (id) => w({ ['remotePhones.' + id + '.status']: 'removed', ['remotePhones.' + id + '.enabledDay']: '' });
-  const enableToday = (id, on) => w({ ['remotePhones.' + id + '.enabledDay']: on ? remoteToday() : '' });
-  const enableAll = () => { const f = {}; Object.keys(phones).forEach(id => { if (phones[id].status === 'registered') f['remotePhones.' + id + '.enabledDay'] = remoteToday(); }); if (Object.keys(f).length) w(f); };
+  const refuse = (id) => w({ ['remotePhones.' + id + '.status']: 'removed', ['remotePhones.' + id + '.enabled']: false, ['remotePhones.' + id + '.enabledDay']: '' });
+  // Habilitar = permanente (fica até Desabilitar/Remover). enabledDay guarda só a data em que foi habilitado.
+  const enablePhone = (id, on) => w({ ['remotePhones.' + id + '.enabled']: !!on, ['remotePhones.' + id + '.enabledDay']: on ? remoteToday() : '' });
+  const enableAll = () => { const f = {}; Object.keys(phones).forEach(id => { if (phones[id].status === 'registered' && !remotePhoneOn(phones[id])) { f['remotePhones.' + id + '.enabled'] = true; f['remotePhones.' + id + '.enabledDay'] = remoteToday(); } }); if (Object.keys(f).length) w(f); };
 
   const cardS = { padding:'12px', borderRadius:'14px', display:'grid', gap:'8px', border:'1px solid var(--border-soft)' };
   const small = { ...btnGhost, padding:'6px 10px', fontSize:'11px' };
@@ -6702,13 +6739,13 @@ function RemoteControl({ churchId, church }) {
                 <button type="button" onClick=${()=>approve(id)} style=${{...btnPrimary, width:'auto', padding:'6px 12px', fontSize:'11px'}}>Cadastrar</button>
                 <button type="button" onClick=${()=>refuse(id)} style=${small}>Recusar</button>
               </div>`)}
-              ${registered.map(id => { const on = phones[id].enabledDay === today; return html`<div key=${id} style=${{display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap'}}>
-                <div style=${{flex:1, fontSize:'12px'}}>📱 <b>${phones[id].name}</b> — ${on ? '✅ habilitado hoje' : '⛔ não habilitado hoje'}</div>
-                <button type="button" onClick=${()=>enableToday(id, !on)} style=${{...small, color: on ? 'var(--danger)' : 'var(--success-1)'}}>${on ? 'Desabilitar' : 'Habilitar hoje'}</button>
+              ${registered.map(id => { const on = remotePhoneOn(phones[id]); return html`<div key=${id} style=${{display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap'}}>
+                <div style=${{flex:1, fontSize:'12px'}}>📱 <b>${phones[id].name}</b> — ${on ? '✅ habilitado' : '⛔ desabilitado'}</div>
+                <button type="button" onClick=${()=>enablePhone(id, !on)} style=${{...small, color: on ? 'var(--danger)' : 'var(--success-1)'}}>${on ? 'Desabilitar' : 'Habilitar'}</button>
                 <button type="button" onClick=${()=>{ if (confirm('Remover o cadastro de '+phones[id].name+'?')) refuse(id); }} style=${small}>Remover</button>
               </div>`; })}
-              ${registered.length > 1 && html`<button type="button" onClick=${enableAll} style=${small}>Habilitar todos hoje</button>`}
-              <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>A habilitação vale só até meia-noite; no próximo dia precisa habilitar de novo. Todos os habilitados podem mexer ao mesmo tempo.</div>
+              ${registered.filter(id => !remotePhoneOn(phones[id])).length > 1 && html`<button type="button" onClick=${enableAll} style=${small}>Habilitar todos</button>`}
+              <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Uma vez habilitado, o celular continua habilitado até você clicar em "Desabilitar" ou "Remover" — nunca vence sozinho. Todos os habilitados podem mexer ao mesmo tempo.</div>
             </div>
           ` : html`
             <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>Aqui você comanda o computador principal da igreja pelo celular. ${online ? '🟢 Computador principal conectado.' : '🔴 Computador principal não está conectado agora.'}</div>
@@ -6721,10 +6758,10 @@ function RemoteControl({ churchId, church }) {
               </div>` : me.status === 'pending' ? html`
               <div class="glass" style=${cardS}><div style=${{fontSize:'12px'}}>⏳ Pedido enviado como <b>${me.name}</b>. Aguardando aprovação no computador principal.</div></div>`
               : !meOk ? html`
-              <div class="glass" style=${cardS}><div style=${{fontSize:'12px'}}>📱 <b>${me.name}</b> está cadastrado, mas <b>não está habilitado hoje</b>. No computador principal, toque em 📱 e use "Habilitar hoje".</div></div>`
+              <div class="glass" style=${cardS}><div style=${{fontSize:'12px'}}>📱 <b>${me.name}</b> está cadastrado, mas <b>está desabilitado</b>. No computador principal, toque em 📱 e use "Habilitar".</div></div>`
               : html`
               <div class="glass" style=${cardS}>
-                <div style=${{fontSize:'11px', color:'var(--success-1)', fontWeight:800}}>✅ ${me.name} habilitado hoje</div>
+                <div style=${{fontSize:'11px', color:'var(--success-1)', fontWeight:800}}>✅ ${me.name} habilitado</div>
                 ${st && st.wins === 0 && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>⚠️ A projeção não está aberta no computador principal. Lá, toque em 📱 > "Preparar projeção e som".</div>`}
                 ${st && st.blocked && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>🔇 O navegador do computador bloqueou o som. Lá, toque em 📱 > "Preparar projeção e som" (ou clique uma vez na tela de projeção).</div>`}
                 ${st && st.err && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>⚠️ ${st.err}</div>`}
@@ -6756,22 +6793,143 @@ function RemoteControl({ churchId, church }) {
   `;
 }
 
+// ===== 💬 Chat (v.95, pedido do Paulo) =====
+// Conversa em tempo real entre os aparelhos logados na MESMA igreja (computadores e celulares), pelo banco
+// compartilhado: cada mensagem vira um campo chat.<id> no documento da igreja. Guarda só as últimas
+// mensagens (o documento tem limite de tamanho) — quem manda a nova já apaga as mais velhas que sobrarem.
+const CHAT_KEEP = 80, CHAT_MAX = 100;
+function chatSeenKey(churchId) { return 'gc_chat_seen_' + churchId; }
+function chatNameKey(churchId) { return 'gc_chat_name_' + churchId; }
+function gcChatList(chat) {
+  return Object.keys(chat || {}).map(id => ({ id, ...(chat[id] || {}) })).filter(m => m && m.t).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+}
+function gcChatUnread(churchId, chat) {
+  if (!chat) return 0;
+  let seen = 0; try { seen = Number(localStorage.getItem(chatSeenKey(churchId)) || 0); } catch (e) {}
+  const me = remoteDeviceId();
+  return gcChatList(chat).filter(m => (m.ts || 0) > seen && m.d !== me).length;
+}
+function gcChatDefaultName(churchId, data) {
+  try { const v = localStorage.getItem(chatNameKey(churchId)); if (v) return v; } catch (e) {}
+  const me = remoteDeviceId();
+  const ph = data && data.remotePhones && data.remotePhones[me];
+  if (ph && ph.name) return ph.name;
+  const pc = data && data.remoteComputers && data.remoteComputers[me];
+  if (pc && pc.name) return pc.name;
+  try { const c = localStorage.getItem('gc_remote_cname'); if (c) return c; } catch (e) {}
+  return '';
+}
+function gcChatTime(ts) {
+  const d = new Date(ts || 0); const now = new Date();
+  const hm = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+  if (d.toDateString() === now.toDateString()) return hm;
+  return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0') + ' ' + hm;
+}
+function ChatView({ churchId, church }) {
+  const isMobile = useIsMobile();
+  const docId = church && (church.fbDocId || church.docId);
+  const data = useChurchDoc(docId);
+  const devId = remoteDeviceId();
+  const msgs = useMemo(() => gcChatList(data && data.chat), [data && data.chat]);
+  const [name, setName] = useState(() => gcChatDefaultName(churchId, null));
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [err, setErr] = useState('');
+  const listRef = useRef(null);
+  const nameTouched = useRef(false);
+  // Nome sugerido pelo cadastro do Controle Remoto (celular/computador), se a pessoa ainda não escreveu um.
+  useEffect(() => { if (!nameTouched.current && !name) { const n = gcChatDefaultName(churchId, data); if (n) setName(n); } }, [data]);
+  // Abrir a aba = marcar tudo como lido (e manter marcado enquanto ela estiver aberta).
+  useEffect(() => {
+    const last = msgs.length ? (msgs[msgs.length - 1].ts || 0) : 0;
+    try { const seen = Number(localStorage.getItem(chatSeenKey(churchId)) || 0); if (last > seen) localStorage.setItem(chatSeenKey(churchId), String(last)); } catch (e) {}
+    try { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; } catch (e) {}
+  }, [msgs.length]);
+  const saveName = (v) => { nameTouched.current = true; setName(v); try { localStorage.setItem(chatNameKey(churchId), v); } catch (e) {} };
+  const send = async () => {
+    const t = text.trim().slice(0, 500);
+    const n = (name || '').trim().slice(0, 40);
+    if (!t) return;
+    if (!n) { setErr('Escreva seu nome antes de mandar a primeira mensagem.'); return; }
+    if (!docId) { setErr('Sem conexão com o banco compartilhado — o chat precisa de internet e da igreja sincronizada.'); return; }
+    setSending(true); setErr('');
+    const ts = Date.now();
+    const id = ts.toString(36) + '-' + devId.slice(-4) + Math.random().toString(36).slice(2, 5);
+    const fields = { ['chat.' + id]: { n, t, ts, d: devId } };
+    // Limpeza das mais antigas (só quem manda faz isso, e só quando passou do limite).
+    try {
+      const h = window.__fb && window.__fb.helpers;
+      if (h && h.deleteField && msgs.length >= CHAT_MAX) msgs.slice(0, msgs.length - CHAT_KEEP + 1).forEach(m => { fields['chat.' + m.id] = h.deleteField(); });
+    } catch (e) {}
+    const ok = await fbUpdateChurchFields(docId, fields);
+    setSending(false);
+    if (!ok) { setErr('Não consegui enviar. Verifique a internet e tente de novo.'); return; }
+    setText('');
+    try { localStorage.setItem(chatSeenKey(churchId), String(ts)); } catch (e) {}
+  };
+  const clearAll = () => {
+    if (!confirm('Apagar TODA a conversa, pra todos os aparelhos desta igreja?')) return;
+    w({ chat: {} });
+  };
+  const w = (fields) => fbUpdateChurchFields(docId, fields);
+  const online = !!(data && data.remoteState && (Date.now() - data.remoteState.ts) < 50000);
+  const bubble = (m) => {
+    const mine = m.d === devId;
+    return html`<div key=${m.id} style=${{display:'flex', justifyContent: mine ? 'flex-end' : 'flex-start'}}>
+      <div style=${{maxWidth:'82%', padding:'8px 11px', borderRadius: mine ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background: mine ? 'linear-gradient(135deg,#db2777,#9d174d)' : 'rgba(148,163,184,0.14)', color: mine ? '#fff' : 'var(--text-hi)', border: mine ? 'none' : '1px solid var(--border-soft)'}}>
+        ${!mine && html`<div style=${{fontSize:'10.5px', fontWeight:800, color:'var(--highlight)', marginBottom:'2px'}}>${m.n || 'Alguém'}</div>`}
+        <div style=${{fontSize:'13px', lineHeight:1.4, whiteSpace:'pre-wrap', wordBreak:'break-word'}}>${m.t}</div>
+        <div style=${{fontSize:'9.5px', opacity:0.7, textAlign:'right', marginTop:'3px'}}>${mine ? (m.n || '') + ' · ' : ''}${gcChatTime(m.ts)}</div>
+      </div>
+    </div>`;
+  };
+  return html`
+    <div style=${{padding: isMobile ? '12px 12px 135px' : '20px', display:'grid', gap:'12px', maxWidth:'820px', margin:'0 auto'}}>
+      <div class="glass fade-up" style=${{padding:'14px', borderRadius:'16px', display:'grid', gap:'10px', borderTop:'3px solid #db2777'}}>
+        <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'10px', flexWrap:'wrap'}}>
+          <div>
+            <div style=${{fontWeight:800, fontSize:'14px'}}>💬 Chat da ${church.name}</div>
+            <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Conversa em tempo real entre todos os aparelhos logados nesta igreja (celulares e computadores). ${online ? '🟢 Computador principal conectado.' : ''}</div>
+          </div>
+          <div style=${{display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap'}}>
+            <input value=${name} onInput=${e=>saveName(e.target.value)} placeholder="Seu nome no chat" maxlength="40" style=${{...inputStyle, width:'170px', fontSize:'12px'}} />
+            ${msgs.length > 0 && html`<button type="button" onClick=${clearAll} title="Apaga a conversa pra todos" style=${{...btnGhost, padding:'6px 10px', fontSize:'11px', color:'var(--danger)'}}>🧹 Limpar</button>`}
+          </div>
+        </div>
+        ${!docId && html`<div style=${{fontSize:'12px', color:'var(--danger)'}}>Sem conexão com o banco compartilhado — o chat precisa de internet e da igreja sincronizada.</div>`}
+        <div ref=${listRef} style=${{display:'grid', gap:'8px', alignContent:'start', height: isMobile ? 'calc(100vh - 560px)' : '52vh', minHeight:'170px', overflowY:'auto', padding:'10px', borderRadius:'12px', background:'rgba(2,6,23,0.35)', border:'1px solid var(--border-soft)'}}>
+          ${msgs.length === 0 ? html`<div style=${{fontSize:'12px', color:'var(--text-dim)', textAlign:'center', padding:'30px 10px'}}>Nenhuma mensagem ainda. Escreva a primeira — quem estiver logado nesta igreja, em qualquer aparelho, vê na hora (o selo 💬 no menu avisa quando chega mensagem nova).</div>` : msgs.map(bubble)}
+        </div>
+        ${err && html`<div style=${{fontSize:'11.5px', color:'var(--danger)'}}>⚠️ ${err}</div>`}
+        <div style=${{display:'flex', gap:'8px', alignItems:'flex-end'}}>
+          <textarea value=${text} onInput=${e=>setText(e.target.value)} onKeyDown=${e=>{ if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} placeholder="Escreva a mensagem… (Enter envia, Shift+Enter quebra linha)" rows="2" maxlength="500" style=${{...inputStyle, flex:1, fontSize:'13px', fontFamily:'inherit', resize:'none'}}></textarea>
+          <button type="button" onClick=${send} disabled=${sending || !text.trim()} style=${{...btnPrimary, width:'auto', padding:'12px 18px', background:'linear-gradient(135deg,#db2777,#9d174d)', opacity: (sending || !text.trim()) ? 0.6 : 1}}>${sending ? '…' : '📨 Enviar'}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 // Console flutuante (canto direito), visível em qualquer aba: botões da projeção + mixer com faders
 // verticais, mudo e barra de sinal (pedido do Paulo, 23/10). Monta na primeira abertura e depois fica
 // montado (só escondido), então a música de fundo não corta ao fechar o painel nem ao trocar de aba.
 function GlobalMixerWidget({ churchId, church, onUpdateChurch, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
-  // Janela pequena de verdade (celular): o Console vira gaveta por cima. Em janela de computador, fica FIXO ao lado.
-  const rawNarrow = () => window.innerWidth <= 680 || window.innerHeight <= 480;
+  // Celular/tablet de verdade (tela de toque): o Console vira gaveta por cima. Em COMPUTADOR ele fica FIXO
+  // ao lado, sempre aberto ao abrir o app — mesmo em janela estreita (v.95, pedido do Paulo: "o mixer tem
+  // que ficar fixo"). Só vira gaveta no computador se a janela for minúscula, onde não cabe nem o app.
+  const rawNarrow = () => gcIsTouchDevice() ? (window.innerWidth <= 900 || window.innerHeight <= 480) : (window.innerWidth <= 520 || window.innerHeight <= 400);
   const [isMobile, setIsMobile] = useState(rawNarrow);
   useEffect(() => { const f = () => setIsMobile(rawNarrow()); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
-  const dockW = Math.min(440, Math.max(300, Math.round(window.innerWidth * 0.38)));
-  // Fixo no lado direito: no computador já abre sozinho (e lembra se o Paulo fechou).
-  const startOpen = (() => { try { return !isMobile && localStorage.getItem('gc_console_open') !== '0'; } catch (e) { return !isMobile; } })();
+  const dockW = Math.min(440, Math.max(260, Math.round(window.innerWidth * 0.38)));
+  // Fixo no lado direito: no computador SEMPRE abre sozinho ao entrar no app (não lembra mais o "fechado",
+  // pra ele nunca sumir — o ✕ só recolhe até a próxima abertura; o botão 🎚️ traz de volta na hora).
+  const startOpen = !isMobile;
   const [open, setOpen] = useState(startOpen);
   const [mounted, setMounted] = useState(startOpen || remoteIsMain(churchId));
   useEffect(() => { const f = () => setMounted(true); window.addEventListener('gc-remote-mount', f); return () => window.removeEventListener('gc-remote-mount', f); }, []);
   const [, force] = useState(0);
-  useEffect(() => { try { localStorage.setItem('gc_console_open', open ? '1' : '0'); } catch (e) {} }, [open]);
+  // Virou computador (janela cresceu / girou o tablet): volta a ficar fixo e aberto.
+  useEffect(() => { if (!isMobile) { setMounted(true); setOpen(true); } }, [isMobile]);
   useEffect(() => { const f = () => force(n => n + 1); projectionAudio.listeners.add(f); return () => { projectionAudio.listeners.delete(f); }; }, []);
   // Gaveta fixa no lado direito: no computador o app encolhe pra ela não ficar por cima do conteúdo.
   useEffect(() => {
@@ -7084,7 +7242,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   // pulando pré-estreias agendadas), com a busca por palavra-chave só como reserva.
   useEffect(() => {
     const suffix = weekDateSuffix();
-    const hojeKey = remoteToday() + ':v94';
+    const hojeKey = remoteToday() + ':v95';
     // Re-confere o vídeo da semana pelo menos 1 vez por dia (antes só quando mudava a semana, e ficava preso num vídeo antigo/errado).
     const stale = activities.filter(a => a.media && a.media.dynamic && a.media.libTitle && (!(a.media.title || '').includes(suffix) || a.media.fetchedOn !== hojeKey));
     if (stale.length === 0) return;
@@ -9045,12 +9203,10 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   const docId = church.fbDocId || church.docId;
   useEffect(() => {
     if (!docId) return;
-    const unsub = fbListenWhenReady(() => {
+    // v.95: usa a escuta compartilhada (a mesma do Controle Remoto e do Chat) — uma só por aba.
+    const unsub = fbListenChurchDocShared(docId, data => {
       try {
-        const { doc, onSnapshot } = window.__fb.helpers;
-        return onSnapshot(doc(window.__fb.db, 'igrejas', docId), snap => {
-          if (!snap.exists()) return;
-          const data = snap.data();
+          if (!data) return;
           const patch = {
             bgMusic: data.bgMusic || null,
             paused: !!data.paused,
@@ -9097,14 +9253,17 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
           // atividades da Liturgia marcadas como "acontece todo sábado" (📅).
           if (data.fixedTracks) { patch.fixedTracks = data.fixedTracks; saveFixedTracks(church.id, data.fixedTracks); }
           onUpdateChurch(patch);
-        }, () => {});
-      } catch(e) { return () => {}; }
+      } catch(e) {}
     });
     return unsub;
   }, [docId]);
+  // Selo de mensagens não lidas do Chat (v.95) no menu — conta o que chegou de OUTROS aparelhos
+  // depois da última vez que a aba Chat foi aberta aqui.
+  const chatDoc = useChurchDoc(docId);
+  const chatUnread = useMemo(() => gcChatUnread(church.id, chatDoc && chatDoc.chat), [chatDoc && chatDoc.chat, tab]);
   return html`
     <div>
-      <${ChurchHeader} church=${church} tab=${tab} setTab=${setTab} onLogout=${onLogout} />
+      <${ChurchHeader} church=${church} tab=${tab} setTab=${setTab} onLogout=${onLogout} badges=${{ chat: chatUnread }} />
       ${tab === 'presenca' ? html`<${PresencaView} key="presenca" churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       ${tab === 'liturgia' ? html`<${LiturgiaView} key="lit" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />` : ''}
       ${tab === 'musicas' ? html`<${MusicasView} key="musicas" churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
@@ -9112,6 +9271,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'telas' ? html`<${TelasView} key="telas" churchId=${church.id} />` : ''}
       ${tab === 'mensagem' ? html`<${MensagemView} key="mensagem" churchId=${church.id} items=${mensagemItems} setItems=${setMensagemItems} current=${mensagemCurrent} setCurrent=${setMensagemCurrent} />` : ''}
       ${tab === 'buscas' ? html`<${BuscasSemanaisView} key="buscas" churchId=${church.id} />` : ''}
+      ${tab === 'chat' ? html`<${ChatView} key="chat" churchId=${church.id} church=${church} />` : ''}
       ${tab === 'ferramentas' ? html`<${FerramentasView} key="ferramentas" churchName=${church.name} churchId=${church.id} churchLogo=${church.logoDataUrl || ''} />` : ''}
       ${tab === 'sugestoes' ? html`<${SugestoesView} key="sugestoes" church=${church} />` : ''}
       ${tab === 'config' ? html`<${ConfiguracoesView} key="config" church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
