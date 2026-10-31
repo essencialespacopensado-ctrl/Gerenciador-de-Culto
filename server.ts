@@ -601,16 +601,25 @@ async function playlistViaInnertube(id: string, UA: string): Promise<PlEntry[]> 
   const j: any = await r.json();
   const items: any[] = [];
   walkFind(j, "playlistVideoRenderer", items);
+  // Layout novo do YouTube: os vídeos vêm como lockupViewModel (contentId = id do vídeo).
   if (!items.length) {
     const lk: any[] = []; walkFind(j, "lockupViewModel", lk);
-    const alerts: any[] = []; walkFind(j, "alerts", alerts);
-    throw new Error("sem playlistVideoRenderer; chaves=" + Object.keys(j).join(",") + "; lockups=" + lk.length + "; alerta=" + JSON.stringify(alerts).slice(0, 160) + "; amostra=" + JSON.stringify(j).slice(0, 200));
+    const seen = new Set<string>();
+    lk.forEach(x => {
+      const vid = x && x.contentId;
+      if (typeof vid !== "string" || !/^[\w-]{11}$/.test(vid) || seen.has(vid)) return;
+      seen.add(vid);
+      const meta = x.metadata && x.metadata.lockupMetadataViewModel;
+      const title = (meta && meta.title && meta.title.content) || "";
+      items.push({ videoId: vid, title: { simpleText: title }, __raw: JSON.stringify(x) });
+    });
   }
+  if (!items.length) throw new Error("sem vídeos na resposta; chaves=" + Object.keys(j).join(","));
   const now = Date.now();
   return items.filter(it => it.videoId).slice(0, 30).map((it, idx) => {
     const t = (it.title && (it.title.runs ? it.title.runs.map((x: any) => x.text).join("") : it.title.simpleText)) || "";
-    const raw = JSON.stringify(it);
-    const upcoming = /"UPCOMING"|upcomingEventData|"isUpcoming":true/.test(raw);
+    const raw = it.__raw || JSON.stringify(it);
+    const upcoming = /"UPCOMING"|upcomingEventData|"isUpcoming":true|Estreia|PREMIERE|Premiere|Agendad/.test(raw);
     // Mantém a ordem da playlist (do mais novo pro mais antigo) usando uma data sintética decrescente.
     return { videoId: it.videoId as string, title: t, published: new Date(now - (idx + 1) * 60000).toISOString(), views: upcoming ? 0 : -1 };
   });
