@@ -135,11 +135,21 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.97';
+const APP_VERSION = '2026-10-31.98';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-31.98',
+    date: '31/10/2026',
+    items: [
+      "Mais leve: a procura por atualização agora baixa só o começo do app (~16 KB) em vez do app inteiro (~850 KB) a cada 5 minutos e a cada vez que o celular desbloqueia; o app inteiro só é baixado quando há versão nova de verdade.",
+      "Correção: o celular/computador guardava uma cópia nova do app inteiro (~850 KB) a cada procura de atualização e o espaço do app crescia sem parar. Agora não guarda mais, e as cópias antigas são apagadas sozinhas.",
+      "Correção: o aviso de atualização agora mostra o que mudou na versão nova (antes a lista vinha vazia).",
+      "Controle Remoto: o computador principal manda o 'estou ligado' a cada 35 s (antes 20 s) — menos tráfego para todos os aparelhos conectados, sem mudar nada no uso."
+    ]
+  },
   {
     version: '2026-10-30.97',
     date: '30/10/2026',
@@ -6705,7 +6715,7 @@ function RemoteControl({ churchId, church }) {
       let wins = 0; try { wins = Object.keys(projectionWindows).filter(k => projectionWindows[k] && !projectionWindows[k].closed).length; } catch (e) {}
       const s = { wins, blocked: !!window.__gcSoundBlocked, pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, err: lastErr.current || '' };
       const json = JSON.stringify(s);
-      if (json === lastJson && Date.now() - lastAt < 20000) return;
+      if (json === lastJson && Date.now() - lastAt < 35000) return;
       fbUpdateChurchFields(docId, { remoteState: { ...s, ts: Date.now() } }).then(ok => { if (ok) { lastJson = json; lastAt = Date.now(); } });
     };
     push();
@@ -9391,11 +9401,15 @@ function useAppUpdateChecker() {
     let stopped = false;
     const check = async () => {
       try {
-        const res = await fetch(window.location.pathname + '?_v=' + Date.now(), { cache: 'no-store' });
+        // leve (31/10): pede só o começo do arquivo (onde fica o APP_VERSION); o arquivo inteiro só quando muda
+        const res = await fetch(window.location.pathname + '?_v=' + Date.now(), { cache: 'no-store', headers: { Range: 'bytes=0-16383' } });
         if (!res.ok) return;
-        const text = await res.text();
+        let text = await res.text();
         const m = text.match(/const APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
         if (m && m[1] && m[1] !== APP_VERSION && !stopped) {
+          if (res.status === 206) {
+            try { const r2 = await fetch(window.location.pathname + '?_v=' + Date.now(), { cache: 'no-store' }); if (r2.ok) text = await r2.text(); } catch(e) {}
+          }
           setUpdateAvailable(true);
           // Lê a lista de novidades direto do arquivo novo publicado, pra mostrar pra quem
           // ainda está na versão antiga (que não tem essa lista nova embutida localmente).
@@ -9405,7 +9419,7 @@ function useAppUpdateChecker() {
           try {
             const hm = text.match(/const APP_CHANGELOG_HISTORY\s*=\s*(\[[\s\S]*?\]);/);
             if (hm) {
-              const hist = JSON.parse(hm[1].replace(/,(\s*[\]}])/g, '$1'));
+              let hist; try { hist = JSON.parse(hm[1].replace(/,(\s*[\]}])/g, '$1')); } catch(e) { hist = (new Function('return ' + hm[1]))(); } // a lista é objeto JS (não JSON puro): antes nunca lia
               if (hist && hist[0] && Array.isArray(hist[0].items)) { setChangelog(hist[0].items); return; }
             }
           } catch(e) {}
@@ -9416,9 +9430,10 @@ function useAppUpdateChecker() {
         }
       } catch(e) {}
     };
+    let lastCheck = Date.now();
     check();
-    const id = setInterval(check, 5 * 60 * 1000);
-    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    const id = setInterval(() => { lastCheck = Date.now(); check(); }, 5 * 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === 'visible' && Date.now() - lastCheck > 60000) { lastCheck = Date.now(); check(); } };
     document.addEventListener('visibilitychange', onVisible);
     return () => { stopped = true; clearInterval(id); document.removeEventListener('visibilitychange', onVisible); };
   }, []);
