@@ -601,6 +601,11 @@ async function playlistViaInnertube(id: string, UA: string): Promise<PlEntry[]> 
   const j: any = await r.json();
   const items: any[] = [];
   walkFind(j, "playlistVideoRenderer", items);
+  if (!items.length) {
+    const lk: any[] = []; walkFind(j, "lockupViewModel", lk);
+    const alerts: any[] = []; walkFind(j, "alerts", alerts);
+    throw new Error("sem playlistVideoRenderer; chaves=" + Object.keys(j).join(",") + "; lockups=" + lk.length + "; alerta=" + JSON.stringify(alerts).slice(0, 160) + "; amostra=" + JSON.stringify(j).slice(0, 200));
+  }
   const now = Date.now();
   return items.filter(it => it.videoId).slice(0, 30).map((it, idx) => {
     const t = (it.title && (it.title.runs ? it.title.runs.map((x: any) => x.text).join("") : it.title.simpleText)) || "";
