@@ -1,6 +1,6 @@
 // Service worker do app — é ele que permite "instalar" o site como aplicativo e faz o app se
 // atualizar sozinho toda vez que uma nova versão é publicada, sem precisar desinstalar nada.
-const CACHE_NAME = 'gerenciador-culto-v1';
+const CACHE_NAME = 'gerenciador-culto-v2'; // v2 (31/10): apaga as cópias acumuladas pela procura de atualização
 
 // Assim que a nova versão termina de instalar, ela já assume o controle na hora (não fica
 // esperando todas as abas fecharem) — é isso que faz o app atualizar sozinho na próxima abertura.
@@ -23,6 +23,7 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.pathname.startsWith('/api/')) return; // nunca guarda em cache chamadas de API
+  if (url.searchParams.has('_v') || req.headers.has('range')) return; // procura de atualização: não guarda (antes acumulava uma cópia do app a cada 5 min)
 
   event.respondWith(
     fetch(req)
