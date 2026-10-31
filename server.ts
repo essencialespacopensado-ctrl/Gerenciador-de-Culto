@@ -664,23 +664,36 @@ app.get("/api/latest-from-playlist", async (req, res) => {
       const epNum = (t: string) => { const m = /\bEP\.?\s*(\d{1,4})\b/i.exec(t); return m ? parseInt(m[1], 10) : -1; };
       entries.sort((a, b) => (epNum(b.title) - epNum(a.title)) || (b.published || "").localeCompare(a.published || ""));
     }
-    for (const e of entries.slice(0, 15)) {
+    // CALENDÁRIO (pedido do Paulo): o vídeo certo é o do PRÓXIMO SÁBADO (ou de hoje, se for sábado). A data vem
+    // do título — "Provai e Vede 2026 (31/Out)" ou "31 de outubro de 2026 | Informativo…". Esse vídeo vai pra
+    // frente da fila; se ainda não existir (ou ainda não estreou), cai no mais novo já liberado, como antes.
+    const hojeSP = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+    const hoje0 = new Date(hojeSP.getFullYear(), hojeSP.getMonth(), hojeSP.getDate());
+    const sabado = new Date(hoje0.getFullYear(), hoje0.getMonth(), hoje0.getDate() + ((6 - hoje0.getDay() + 7) % 7));
+    const MESES = ["janeiro","fevereiro","marco","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+    const semAcento = (t: string) => t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const dataDoTitulo = (t: string): { d: number; m: number } | null => {
+      let m = /\((\d{1,2})\/(\d{1,2}|[a-zç]{3})[a-zç]*\)/i.exec(t);                 // (31/Out) ou (31/10)
+      if (!m) m = /\b(\d{1,2})\s+de\s+([a-zç]{3})[a-zç]*\b/i.exec(t);                 // 31 de outubro
+      if (!m) return null;
+      const d = parseInt(m[1], 10);
+      const mo = /^\d+$/.test(m[2]) ? parseInt(m[2], 10) - 1 : MESES.findIndex(x => x.slice(0, 3) === semAcento(m![2]));
+      return (d >= 1 && d <= 31 && mo >= 0 && mo < 12) ? { d, m: mo } : null;
+    };
+    const doSabado = (t: string) => { const dt = dataDoTitulo(t); return !!dt && dt.d === sabado.getDate() && dt.m === sabado.getMonth(); };
+    const lista = entries.slice(0, 30);
+    const fila = [...lista.filter(e => doSabado(e.title)), ...lista.filter(e => !doSabado(e.title)).slice(0, 15)];
+    for (const e of fila) {
+      const pelaData = doSabado(e.title);
       if (e.published && Date.parse(e.published) > now) continue;
       if (excludeRe && excludeRe.test(e.title)) continue;
       // Estreia agendada (ainda não foi ao ar) aparece no feed com 0 visualizações — pula, vai pro episódio anterior.
       if (e.views === 0) continue;
-      // Título com data de estreia no futuro, ex. "Provai e Vede 2026 (31/Out)": ainda não é pra passar — pula.
-      const dm = /\((\d{1,2})\/(\d{1,2}|jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-zç]*\)/i.exec(e.title);
-      if (dm) {
-        const meses = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
-        const mo = /^\d+$/.test(dm[2]) ? parseInt(dm[2], 10) - 1 : meses.indexOf(dm[2].toLowerCase());
-        if (mo >= 0 && mo < 12) {
-          const pubD = e.published ? new Date(e.published) : new Date();
-          let yr = pubD.getUTCFullYear(); if (mo + 6 < pubD.getUTCMonth()) yr += 1;
-          const hojeSP = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
-          const alvo = new Date(yr, mo, parseInt(dm[1], 10), 23, 59, 59);
-          if (alvo.getTime() > hojeSP.getTime() && new Date(yr, mo, parseInt(dm[1], 10)).getTime() > new Date(hojeSP.getFullYear(), hojeSP.getMonth(), hojeSP.getDate()).getTime()) continue;
-        }
+      // Título com data mais de 7 dias à frente do calendário: ainda é estreia agendada de outra semana — pula.
+      const dt = dataDoTitulo(e.title);
+      if (dt && !pelaData) {
+        let yr = hoje0.getFullYear(); if (dt.m + 6 < hoje0.getMonth()) yr += 1; else if (dt.m - 6 > hoje0.getMonth()) yr -= 1;
+        if (new Date(yr, dt.m, dt.d).getTime() - hoje0.getTime() > 7 * 24 * 3600 * 1000) continue;
       }
       try {
         const o = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${e.videoId}&format=json`, { headers: { "User-Agent": UA } });
@@ -697,7 +710,7 @@ app.get("/api/latest-from-playlist", async (req, res) => {
           if (/"isUpcoming":true/.test(html) || (st && st[1] !== "OK")) continue;
         } else { dbg = { http: w.status }; }
       } catch (er: any) { dbg = { err: String(er && er.message || er) }; /* sem rede pra checar: aceita o vídeo */ }
-      return res.json({ status: "ok", video: { videoId: e.videoId, title: e.title, published: e.published }, check: { ...(dbg || {}), src: srcInfo } });
+      return res.json({ status: "ok", video: { videoId: e.videoId, title: e.title, published: e.published }, check: { ...(dbg || {}), src: srcInfo, sabado: sabado.getDate() + "/" + (sabado.getMonth() + 1), pelaData } });
     }
     return res.json({ status: "empty", video: null });
   } catch (err: any) {
