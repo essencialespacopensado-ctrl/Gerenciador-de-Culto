@@ -135,11 +135,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.93';
+const APP_VERSION = '2026-10-30.94';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.94',
+    date: '30/10/2026',
+    items: [
+      "Vídeos da semana (Provai e Vede, Informativo, Vida e Saúde): quando a busca do vídeo mais novo falhava, o app caía numa busca por palavra-chave e pegava um vídeo antigo/errado. Agora tenta 2 vezes e, se não achar, não troca por um vídeo errado; todos os computadores conferem de novo ao abrir e já corrigem os vídeos errados salvos.",
+      "Vídeos da semana tocam em alta resolução e sem legendas também na prévia dentro do app.",
+    ]
+  },
   {
     version: '2026-10-30.93',
     date: '30/10/2026',
@@ -4745,7 +4753,7 @@ function ColetaneaTrackRow({ churchId, coletaneaId, coletaneaTitle, track, onCha
         <div style=${{display:'grid', gap:'8px'}}>
           ${media && html`
             <div style=${{position:'relative', width:'100%', aspectRatio:'16/9', borderRadius:'10px', overflow:'hidden', background:'#000'}}>
-              <iframe key=${media.videoId} src=${'https://www.youtube-nocookie.com/embed/'+media.videoId+'?autoplay=1&rel=0&playsinline=1'} title=${track.title} allow="autoplay; encrypted-media; fullscreen" allowfullscreen style=${{position:'absolute', inset:0, width:'100%', height:'100%', border:0}}></iframe>
+              <iframe key=${media.videoId} src=${'https://www.youtube-nocookie.com/embed/'+media.videoId+'?autoplay=1&rel=0&playsinline=1&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=hd1080'} title=${track.title} allow="autoplay; encrypted-media; fullscreen" allowfullscreen style=${{position:'absolute', inset:0, width:'100%', height:'100%', border:0}}></iframe>
             </div>`}
           <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
             ${linkingVideo
@@ -5377,8 +5385,8 @@ function BuscasSemanaisView({ churchId }) {
       const lib = MEDIA_LIBRARY.find(m => m.title === libTitleFor(it.key));
       if (!lib) return;
       let v = null;
-      if (lib.playlistId) v = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude, lib.byEp);
-      if (!v || !v.videoId) {
+      if (lib.playlistId) { v = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude, lib.byEp); if (!v || !v.videoId) v = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude, lib.byEp); }
+      if ((!v || !v.videoId) && !lib.playlistId) {
         const r = await searchYoutubeServer(lib.query);
         if (r && r[0] && r[0].videoId) v = { videoId: r[0].videoId, title: r[0].title || '' };
       }
@@ -5941,7 +5949,7 @@ async function searchYoutubeServer(query) {
 async function fetchLatestFromPlaylist(playlistId, exclude, byEp) {
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const timer = setTimeout(() => ctrl.abort(), 25000);
     const res = await fetch('/api/latest-from-playlist?id=' + encodeURIComponent(playlistId) + (exclude ? '&exclude=' + encodeURIComponent(exclude) : '') + (byEp ? '&byEp=1' : ''), { signal: ctrl.signal });
     clearTimeout(timer);
     if (!res.ok) return null;
@@ -5953,8 +5961,11 @@ async function fetchLatestFromPlaylist(playlistId, exclude, byEp) {
 // só cai pra busca por palavra-chave se a playlist falhar ou o item não tiver playlistId.
 async function fetchDynamicVideoId(lib) {
   if (lib.playlistId) {
-    const fromPlaylist = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude, lib.byEp);
+    let fromPlaylist = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude, lib.byEp);
+    if (!fromPlaylist || !fromPlaylist.videoId) fromPlaylist = await fetchLatestFromPlaylist(lib.playlistId, lib.exclude, lib.byEp); // 2ª tentativa
     if (fromPlaylist && fromPlaylist.videoId) return fromPlaylist.videoId;
+    // Item com canal/playlist oficial: NUNCA cai na busca por palavra-chave (ela trazia vídeo antigo/errado). Fica sem vídeo novo e tenta de novo depois.
+    return null;
   }
   const results = await searchYoutubeServer(lib.query);
   return (results && results[0] && results[0].videoId) || null;
@@ -7073,7 +7084,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   // pulando pré-estreias agendadas), com a busca por palavra-chave só como reserva.
   useEffect(() => {
     const suffix = weekDateSuffix();
-    const hojeKey = remoteToday();
+    const hojeKey = remoteToday() + ':v94';
     // Re-confere o vídeo da semana pelo menos 1 vez por dia (antes só quando mudava a semana, e ficava preso num vídeo antigo/errado).
     const stale = activities.filter(a => a.media && a.media.dynamic && a.media.libTitle && (!(a.media.title || '').includes(suffix) || a.media.fetchedOn !== hojeKey));
     if (stale.length === 0) return;
