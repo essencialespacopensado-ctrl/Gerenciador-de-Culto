@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.96';
+const APP_VERSION = '2026-10-30.97';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.97',
+    date: '30/10/2026',
+    items: [
+      "Bíblia, cronômetro, anúncios, relógio, fotos/slides da Mensagem: sem uma tela escolhida no 🖥️, agora vão pra MESMA janela de projeção dos vídeos (a tela marcada como Projetor; sem nenhuma marcada, a janela que já está aberta) — não abrem mais uma segunda janela na tela do operador. No 🖥️ de cada item dá pra escolher \"Mesma janela dos vídeos\", \"Todas as telas\" ou uma tela específica.",
+    ]
+  },
   {
     version: '2026-10-30.96',
     date: '30/10/2026',
@@ -3448,13 +3455,19 @@ function saveScreenPref(churchId, itemKey, sig) {
   } catch(e) {}
 }
 // Escolhe pra qual(is) tela(s) mandar: se tiver uma preferência salva pra esse item e a tela ainda
-// existir entre as habilitadas, manda só pra ela; senão (sem preferência, ou a tela salva não existe
-// mais), manda pra todas as habilitadas — o comportamento de sempre.
+// existir entre as habilitadas, manda só pra ela; 'all' = todas as habilitadas (escolha explícita no 🖥️).
+// SEM preferência (v.97, pedido do Paulo: "a Bíblia tem que projetar na mesma janela de popup dos
+// vídeos"): vai pra MESMA janela dos vídeos — a(s) tela(s) marcada(s) como Projetor; sem nenhuma marcada,
+// a janela de projeção que já estiver aberta; e, por último, todas as habilitadas (como era antes).
 function pickTargetScreens(churchId, itemKey, enabled) {
   const sig = loadScreenPref(churchId, itemKey);
-  if (!sig) return enabled;
-  const chosen = enabled.filter(s => screenSig(s) === sig);
-  return chosen.length > 0 ? chosen : enabled;
+  if (sig === 'all') return enabled;
+  if (sig) { const chosen = enabled.filter(s => screenSig(s) === sig); if (chosen.length > 0) return chosen; }
+  const projectors = enabled.filter(s => s.isProjector);
+  if (projectors.length > 0) return projectors;
+  const open = enabled.filter(s => { const w = projectionWindows[screenSig(s)]; return !!(w && !w.closed); });
+  if (open.length > 0) return open;
+  return enabled;
 }
 
 // Botãozinho "🖥️" que abre uma lista das telas habilitadas pra escolher (e salvar) qual delas deve
@@ -3475,7 +3488,8 @@ function ScreenPickerButton({ churchId, itemKey }) {
       </button>
       ${open && html`
         <div class="glass fade-up" style=${{position:'absolute', top:'calc(100% + 4px)', right:0, zIndex:200, borderRadius:'10px', padding:'5px', display:'grid', gap:'3px', minWidth:'190px', boxShadow:'0 12px 26px -8px rgba(0,0,0,0.5)'}}>
-          <button type="button" onClick=${()=>choose('')} style=${{textAlign:'left', padding:'6px 8px', borderRadius:'7px', border:'none', background: pref==='' ? 'rgba(99,102,241,0.18)' : 'transparent', fontSize:'11px', color:'var(--text-hi)'}}>📡 Todas as telas habilitadas</button>
+          <button type="button" onClick=${()=>choose('')} style=${{textAlign:'left', padding:'6px 8px', borderRadius:'7px', border:'none', background: !pref ? 'rgba(99,102,241,0.18)' : 'transparent', fontSize:'11px', color:'var(--text-hi)'}}>🎬 Mesma janela dos vídeos (projetor)</button>
+          <button type="button" onClick=${()=>choose('all')} style=${{textAlign:'left', padding:'6px 8px', borderRadius:'7px', border:'none', background: pref==='all' ? 'rgba(99,102,241,0.18)' : 'transparent', fontSize:'11px', color:'var(--text-hi)'}}>📡 Todas as telas habilitadas</button>
           ${screens.map(s => html`
             <button key=${screenSig(s)} type="button" onClick=${()=>choose(screenSig(s))} style=${{textAlign:'left', padding:'6px 8px', borderRadius:'7px', border:'none', background: pref===screenSig(s) ? 'rgba(99,102,241,0.18)' : 'transparent', fontSize:'11px', color:'var(--text-hi)'}}>🖥️ ${s.label}${s.isProjector ? ' (projetor)' : ''}</button>
           `)}
@@ -4062,12 +4076,12 @@ function RelogioTool({ churchId }) {
   const projetar = () => {
     const enabled = loadEnabledScreens(churchId);
     if (enabled.length === 0) { alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.'); return; }
-    enabled.forEach(scr => { try { sendToScreenObj(scr, 'relogio'); } catch (e) {} });
+    pickTargetScreens(churchId, 'relogio', enabled).forEach(scr => { try { sendToScreenObj(scr, 'relogio'); } catch (e) {} });
     setProjetado(true);
   };
   const tirar = () => {
     const enabled = loadEnabledScreens(churchId);
-    enabled.forEach(scr => { try { sendToScreenObj(scr, 'blank'); } catch (e) {} });
+    pickTargetScreens(churchId, 'relogio', enabled).forEach(scr => { try { sendToScreenObj(scr, 'blank'); } catch (e) {} });
     setProjetado(false);
   };
 
