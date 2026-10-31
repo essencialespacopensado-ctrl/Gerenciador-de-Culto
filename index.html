@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-30.92';
+const APP_VERSION = '2026-10-30.93';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-10-30.93',
+    date: '30/10/2026',
+    items: [
+      "Login: nova opção \"Todas as igrejas da associação\" (uma igreja cadastrada com o distrito escrito diferente, ex. \"caamboriu\", não aparecia em \"Camboriú\"). No cadastro da igreja, Cidade (lista oficial do IBGE) e Distrito (lista dos já existentes) agora são de escolher, sem digitar; um distrito novo é conferido contra os existentes pra barrar erro de escrita; e o login só aceita letras sem acento, números, ponto, traço e sublinhado.",
+    ]
+  },
   {
     version: '2026-10-30.92',
     date: '30/10/2026',
@@ -690,6 +697,77 @@ const sectionLabelStyle = { fontSize:'10.5px', fontWeight:800, color:'var(--text
 // então essa válvula de escape garante que o cadastro nunca fique travado por dado desatualizado).
 // initial* permite pré-carregar um valor já salvo (ex: editando uma igreja existente) sem tentar
 // "adivinhar" a que opção da lista ele corresponde — nesse caso cai em "Outra" com o texto já preenchido.
+
+// ===== Cadastro sem digitação livre nos campos que afetam o login (30/10, pedido do Paulo) =====
+// Cidade = lista oficial do IBGE do estado escolhido; Distrito = escolhido entre os que já existem na
+// associação (se for novo, a escrita é conferida contra os existentes pra barrar erro de digitação).
+const gcCityCache = {};
+function gcNorm(t) { return (t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+function gcNormLoose(t) { return gcNorm(t).replace(/(.)\1+/g, '$1'); }
+function gcLev(a, b) {
+  const m = a.length, n = b.length; if (!m) return n; if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) { const cur = [i]; for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; }
+  return prev[n];
+}
+// Acha um distrito já existente com escrita parecida (ignora acento, maiúscula e letra repetida).
+function gcSimilarDistrict(typed, existing) {
+  const t = gcNormLoose(typed); if (!t) return null;
+  return existing.find(e => { const x = gcNormLoose(e); return x === t || gcLev(x, t) <= (t.length > 6 ? 2 : 1); }) || null;
+}
+function CitySelect({ stateName, value, onChange }) {
+  const uf = (BRAZIL_STATES.find(s => s.name === stateName) || {}).uf || '';
+  const [list, setList] = useState(uf && gcCityCache[uf] ? gcCityCache[uf] : null);
+  const [fail, setFail] = useState(false);
+  useEffect(() => {
+    setFail(false);
+    if (!uf) { setList(null); return; }
+    if (gcCityCache[uf]) { setList(gcCityCache[uf]); return; }
+    setList(null);
+    let off = false;
+    fetch('https://servicodados.ibge.gov.br/api/v1/localidades/estados/' + uf + '/municipios?orderBy=nome')
+      .then(r => r.json()).then(arr => { const names = arr.map(x => x.nome); gcCityCache[uf] = names; if (!off) setList(names); })
+      .catch(() => { if (!off) setFail(true); });
+    return () => { off = true; };
+  }, [uf]);
+  if (!uf) return html`<select disabled style=${{...inputStyle, opacity:0.6}}><option>Escolha o Estado primeiro...</option></select>`;
+  if (fail) return html`<input placeholder="Cidade (sem conexão com a lista oficial)" value=${value} onChange=${e=>onChange(e.target.value)} style=${inputStyle} />`;
+  if (!list) return html`<select disabled style=${{...inputStyle, opacity:0.6}}><option>Carregando cidades...</option></select>`;
+  return html`<select value=${value} onChange=${e=>onChange(e.target.value)} style=${inputStyle}>
+    <option value="">Cidade...</option>
+    ${list.map(c => html`<option key=${c} value=${c}>${c}</option>`)}
+  </select>`;
+}
+function DistrictSelect({ association, churches, value, onChange }) {
+  const existing = useMemo(() => [...new Set((churches || []).filter(c => !c.removed && (c.association || '').trim() === (association || '').trim() && (c.district || '').trim()).map(c => c.district.trim()))].sort((a, b) => a.localeCompare(b, 'pt-BR')), [churches, association]);
+  const [novo, setNovo] = useState(false);
+  const [txt, setTxt] = useState('');
+  const [msg, setMsg] = useState('');
+  useEffect(() => { setNovo(false); setTxt(''); setMsg(''); }, [association]);
+  if (!association) return html`<select disabled style=${{...inputStyle, opacity:0.6}}><option>Escolha a Associação primeiro...</option></select>`;
+  const confirmar = () => {
+    const t = txt.trim().replace(/\s+/g, ' ');
+    if (t.length < 3) { setMsg('Escreva o nome do distrito.'); return; }
+    const sim = gcSimilarDistrict(t, existing);
+    if (sim) { setMsg('Esse distrito já existe como "' + sim + '". Escolha ele na lista.'); return; }
+    const bonito = t.replace(/\S+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+    setMsg(''); onChange(bonito); setNovo(false);
+  };
+  return html`<div style=${{display:'grid', gap:'6px'}}>
+    <select value=${novo ? '__novo__' : value} onChange=${e=>{ if (e.target.value === '__novo__') { setNovo(true); onChange(''); } else { setNovo(false); setMsg(''); onChange(e.target.value); } }} style=${inputStyle}>
+      <option value="">Distrito...</option>
+      ${existing.map(d => html`<option key=${d} value=${d}>${d}</option>`)}
+      ${value && !existing.includes(value) && html`<option value=${value}>${value} (novo)</option>`}
+      <option value="__novo__">➕ Meu distrito não está na lista</option>
+    </select>
+    ${novo && html`<div style=${{display:'grid', gap:'6px'}}>
+      <input placeholder="Nome do distrito (confira a escrita)" value=${txt} onChange=${e=>setTxt(e.target.value)} style=${inputStyle} />
+      <button type="button" onClick=${confirmar} style=${{...btnGhost, padding:'8px 12px', fontSize:'12px'}}>Confirmar distrito</button>
+    </div>`}
+    ${msg && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>${msg}</div>`}
+  </div>`;
+}
+
 function SdaHierarchyPicker({ onChange, initialDivision, initialUnion, initialState, initialAssociation }) {
   const [divisionId, setDivisionId] = useState('dsa');
   const [unionId, setUnionId] = useState(initialUnion ? '__outra__' : '');
@@ -807,7 +885,7 @@ function LoginScreen({ onLogin }) {
   const churchOptions = useMemo(() => {
     if (!selectedAssoc || !selectedDistrict) return [];
     return activeChurches
-      .filter(c => ((c.association||'').trim() || 'Sem associação definida') === selectedAssoc && ((c.district||'').trim() || 'Sem distrito definido') === selectedDistrict)
+      .filter(c => ((c.association||'').trim() || 'Sem associação definida') === selectedAssoc && (selectedDistrict === '__all__' || ((c.district||'').trim() || 'Sem distrito definido') === selectedDistrict))
       .sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
   }, [activeChurches, selectedAssoc, selectedDistrict]);
   const handleAssocSelect = (v) => { setSelectedAssoc(v); setSelectedDistrict(''); setSelectedChurchLogin(''); setLogin(v === '__dev__' ? login : ''); };
@@ -871,6 +949,9 @@ function LoginScreen({ onLogin }) {
     if (!newPassword.trim() || newPassword.length < 4) { setError('A senha deve ter no mínimo 4 caracteres.'); return; }
     if (!recoveryQuestion.trim() || !recoveryAnswer.trim()) { setError('Preencha a pergunta e a resposta de segurança — é por elas que você vai recuperar a senha se esquecer.'); return; }
     if (!union.trim() || !association.trim()) { setError('Selecione a União e a Associação/Missão da sua igreja.'); return; }
+    if (!district.trim()) { setError('Escolha o Distrito na lista (ou use "Meu distrito não está na lista" e confirme).'); return; }
+    if (!city.trim()) { setError('Escolha a Cidade na lista.'); return; }
+    if (!/^[A-Za-z0-9._-]{3,30}$/.test(newLogin.trim())) { setError('O login deve ter de 3 a 30 caracteres, só letras sem acento, números, ponto, traço ou sublinhado (sem espaços).'); return; }
 
     // Trava contra cadastro duplicado (pedido dele, 23/09): se já existe outra igreja ativa com a
     // MESMA cidade e o MESMO endereço, é quase certo que é a mesma igreja se cadastrando de novo
@@ -949,13 +1030,14 @@ function LoginScreen({ onLogin }) {
               ${selectedAssoc && selectedAssoc !== '__dev__' && html`
                 <select value=${selectedDistrict} onChange=${e=>handleDistrictSelect(e.target.value)} style=${inputStyle}>
                   <option value="">Distrito...</option>
+                  <option value="__all__">Todas as igrejas da associação</option>
                   ${districtOptions.map(d => html`<option key=${d} value=${d}>${d}</option>`)}
                 </select>
               `}
               ${selectedDistrict && selectedAssoc !== '__dev__' && html`
                 <select value=${selectedChurchLogin} onChange=${e=>handleChurchSelect(e.target.value)} style=${inputStyle}>
                   <option value="">Igreja...</option>
-                  ${churchOptions.map(c => html`<option key=${c.id} value=${c.login}>${c.name}${c.city ? ' — '+c.city : ''}</option>`)}
+                  ${churchOptions.map(c => html`<option key=${c.id} value=${c.login}>${c.name}${c.city ? ' — '+c.city : ''}${selectedDistrict === '__all__' && c.district ? ' ('+c.district+')' : ''}</option>`)}
                 </select>
               `}
               ${selectedAssoc === '__dev__' && html`
@@ -978,12 +1060,11 @@ function LoginScreen({ onLogin }) {
               <div style=${sectionLabelStyle}>Identificação da Igreja</div>
               <input placeholder="Nome da igreja adventista" value=${name} onChange=${e=>setName(e.target.value)} style=${inputStyle} autoFocus />
               <input placeholder="Endereço completo" value=${address} onChange=${e=>setAddress(e.target.value)} style=${inputStyle} />
-              <input placeholder="Cidade" value=${city} onChange=${e=>setCity(e.target.value)} style=${inputStyle} />
-
               <div style=${sectionLabelStyle}>Organização Administrativa</div>
               <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginTop:'-4px'}}>Cada escolha abaixo filtra a próxima — selecione na ordem.</div>
-              <${SdaHierarchyPicker} onChange=${(v)=>{ setDivision(v.division); setUnion(v.union); setState(v.state); setAssociation(v.association); }} />
-              <input placeholder="Distrito (como sua associação organiza)" value=${district} onChange=${e=>setDistrict(e.target.value)} style=${inputStyle} />
+              <${SdaHierarchyPicker} onChange=${(v)=>{ setDivision(v.division); setUnion(v.union); setState(v.state); setAssociation(v.association); setDistrict(''); setCity(''); }} />
+              <${DistrictSelect} association=${association} churches=${churches} value=${district} onChange=${setDistrict} />
+              <${CitySelect} stateName=${state} value=${city} onChange=${setCity} />
               <label style=${{display:'flex', alignItems:'center', gap:'8px', fontSize:'12.5px', color:'var(--text-mid)', padding:'2px 2px'}}>
                 <input type="checkbox" checked=${isDistrictSeat} onChange=${e=>setIsDistrictSeat(e.target.checked)} style=${{width:'16px',height:'16px'}} />
                 Esta igreja é sede de distrito
@@ -1008,7 +1089,7 @@ function LoginScreen({ onLogin }) {
               `)}
 
               <div style=${sectionLabelStyle}>Acesso ao Sistema</div>
-              <input placeholder="Login de acesso desejado" value=${newLogin} onChange=${e=>setNewLogin(e.target.value)} style=${inputStyle} />
+              <input placeholder="Login de acesso desejado (sem espaços nem acentos)" value=${newLogin} onChange=${e=>setNewLogin(e.target.value)} style=${inputStyle} />
               <div style=${{position:'relative'}}>
                 <input type=${showNewPassword ? 'text' : 'password'} placeholder="Senha (mínimo 4 caracteres)" value=${newPassword} onChange=${e=>setNewPassword(e.target.value)} style=${{...inputStyle, paddingRight:'42px'}} />
                 <button type="button" onClick=${()=>setShowNewPassword(v=>!v)} style=${{position:'absolute', right:'6px', top:'50%', transform:'translateY(-50%)', background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'15px', padding:'4px 6px', cursor:'pointer'}} title=${showNewPassword ? 'Ocultar senha' : 'Mostrar senha'}>${showNewPassword ? '🙈' : '👁️'}</button>
