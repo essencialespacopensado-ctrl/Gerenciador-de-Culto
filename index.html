@@ -135,11 +135,20 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-01.113';
+const APP_VERSION = '2026-11-01.114';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.114',
+    date: '01/11/2026',
+    items: [
+      "Plano de fundo da igreja agora aparece sempre: o app guarda uma cópia própria no aparelho, recupera da nuvem e reduz imagens muito pesadas (antes elas não salvavam e o fundo ficava vazio).",
+      "Congelar agora mostra o plano de fundo da igreja nas telas e mantém o som tocando. Descongelar volta ao conteúdo.",
+      "Chat: novo botão 🔔 Chamar atenção — nos outros aparelhos abre o Chat direto, faz a tela tremer, piscar e apitar.",
+    ]
+  },
   {
     version: '2026-11-01.113',
     date: '01/11/2026',
@@ -3609,11 +3618,47 @@ window.addEventListener('message', (e) => {
 let projectionFrozen = false;
 let frozenPendingBySig = {};
 function isProjectionFrozen() { return projectionFrozen; }
+// v.114: plano de fundo da igreja com várias fontes (igreja em memória, cópia própria do aparelho, nuvem).
+let gcChurchBgUrl = '';
+function gcBgKey(churchId) { return 'gc_bg_' + churchId; }
+function gcGetBackground(church) {
+  try {
+    const id = church && church.id;
+    let u = (church && church.backgroundImageDataUrl) || '';
+    if (!u && id) { try { u = localStorage.getItem(gcBgKey(id)) || ''; } catch (e) {} }
+    if (!u) { const d = church && (church.fbDocId || church.docId); const sub = d && gcDocSubs[d]; if (sub && sub.data && sub.data.backgroundImageDataUrl) u = sub.data.backgroundImageDataUrl; }
+    if (u) gcChurchBgUrl = u;
+    return u;
+  } catch (e) { return gcChurchBgUrl || ''; }
+}
+function gcSaveBackground(churchId, url) { try { if (url) localStorage.setItem(gcBgKey(churchId), url); else localStorage.removeItem(gcBgKey(churchId)); } catch (e) {} gcChurchBgUrl = url || ''; }
+function gcShrinkDataUrl(dataUrl, maxLen) {
+  return new Promise(resolve => {
+    if (!dataUrl || dataUrl.length <= maxLen) { resolve(dataUrl); return; }
+    const img = new Image();
+    img.onerror = () => resolve(dataUrl);
+    img.onload = () => {
+      try {
+        let side = 1920, q = 0.85, out = dataUrl;
+        for (let n = 0; n < 6; n++) {
+          const sc = Math.min(1, side / Math.max(img.width, img.height));
+          const c = document.createElement('canvas'); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          out = c.toDataURL('image/jpeg', q);
+          if (out.length <= maxLen) break;
+          side = Math.round(side * 0.8); q = Math.max(0.6, q - 0.05);
+        }
+        resolve(out);
+      } catch (e) { resolve(dataUrl); }
+    };
+    img.src = dataUrl;
+  });
+}
 function setProjectionFrozen(value) {
   projectionFrozen = !!value;
   // Congela a IMAGEM de verdade nas telas (igual ao "Freeze" do projetor): a tela segura o último
   // quadro enquanto o operador prepara o próximo conteúdo por baixo dos panos.
-  postToProjectionWindows({ gcType:'freeze', on: projectionFrozen });
+  postToProjectionWindows({ gcType:'freeze', on: projectionFrozen, bg: gcChurchBgUrl || '' });
   projectionAudioNotify();
   if (!projectionFrozen) {
     const pending = frozenPendingBySig;
@@ -4084,18 +4129,11 @@ function projectionShellHtml(openerActive) {
       // Congelar = print da tela. YouTube roda em outro site e o navegador não deixa copiar o quadro; o jeito é a
       // captura da própria aba (uma permissão, dada com um clique na tela projetada). Depois disso, vale pra sempre naquela janela.
       + 'function gcAskCapture(){if(capBtn)return;var b=document.createElement("button");capBtn=b;b.textContent="\uD83D\uDCF8 Liberar o Congelar \u2014 clique e escolha Esta guia";b.style.cssText="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:20;padding:18px 26px;border-radius:14px;border:2px solid #00e5ff;background:#001418;color:#00e5ff;font:700 20px sans-serif;cursor:pointer;";b.onclick=function(ev){ev.stopPropagation();navigator.mediaDevices.getDisplayMedia({video:{frameRate:30},audio:false,preferCurrentTab:true,selfBrowserSurface:"include"}).then(function(st){capVideo=document.createElement("video");capVideo.muted=true;capVideo.srcObject=st;capVideo.play();st.getVideoTracks()[0].onended=function(){capVideo=null;};try{b.remove();}catch(e){}capBtn=null;setTimeout(function(){if(frozenWanted&&!frozenCanvas&&capVideo)gcSnap(capVideo);},500);}).catch(function(){try{b.remove();}catch(e){}capBtn=null;});};document.body.appendChild(b);}'
-      + 'function gcFreeze(on){'
-        + 'if(on){if(frozenCanvas||frozenYt)return;frozenWanted=true;'
-          + 'if(localVideoEl){gcSnap(localVideoEl);}'
-          + 'else if(document.getElementById("gc-player")){'
-            + 'if(capVideo&&capVideo.readyState>=2){gcSnap(capVideo);}'
-            + 'else if(navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia){gcAskCapture();}'
-            + 'else{frozenYt=true;try{if(ytPlayer)ytPlayer.pauseVideo();}catch(e){}gcYtCmd("pauseVideo");}'
-          + '}'
+      + 'function gcFreeze(on,bg){'
+        + 'if(on){if(frozenCanvas)return;frozenWanted=true;var d=document.createElement("div");d.id="gc-freeze-bg";d.style.cssText="position:fixed;left:0;top:0;width:100%;height:100%;z-index:4;background:#000;overflow:hidden;pointer-events:none;";if(bg){var im=document.createElement("img");im.style.cssText="width:100%;height:100%;object-fit:cover;display:block;";im.src=bg;d.appendChild(im);}document.body.appendChild(d);frozenCanvas=d;'
         + '}else{frozenWanted=false;'
           + 'if(capBtn){try{capBtn.remove();}catch(e){}capBtn=null;}'
           + 'if(frozenCanvas){try{frozenCanvas.remove();}catch(e){}frozenCanvas=null;}'
-          + 'if(frozenYt){frozenYt=false;try{if(ytPlayer)ytPlayer.playVideo();}catch(e){}gcYtCmd("playVideo");}'
         + '}'
       + '}'
       + 'function gcEnsurePlay(mute){'
@@ -4137,7 +4175,7 @@ function projectionShellHtml(openerActive) {
         + 'if(d.gcType==="media"){lastMute=!!d.mute;if(typeof d.vol==="number")projVol=d.vol;projMuted=!!d.pmute;renderVideo(d.media,d.mute);}'
         + 'else if(d.gcType==="media_volume"){projVol=+d.value;if(projVol>0&&(projMuted||gcSoundPending)){projMuted=false;gcApplyMute();gcNotify({gcEvt:"sound_on"});}try{if(ytPlayer)ytPlayer.setVolume(projVol);gcYtCmd("setVolume",[projVol]);}catch(e){}try{if(localVideoEl)localVideoEl.volume=projVol/100;}catch(e){}}'
         + 'else if(d.gcType==="media_mute"){projMuted=!!d.on;gcApplyMute();}'
-        + 'else if(d.gcType==="freeze"){gcFreeze(!!d.on);}'
+        + 'else if(d.gcType==="freeze"){gcFreeze(!!d.on,d.bg||"");}'
         + 'else if(d.gcType==="imagem"){renderImage(d.item);gcNotify({gcEvt:"state",s:-1});}'
         + 'else if(d.gcType==="localvideo"){if(typeof d.vol==="number")projVol=d.vol;projMuted=!!d.pmute;renderLocalVideo(d.item,d.mute);}'
         + 'else if(d.gcType==="texto"){renderText(d.text);gcNotify({gcEvt:"state",s:-1});}'
@@ -4280,7 +4318,7 @@ function closeAllProjectionScreens() {
 // útil pra manter algo bonito na tela nos momentos em que não há nada específico sendo projetado,
 // em vez de ficar preto.
 function sendBackgroundToAllScreens(churchId, church, quiet, onErr) {
-  const url = church && church.backgroundImageDataUrl;
+  const url = gcGetBackground(church);
   const fail = (m) => { if (!quiet) alert(m); return m; };
   if (!url) return fail('Nenhuma imagem de plano de fundo cadastrada ainda. Cadastre em Configurações > Dados da Igreja.');
   const enabled = loadEnabledScreens(churchId);
@@ -7297,7 +7335,7 @@ function StartupProjection({ churchId, church }) {
         if (window.__gcStartupDone) return; window.__gcStartupDone = true;
         const enabled = loadEnabledScreens(churchId);
         if (!enabled.length) return;
-        const url = (church && church.backgroundImageDataUrl) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        const url = gcGetBackground(church) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
         applyRoute(churchId, 'fundo', enabled).forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet: true, prep: true }); } catch (e) {} });
       } catch (e) {}
     }, 2500);
@@ -7360,7 +7398,7 @@ function RemoteControl({ churchId, church }) {
   const prepareScreens = () => {
     const enabled = loadEnabledScreens(churchId);
     if (!enabled.length) { alert('Nenhuma tela habilitada. Habilite na aba Telas.'); return; }
-    const url = (churchRef.current && churchRef.current.backgroundImageDataUrl) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    const url = gcGetBackground(churchRef.current) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
     window.__gcSoundBlocked = false;
     applyRoute(churchId, 'fundo', enabled).forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }); } catch (e) {} });
   };
@@ -7574,6 +7612,25 @@ function gcChatTime(ts) {
   if (d.toDateString() === now.toDateString()) return hm;
   return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0') + ' ' + hm;
 }
+// v.114: "Chamar atenção" — treme a tela, apita e leva o operador direto pro Chat nos outros aparelhos.
+function gcShakeScreen() {
+  try {
+    if (!document.getElementById('gc-shake-style')) {
+      const st = document.createElement('style'); st.id = 'gc-shake-style';
+      st.textContent = '@keyframes gcShake{0%,100%{transform:translate(0,0) rotate(0)}10%{transform:translate(-14px,6px) rotate(-1.2deg)}20%{transform:translate(14px,-6px) rotate(1.2deg)}30%{transform:translate(-12px,-8px) rotate(-1deg)}40%{transform:translate(12px,8px) rotate(1deg)}50%{transform:translate(-10px,4px) rotate(-.8deg)}60%{transform:translate(10px,-4px) rotate(.8deg)}70%{transform:translate(-6px,2px)}80%{transform:translate(6px,-2px)}90%{transform:translate(-3px,1px)}}.gc-shaking{animation:gcShake .5s linear 5;}.gc-attn-flash{position:fixed;inset:0;z-index:99999;pointer-events:none;box-shadow:inset 0 0 0 8px #ef4444,inset 0 0 120px rgba(239,68,68,.55);animation:gcAttnBlink .5s ease-in-out 5}@keyframes gcAttnBlink{0%,100%{opacity:0}50%{opacity:1}}';
+      document.head.appendChild(st);
+    }
+    const root = document.getElementById('root');
+    if (root) { root.classList.remove('gc-shaking'); void root.offsetWidth; root.classList.add('gc-shaking'); setTimeout(() => root.classList.remove('gc-shaking'), 2700); }
+    const fl = document.createElement('div'); fl.className = 'gc-attn-flash'; document.body.appendChild(fl); setTimeout(() => { try { fl.remove(); } catch (e) {} }, 2700);
+    try { if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]); } catch (e) {}
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext; const ac = new AC();
+      [0, 0.35, 0.7].forEach(t0 => { const o = ac.createOscillator(), g = ac.createGain(); o.type = 'square'; o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(ac.destination); o.start(ac.currentTime + t0); o.stop(ac.currentTime + t0 + 0.22); });
+      setTimeout(() => { try { ac.close(); } catch (e) {} }, 1600);
+    } catch (e) {}
+  } catch (e) {}
+}
 function ChatView({ churchId, church }) {
   const isMobile = useIsMobile();
   const docId = church && (church.fbDocId || church.docId);
@@ -7595,8 +7652,8 @@ function ChatView({ churchId, church }) {
     try { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; } catch (e) {}
   }, [msgs.length]);
   const saveName = (v) => { nameTouched.current = true; setName(v); try { localStorage.setItem(chatNameKey(churchId), v); } catch (e) {} };
-  const send = async () => {
-    const t = text.trim().slice(0, 500);
+  const send = async (attn) => {
+    const t = attn === true ? '🔔 CHAMANDO SUA ATENÇÃO! Veja o chat.' : text.trim().slice(0, 500);
     const n = (name || '').trim().slice(0, 40);
     if (!t) return;
     if (!n) { setErr('Escreva seu nome antes de mandar a primeira mensagem.'); return; }
@@ -7604,7 +7661,7 @@ function ChatView({ churchId, church }) {
     setSending(true); setErr('');
     const ts = Date.now();
     const id = ts.toString(36) + '-' + devId.slice(-4) + Math.random().toString(36).slice(2, 5);
-    const fields = { ['chat.' + id]: { n, t, ts, d: devId } };
+    const fields = { ['chat.' + id]: attn === true ? { n, t, ts, d: devId, a: 1 } : { n, t, ts, d: devId } };
     // Limpeza das mais antigas (só quem manda faz isso, e só quando passou do limite).
     try {
       const h = window.__fb && window.__fb.helpers;
@@ -7613,7 +7670,7 @@ function ChatView({ churchId, church }) {
     const ok = await fbUpdateChurchFields(docId, fields);
     setSending(false);
     if (!ok) { setErr('Não consegui enviar. Verifique a internet e tente de novo.'); return; }
-    setText('');
+    if (attn !== true) setText('');
     try { localStorage.setItem(chatSeenKey(churchId), String(ts)); } catch (e) {}
   };
   const clearAll = () => {
@@ -7659,7 +7716,8 @@ function ChatView({ churchId, church }) {
         ${err && html`<div style=${{fontSize:'11.5px', color:'var(--danger)'}}>⚠️ ${err}</div>`}
         <div style=${{display:'flex', gap:'8px', alignItems:'flex-end'}}>
           <textarea value=${text} onInput=${e=>setText(e.target.value)} onKeyDown=${e=>{ if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} placeholder="Escreva a mensagem… (Enter envia, Shift+Enter quebra linha)" rows="2" maxlength="500" style=${{...inputStyle, flex:1, fontSize:'13px', fontFamily:'inherit', resize:'none'}}></textarea>
-          <button type="button" onClick=${send} disabled=${sending || !text.trim()} style=${{...btnPrimary, width:'auto', padding:'12px 18px', background:'linear-gradient(135deg,#db2777,#9d174d)', opacity: (sending || !text.trim()) ? 0.6 : 1}}>${sending ? '…' : '📨 Enviar'}</button>
+          <button type="button" onClick=${() => send(true)} disabled=${sending} title="Faz a tela dos outros aparelhos tremer e abre o chat neles" style=${{...btnPrimary, width:'auto', padding:'12px 14px', background:'linear-gradient(135deg,#ef4444,#b91c1c)', opacity: sending ? 0.6 : 1}}>🔔 Chamar atenção</button>
+          <button type="button" onClick=${() => send()} disabled=${sending || !text.trim()} style=${{...btnPrimary, width:'auto', padding:'12px 18px', background:'linear-gradient(135deg,#db2777,#9d174d)', opacity: (sending || !text.trim()) ? 0.6 : 1}}>${sending ? '…' : '📨 Enviar'}</button>
         </div>
       </div>
     </div>
@@ -9769,8 +9827,10 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
     if (!file) return;
     setBackgroundSaving(true);
     try {
-      const dataUrl = await readImageFileSmart(file);
+      let dataUrl = await readImageFileSmart(file);
+      dataUrl = await gcShrinkDataUrl(dataUrl, 700 * 1024);
       setBackgroundDataUrl(dataUrl);
+      gcSaveBackground(church.id, dataUrl);
       persistChurch({ backgroundImageDataUrl: dataUrl }, 'Imagem de plano de fundo atualizada');
     } catch (err) {
       alert('Erro ao carregar a imagem: ' + (err && err.message ? err.message : err));
@@ -9780,6 +9840,7 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
   };
   const removeBackground = () => {
     setBackgroundDataUrl('');
+    gcSaveBackground(church.id, '');
     persistChurch({ backgroundImageDataUrl: '' }, 'Imagem de plano de fundo removida');
   };
 
@@ -9967,6 +10028,11 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   // sessão automaticamente, sem precisar sair e entrar de novo.
   const docId = church.fbDocId || church.docId;
   useEffect(() => {
+    const u = gcGetBackground(church);
+    if (church.backgroundImageDataUrl) gcSaveBackground(church.id, church.backgroundImageDataUrl);
+    else if (u) { onUpdateChurch({ backgroundImageDataUrl: u }); }
+  }, [church.backgroundImageDataUrl, church.id]);
+  useEffect(() => {
     if (!docId) return;
     // v.95: usa a escuta compartilhada (a mesma do Controle Remoto e do Chat) — uma só por aba.
     const unsub = fbListenChurchDocShared(docId, data => {
@@ -10012,6 +10078,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
           }
           // Preferência de lembretes automáticos e status reportado pelo programinha externo
           // (25/09) — sem cache local próprio, é só exibição, então basta refletir na sessão.
+          if (data.backgroundImageDataUrl) { patch.backgroundImageDataUrl = data.backgroundImageDataUrl; gcSaveBackground(church.id, data.backgroundImageDataUrl); }
           if (data.lembretesAtivo !== undefined) patch.lembretesAtivo = data.lembretesAtivo;
           if (data.lembretesStatus) patch.lembretesStatus = data.lembretesStatus;
           // Trilhas Fixas (25/09): vídeos/músicas fixos cadastrados em Gestão, usados pelas
@@ -10025,6 +10092,19 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   // Selo de mensagens não lidas do Chat (v.95) no menu — conta o que chegou de OUTROS aparelhos
   // depois da última vez que a aba Chat foi aberta aqui.
   const chatDoc = useChurchDoc(docId);
+  const attnSeen = useRef(null);
+  const mountedAt = useRef(Date.now());
+  useEffect(() => {
+    const list = gcChatList(chatDoc && chatDoc.chat).filter(m => m.a);
+    if (!attnSeen.current) { attnSeen.current = new Set(list.map(m => m.id)); return; }
+    const me = remoteDeviceId();
+    list.forEach(m => {
+      if (attnSeen.current.has(m.id)) return;
+      attnSeen.current.add(m.id);
+      if (m.d === me || Date.now() - (m.ts || 0) > 60000) return;
+      setTab('chat'); gcShakeScreen();
+    });
+  }, [chatDoc && chatDoc.chat]);
   const chatUnread = useMemo(() => gcChatUnread(church.id, chatDoc && chatDoc.chat), [chatDoc && chatDoc.chat, tab]);
   return html`
     <div>
