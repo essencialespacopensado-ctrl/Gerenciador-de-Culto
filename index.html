@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-01.115';
+const APP_VERSION = '2026-11-01.116';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.116',
+    date: '01/11/2026',
+    items: [
+      "Plano de Fundo agora ocupa a janela de projeção inteira (preenche a tela, sem faixas pretas) e o clique na janela já coloca em tela cheia e libera o som.",
+    ]
+  },
   {
     version: '2026-11-01.115',
     date: '01/11/2026',
@@ -4020,7 +4027,7 @@ function projectionShellHtml(openerActive) {
       + '}'
       + 'function renderBlank(){stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();}'
       + 'function renderText(text){stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();var h=document.createElement("h1");h.textContent=text||"";h.style.whiteSpace="pre-line";h.style.lineHeight="1.35";h.style.fontSize="clamp(28px, 4.6vw, 74px)";stage.appendChild(h);}'
-      + 'function renderImage(item){stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();var img=document.createElement("img");img.src=(item&&item.dataUrl)||"";img.alt=(item&&item.title)||"";stage.appendChild(img);}'
+      + 'function renderImage(item){stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();var img=document.createElement("img");img.src=(item&&item.dataUrl)||"";img.alt=(item&&item.title)||"";if(item&&item.title==="Plano de Fundo"){img.style.cssText="width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;";}stage.appendChild(img);}'
       // Cronômetro pra atividades sem vídeo/música (oração, sermão, avisos falados, etc.) — mostra o
       // nome/responsável já cadastrados na Liturgia (pedido do Paulo, 25/09) em cima de um relógio
       // grande. O tempo é calculado aqui na tela a partir de startedAt (quando rodando) + pausedMs
