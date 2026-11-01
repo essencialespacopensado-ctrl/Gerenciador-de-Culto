@@ -141,6 +141,13 @@ const APP_VERSION = '2026-11-01.107';
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
   {
+    version: '2026-11-01.111',
+    date: '01/11/2026',
+    items: [
+      "Celular (📱): as ferramentas Bíblia / Cronômetro / Relógio / Tela vazia agora ficam logo abaixo dos botões de Play/Pause (antes estavam no fim da lista, depois da Liturgia).",
+    ]
+  },
+  {
     version: '2026-11-01.110',
     date: '01/11/2026',
     items: [
@@ -7218,8 +7225,8 @@ function PhoneTools({ send }) {
     setBusy(false);
   };
   return html`
-    <div style=${{display:'grid', gap:'10px', marginTop:'6px', paddingTop:'10px', borderTop:'1px solid var(--border-soft)'}}>
-      <div style=${{fontWeight:800, fontSize:'12px'}}>🛠️ Ferramentas na projeção (aparecem no computador principal)</div>
+    <details open style=${{display:'grid', gap:'10px', padding:'10px', borderRadius:'12px', border:'1px solid var(--border-soft)'}}>
+      <summary style=${{fontWeight:800, fontSize:'12px', cursor:'pointer'}}>🛠️ Ferramentas na projeção — Bíblia, cronômetro, relógio (aparecem no computador principal)</summary>
       ${sentNote && html`<div style=${{fontSize:'11px', color:'var(--success-1)', fontWeight:800}}>✅ ${sentNote}</div>`}
       <div style=${{display:'grid', gap:'6px'}}>
         <div style=${{fontSize:'11px', fontWeight:800, color:'#d97706'}}>📖 Bíblia</div>
@@ -7257,7 +7264,7 @@ function PhoneTools({ send }) {
         <button type="button" onClick=${()=>{ send('relogio'); flash('Relógio na tela'); }} style=${small}>🕐 Relógio</button>
         <button type="button" onClick=${()=>{ send('blank'); flash('Tela vazia'); }} style=${small}>⬛ Tela vazia</button>
       </div>
-    </div>`;
+    </details>`;
 }
 
 function RemoteControl({ churchId, church }) {
@@ -7464,6 +7471,7 @@ function RemoteControl({ churchId, church }) {
                   ${rbtn('▶️','Play','play')}${rbtn('⏸️','Pause','pause')}${rbtn('⛶','Tela cheia','fullscreen')}
                   ${rbtn('🖼️','Fundo','background')}${rbtn('❄️', st && st.frozen ? 'Descongelar' : 'Congelar','freeze')}${rbtn('✖️','Fechar','close',{color:'var(--danger)'})}
                 </div>
+                <${PhoneTools} send=${send} />
                 ${st ? html`
                   ${fader('pvol','PROJETOR (vídeo na tela)', st.pvol, v=>slide('pvol','pvol',{},v), v=>slideEnd('pvol','pvol',{},v), st.pmuted, ()=>send('pmute'))}
                   ${(st.bg || []).map((t,i) => fader('bg'+i, t.name, t.vol, v=>slide('bg'+i,'bg',{i, action:'volume'},v), v=>slideEnd('bg'+i,'bg',{i, action:'volume'},v), t.muted, ()=>send('bg',{i, action:'mute'}), t.has ? ()=>send('bg',{i, action:'play'}) : null, t.playing))}
@@ -7475,7 +7483,7 @@ function RemoteControl({ churchId, church }) {
                     <button type="button" onClick=${()=>send('project',{actId:a.id, which:'retorno'})} style=${small}>📺 Retorno</button>
                   </div>`)}
                 ` : html`<div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Esperando o computador principal enviar o estado…</div>`}
-                <${PhoneTools} send=${send} />
+
               </div>`}
             ${mainInfo && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>💻 Computador principal: <b>${mainInfo.name}</b> — ${online ? '🟢 conectado' : '🔴 desconectado (app fechado ou sem internet lá)'}</div>`}
             ${meOk && Object.keys(computers).filter(id => !(mainInfo && mainInfo.id === id)).map(id => html`<button key=${id} type="button" onClick=${()=>switchTo(id)} style=${{...small, justifySelf:'start'}}>🔁 Mudar o principal para ${computers[id].name}</button>`)}
