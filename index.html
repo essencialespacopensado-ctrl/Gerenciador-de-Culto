@@ -135,11 +135,21 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-01.105';
+const APP_VERSION = '2026-11-01.106';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.106',
+    date: '01/11/2026',
+    items: [
+      "Aba Telas › \"Detectar Telas Novamente\" agora faz uma PROCURA de verdade: consulta o Windows 5 vezes em ~6 segundos (telas sem fio e projetores demoram a aparecer), mostra o progresso, diz quantas telas achou e quais são novas, e explica o que fazer se alguma não apareceu (Win+P / Win+K / permissão do Chrome).",
+      "Telas conectadas ou desconectadas com a aba aberta entram/saem da lista sozinhas, sem precisar clicar.",
+      "As \"Rotas de conteúdo\" agora aparecem sempre na aba Telas (antes só depois de habilitar uma tela, e por isso sumiam em computadores sem tela habilitada).",
+      "Se existe versão nova e você volta pro app depois de mais de 10 min fora (sem projeção aberta nem som tocando), ele recarrega sozinho pra pegar a versão nova.",
+    ]
+  },
   {
     version: '2026-11-01.105',
     date: '01/11/2026',
@@ -5845,6 +5855,14 @@ function RoutesPanel({ churchId, enabled }) {
   const reset = (key) => { const n = { ...routes }; delete n[key]; save(n); };
   const allOn = (key) => save({ ...routes, [key]: sigs.slice() });
   const th = { fontSize:'10px', fontWeight:800, color:'var(--text-dim)', textAlign:'center', padding:'4px 6px', verticalAlign:'bottom', minWidth:'84px' };
+  if (enabled.length === 0) {
+    return html`
+      <div>
+        <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'16px 0 6px 0'}}>🧭 Rotas de conteúdo — o que aparece em cada tela</h3>
+        <div class="glass" style=${{borderRadius:'14px', padding:'14px', fontSize:'11.5px', color:'var(--text-mid)', lineHeight:1.5}}>Aqui você escolhe em quais telas cada tipo de conteúdo aparece (vídeo/música, Bíblia, avisos, cronômetro…). Pra montar, <b>habilite pelo menos uma tela</b> marcando a caixinha na lista acima (as telas habilitadas ficam guardadas em cada computador).</div>
+      </div>
+    `;
+  }
   return html`
     <div>
       <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'16px 0 6px 0'}}>🧭 Rotas de conteúdo — o que aparece em cada tela</h3>
@@ -5897,32 +5915,68 @@ function TelasView({ churchId }) {
 
   const mediaOptions = activities.filter(a => a.media && a.media.title).map(a => ({ label: a.name+' — '+a.media.title, url: a.media.url, playlistId: a.media.playlistId || null, videoId: a.media.videoId || null }));
 
-  const detectScreens = async () => {
+  // v.106 (pedido do Paulo: "quando eu apertar em detectar novamente, tem que fazer uma procura pra ver se tem
+// outras telas que não estão aparecendo"): a procura profunda consulta o Windows várias vezes (tela sem fio e
+// projetor recém-ligado demoram pra aparecer), mostra o progresso e diz o que achou de novo. E o navegador avisa
+// sozinho quando uma tela é ligada/desligada (screenschange), então a lista também se atualiza sem clicar.
+  const [detecting, setDetecting] = useState('');
+  const [detectNote, setDetectNote] = useState('');
+  const screensRef = useRef(null); screensRef.current = screens;
+  const detectRef = useRef(null);
+  const detailsRef = useRef(null);
+  const screenToItem = (s, i) => {
+    // Pedido do Paulo (29/09): identificar a tela com o nome que o próprio Windows dá a ela
+    // (o mesmo que aparece em Configurações de Tela do Windows), não só "Tela 1/Tela 2".
+    const nomeWindows = (s.label && s.label.trim()) ? s.label.trim() : '';
+    const base = s.isPrimary ? 'Tela Principal' : 'Tela '+(i+1);
+    const label = (nomeWindows ? base+' — '+nomeWindows : base) + ' — '+s.width+'x'+s.height;
+    return { label, left: s.left, top: s.top, width: s.width, height: s.height, isInternal: (s.isInternal === true ? true : (s.isInternal === false ? false : undefined)) };
+  };
+  const detectScreens = async (deep) => {
+    const isDeep = deep === true;
     setPermissionMsg('');
-    if ('getScreenDetails' in window) {
-      try {
-        const details = await window.getScreenDetails();
-        // Pedido do Paulo (29/09): identificar a tela com o nome que o próprio Windows dá a ela
-        // (o mesmo que aparece em Configurações de Tela do Windows), não só "Tela 1/Tela 2" — assim
-        // fica fácil saber qual é qual quando tem mais de um monitor/projetor ligado.
-        const list = details.screens.map((s,i) => {
-          const nomeWindows = (s.label && s.label.trim()) ? s.label.trim() : '';
-          const base = s.isPrimary ? 'Tela Principal' : 'Tela '+(i+1);
-          const label = (nomeWindows ? base+' — '+nomeWindows : base) + ' — '+s.width+'x'+s.height;
-          return { label, left: s.left, top: s.top, width: s.width, height: s.height, isInternal: (s.isInternal === true ? true : (s.isInternal === false ? false : undefined)) };
-        });
-        setScreens(list);
-      } catch (e) {
-        setPermissionMsg('Permissão de telas negada ou indisponível. Usando apenas a tela atual.');
-        setScreens([{ label: 'Tela Atual', left:0, top:0, width: window.screen.width, height: window.screen.height }]);
-      }
-    } else {
-      setPermissionMsg('Seu navegador não suporta detectar múltiplas telas automaticamente (funciona no Chrome/Edge no computador). Você ainda pode abrir uma janela e arrastar manualmente pra outra tela.');
+    if (isDeep) setDetectNote('');
+    if (!('getScreenDetails' in window)) {
+      setPermissionMsg('Seu navegador não suporta detectar múltiplas telas automaticamente (funciona no Chrome/Edge no computador). Você ainda pode abrir uma janela e arrastar manualmente pra outra tela, ou adicionar a tela manualmente.');
       setScreens([{ label: 'Tela Atual', left:0, top:0, width: window.screen.width, height: window.screen.height }]);
+      return;
+    }
+    const before = (screensRef.current || []).map(screenSig);
+    const attempts = isDeep ? 5 : 1;
+    try {
+      let list = null;
+      for (let i = 0; i < attempts; i++) {
+        if (isDeep) setDetecting('🔎 Procurando telas… ' + (i+1) + '/' + attempts);
+        const details = await window.getScreenDetails();
+        if (detailsRef.current !== details) {
+          detailsRef.current = details;
+          try { details.onscreenschange = () => { if (detectRef.current) detectRef.current(false, true); }; } catch (e) {}
+        }
+        list = details.screens.map(screenToItem);
+        setScreens(list);
+        if (i < attempts - 1) await new Promise(r => setTimeout(r, 1300));
+      }
+      if (isDeep && list) {
+        const novas = list.filter(sc => !before.includes(screenSig(sc)));
+        let extended = false; try { extended = !!(window.screen && window.screen.isExtended); } catch (e) {}
+        let msg = '';
+        if (novas.length > 0) msg = '✅ ' + list.length + ' tela(s) no total — ' + novas.length + ' nova(s): ' + novas.map(n => n.label).join(' | ');
+        else msg = 'Procurei 5 vezes e não apareceu tela nova: o Windows informa ' + list.length + ' tela(s). Se acabou de ligar o projetor/TV: no Windows aperte Win+P e escolha "Estender"; pra tela sem fio (retorno), Win+K → escolha o aparelho e conecte — depois clique aqui de novo. Se mesmo assim não aparecer, use "Adicionar Tela Manualmente".';
+        if (extended && list.length < 2) msg += ' O Chrome indica que há mais de uma tela, mas só liberou uma: clique no ícone à esquerda do endereço do site → "Gerenciamento de janelas" (ou "Posicionar janelas") → Permitir, e procure de novo.';
+        setDetectNote(msg);
+      }
+    } catch (e) {
+      let perm = '';
+      try { const q = await navigator.permissions.query({ name: 'window-management' }); perm = q && q.state; } catch (x) {}
+      setPermissionMsg('Permissão de telas negada ou indisponível' + (perm === 'denied' ? ' (bloqueada neste site: clique no ícone à esquerda do endereço → "Gerenciamento de janelas" → Permitir, e procure de novo)' : '') + '. Usando apenas a tela atual.');
+      setScreens([{ label: 'Tela Atual', left:0, top:0, width: window.screen.width, height: window.screen.height }]);
+    } finally {
+      setDetecting('');
     }
   };
+  detectRef.current = (deep, fromEvent) => { detectScreens(deep).then(() => { if (fromEvent) setDetectNote('🔌 As telas do computador mudaram — a lista foi atualizada sozinha.'); }); };
 
-  useEffect(() => { detectScreens(); }, []);
+  useEffect(() => { detectScreens(false); return () => { try { if (detailsRef.current) detailsRef.current.onscreenschange = null; } catch (e) {} }; }, []);
 
   // Lista combinada — detectadas automaticamente + as que o Paulo cadastrar na mão — usada em toda
   // parte que precisa "todas as telas conhecidas" (habilitar, Projetor, Tela 1/2/3, Transmitir).
@@ -6020,8 +6074,9 @@ function TelasView({ churchId }) {
       <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Essa aba é para habilitar quais telas conectadas recebem transmissão e marcar qual delas é o projetor principal. As telas habilitadas aparecem numeradas (Tela 1, Tela 2...) nos botões de projetar da Liturgia, na mesma ordem de baixo.</div>
 
       ${permissionMsg && html`<div class="glass fade-up" style=${{padding:'12px 14px', borderRadius:'12px', fontSize:'11px', color:'var(--highlight)'}}>${permissionMsg}</div>`}
+      ${detectNote && html`<div class="glass fade-up" style=${{padding:'12px 14px', borderRadius:'12px', fontSize:'11.5px', lineHeight:1.45, color:'var(--text-hi)'}}>${detectNote}</div>`}
       <div style=${{display:'flex', gap:'8px', flexWrap:'wrap'}}>
-        <button onClick=${detectScreens} style=${{...btnGhost, justifySelf:'start'}}>🔄 Detectar Telas Novamente</button>
+        <button onClick=${()=>detectScreens(true)} disabled=${!!detecting} style=${{...btnGhost, justifySelf:'start', opacity: detecting ? 0.7 : 1}}>${detecting || '🔄 Detectar Telas Novamente'}</button>
         <button onClick=${()=>setShowAddManual(v=>!v)} style=${{...btnGhost, justifySelf:'start'}}>➕ Adicionar Tela Manualmente</button>
         <button onClick=${closeAllProjectionScreens} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🔴 Encerrar em Todas as Telas</button>
       </div>
@@ -6109,7 +6164,7 @@ function TelasView({ churchId }) {
           `;
         })()}
 
-        ${enabled.length > 0 && html`<${RoutesPanel} churchId=${churchId} enabled=${enabled} />`}
+        <${RoutesPanel} churchId=${churchId} enabled=${enabled} />
 
         ${enabled.length > 0 && html`
           <div>
@@ -9868,6 +9923,23 @@ function ChangelogWidget() {
   // v.100 (pedido do Paulo: "não apareceu atualização nos outros computadores"): além da bolinha no 🗂️,
   // uma faixa bem visível no topo avisa a versão nova, com o botão de atualizar — dá pra fechar e seguir usando.
   const [bannerHidden, setBannerHidden] = useState(false);
+  // v.106: há versão nova e você volta ao app depois de mais de 10 min fora (nada projetando, sem som tocando)
+  // → recarrega sozinho pra pegar a versão nova. Com projeção aberta ou áudio tocando, nunca recarrega sozinho.
+  useEffect(() => {
+    if (!updateAvailable) return;
+    let hiddenAt = document.visibilityState === 'hidden' ? Date.now() : 0;
+    const f = () => {
+      if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+      if (hiddenAt && Date.now() - hiddenAt > 10 * 60 * 1000) {
+        let busy = false;
+        try { busy = Object.keys(projectionWindows).some(sig => { const w = projectionWindows[sig]; return !!(w && !w.closed); }) || !!projectionAudio.playing || [...document.querySelectorAll('audio,video')].some(m => !m.paused && !m.ended); } catch (e) { busy = true; }
+        if (!busy) { window.location.reload(); return; }
+      }
+      hiddenAt = 0;
+    };
+    document.addEventListener('visibilitychange', f);
+    return () => document.removeEventListener('visibilitychange', f);
+  }, [updateAvailable]);
   // v.101 (pedido do Paulo): clicar/tocar fora da caixa de novidades fecha ela automaticamente.
   const boxRef = useRef(null);
   useEffect(() => {
