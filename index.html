@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-01.106';
+const APP_VERSION = '2026-11-01.107';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.107',
+    date: '01/11/2026',
+    items: [
+      "Botões de tela: uma tela chamada \"Operador\" (ou Projetor/Retorno) não gera mais um segundo botão igual ao fixo — o 🎧 Operador aparece uma vez só.",
+    ]
+  },
   {
     version: '2026-11-01.106',
     date: '01/11/2026',
@@ -2570,7 +2577,15 @@ function screenQuickButtonDefs(churchId, onSendToScreen) {
   const enabled = loadEnabledScreens(churchId);
   if (enabled.length < 2) return [];
   const names = loadScreenNames(churchId);
-  return enabled.map((scr, i) => ({
+  // v.107: tela com nome igual a um botão fixo (ex.: "Operador") e que é a única daquele tipo
+  // não ganha botão extra — o botão fixo já manda pra ela (evita "Operador" duas vezes).
+  const kindOf = (s) => s.isProjector ? 'projetor' : (s.isReturnScreen ? 'retorno' : 'operador');
+  const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z]/g, '');
+  return enabled.map((scr, i) => ({ scr, i })).filter(({ scr }) => {
+    const nm = norm(names[screenSig(scr)] && names[screenSig(scr)].name);
+    const k = kindOf(scr);
+    return !(nm === k && enabled.filter(x => kindOf(x) === k).length === 1);
+  }).map(({ scr, i }) => ({
     text: '🖥️ ' + ((names[screenSig(scr)] && names[screenSig(scr)].name) || ('Tela ' + (i+1))),
     title: screenName(churchId, scr) + (scr.isProjector ? ' (projetor)' : ''),
     onClick: () => onSendToScreen(scr),
