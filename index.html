@@ -135,11 +135,20 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-10-31.98';
+const APP_VERSION = '2026-11-01.99';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.99',
+    date: '01/11/2026',
+    items: [
+      "Programação da Liturgia, equipes, funções, escalas e trilhas fixas: o que é editado em um aparelho aparece NA HORA nos outros que estão abertos, e nenhum aparelho grava por cima com uma cópia velha — o que você faz não se perde.",
+      "Controle Remoto/Chat: o indicador do computador principal (🟢/🔴) é recalculado na hora que o celular ou a aba volta pra frente; ao fechar o app no principal, ele avisa que saiu.",
+      "NOVO: botão 📲 Instalar app (na tela de login e no cabeçalho) — instala o site como aplicativo no celular ou no computador com 1 toque; no iPhone mostra o caminho.",
+    ]
+  },
   {
     version: '2026-10-31.98',
     date: '31/10/2026',
@@ -898,6 +907,32 @@ function Brand() {
   `;
 }
 
+// ===== 📲 Instalar o app (v.99, pedido do Paulo: "onde está o botão de instalar o app?") =====
+// O navegador avisa (beforeinstallprompt) quando o site pode virar app; guardamos esse aviso e disparamos
+// a instalação com 1 toque. No iPhone/iPad não existe esse aviso: mostramos o caminho (Compartilhar →
+// Adicionar à Tela de Início). Já instalado (aberto como app) o botão some.
+let gcInstallPrompt = null;
+try {
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); gcInstallPrompt = e; try { window.dispatchEvent(new Event('gc-install-ready')); } catch (x) {} });
+  window.addEventListener('appinstalled', () => { gcInstallPrompt = null; try { window.dispatchEvent(new Event('gc-install-ready')); } catch (x) {} });
+} catch (e) {}
+function gcIsStandalone() { try { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true; } catch (e) { return false; } }
+function gcIsIOS() { return /iPhone|iPad|iPod/i.test(navigator.userAgent || ''); }
+function InstallAppButton({ style }) {
+  const [, force] = useState(0);
+  useEffect(() => { const f = () => force(n => n + 1); window.addEventListener('gc-install-ready', f); return () => window.removeEventListener('gc-install-ready', f); }, []);
+  if (gcIsStandalone()) return '';
+  const onClick = async () => {
+    if (gcInstallPrompt) {
+      try { gcInstallPrompt.prompt(); const r = await gcInstallPrompt.userChoice; if (r && r.outcome === 'accepted') gcInstallPrompt = null; } catch (e) {}
+      force(n => n + 1); return;
+    }
+    if (gcIsIOS()) { alert('No iPhone/iPad: toque em Compartilhar (quadrado com seta pra cima) e depois em "Adicionar à Tela de Início". O app aparece como um ícone na tela inicial.'); return; }
+    alert('Pra instalar: no Chrome do celular, toque nos três pontinhos (⋮) e em "Instalar app" (ou "Adicionar à tela inicial"). No computador, clique no ícone de instalar que aparece na ponta direita da barra de endereço (ou ⋮ → "Instalar Gerenciador de Culto"). Se já estiver instalado, abra pelo ícone do app.');
+  };
+  return html`<button type="button" onClick=${onClick} title="Instalar como aplicativo neste aparelho" style=${style || btnGhost}>📲 Instalar app</button>`;
+}
+
 function LoginScreen({ onLogin }) {
   const [mode, setMode] = useState('login');
   const [selectedChurchLogin, setSelectedChurchLogin] = useState('');
@@ -1062,6 +1097,7 @@ function LoginScreen({ onLogin }) {
           </div>
 
           ${error && html`<div style=${errorBox}>${error}</div>`}
+          <${InstallAppButton} style=${{...btnGhost, padding:'9px', fontSize:'12px', fontWeight:700}} />
 
           ${mode === 'login' ? html`
             <form onSubmit=${doLogin} style=${{display:'grid', gap:'10px'}}>
@@ -2343,6 +2379,21 @@ function isCompactScreen() {
   if (typeof window === 'undefined') return false;
   return (window.innerWidth - gcReservedRight) <= 680 || window.innerHeight <= 480;
 }
+// v.99 (pedido do Paulo: "o que eu faço não pode mais ser perdido; as atualizações não podem ser
+// estáticas"): quando o valor muda na NUVEM (outro aparelho editou), a tela que está aberta aqui ADOTA
+// o valor novo na hora, sem mandar de volta — assim nenhum aparelho fica com uma cópia velha e nunca
+// mais grava por cima do que outro acabou de fazer. skipRef é a trava do envio: marcada aqui, o efeito
+// de sincronização pula UM envio (o eco do que acabou de chegar).
+function useCloudAdopt(cloudValue, current, setValue, skipRef) {
+  const curRef = useRef(current); curRef.current = current;
+  let json; try { json = cloudValue === undefined ? undefined : JSON.stringify(cloudValue); } catch (e) { json = undefined; }
+  useEffect(() => {
+    if (json === undefined) return;
+    try { if (JSON.stringify(curRef.current) === json) return; } catch (e) {}
+    if (skipRef) skipRef.current = true;
+    setValue(cloudValue);
+  }, [json]);
+}
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(isCompactScreen);
   useEffect(() => {
@@ -2418,6 +2469,7 @@ function ChurchHeader({ church, tab, setTab, onLogout, badges }) {
               <span>${navOpen ? '▲' : '▼'}</span>
             </button>
           `}
+          <${InstallAppButton} style=${{...btnGhost, padding: isMobile ? '7px 10px' : undefined, fontSize: isMobile ? '11px' : undefined}} />
           <button onClick=${shareAppLink} title="Compartilhar o link do app" style=${{...btnGhost, padding: isMobile ? '7px 10px' : undefined, fontSize: isMobile ? '11px' : undefined}}>🔗${isMobile ? '' : ' Compartilhar'}</button>
           <button onClick=${onLogout} style=${{...btnGhost, padding: isMobile ? '7px 10px' : undefined, fontSize: isMobile ? '11px' : undefined}}>Sair</button>
         </div>
@@ -6662,8 +6714,15 @@ function RemoteControl({ churchId, church }) {
   const me = phones[devId];
   const meOk = remotePhoneOn(me);
   const st = data && data.remoteState;
-  const online = !!(st && (Date.now() - st.ts) < 50000);
-  useEffect(() => { const t = setInterval(() => tick(n => n + 1), 5000); return () => clearInterval(t); }, []);
+  // v.99: "conectado" só com sinal recente (o principal avisa a cada 35 s; ao fechar o app ele tenta avisar que
+  // saiu) e recalcula na hora que o celular/aba volta pra frente (antes podia ficar parado mostrando o estado velho).
+  const online = !!(st && st.ts > 0 && (Date.now() - st.ts) < 80000);
+  useEffect(() => {
+    const t = setInterval(() => tick(n => n + 1), 5000);
+    const f = () => tick(n => n + 1);
+    document.addEventListener('visibilitychange', f); window.addEventListener('focus', f);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', f); window.removeEventListener('focus', f); };
+  }, []);
 
   const setLocal = (on) => { try { localStorage.setItem('gc_remote_main_' + churchId, on ? '1' : '0'); } catch (e) {} setLocalMain(on); };
   const claimMain = () => {
@@ -6720,7 +6779,10 @@ function RemoteControl({ churchId, church }) {
     };
     push();
     const t = setInterval(push, 1500);
-    return () => clearInterval(t);
+    // Ao fechar o app/aba no principal, tenta avisar na hora que saiu (ts 0) — melhor esforço.
+    const bye = () => { try { fbUpdateChurchFields(docId, { 'remoteState.ts': 0 }); } catch (e) {} };
+    window.addEventListener('pagehide', bye);
+    return () => { clearInterval(t); window.removeEventListener('pagehide', bye); };
   }, [isMain, docId]);
 
   const w = (fields) => fbUpdateChurchFields(docId, fields);
@@ -6829,7 +6891,7 @@ function RemoteControl({ churchId, church }) {
                   </div>`)}
                 ` : html`<div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Esperando o computador principal enviar o estado…</div>`}
               </div>`}
-            ${mainInfo && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>💻 Computador principal agora: <b>${mainInfo.name}</b></div>`}
+            ${mainInfo && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>💻 Computador principal: <b>${mainInfo.name}</b> — ${online ? '🟢 conectado' : '🔴 desconectado (app fechado ou sem internet lá)'}</div>`}
             ${meOk && Object.keys(computers).filter(id => !(mainInfo && mainInfo.id === id)).map(id => html`<button key=${id} type="button" onClick=${()=>switchTo(id)} style=${{...small, justifySelf:'start'}}>🔁 Mudar o principal para ${computers[id].name}</button>`)}
             <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
               <input placeholder="Nome deste computador" value=${compName} onInput=${e=>setCompName(e.target.value)} style=${{...inputStyle, flex:1, minWidth:'140px'}} />
@@ -6921,7 +6983,14 @@ function ChatView({ churchId, church }) {
     w({ chat: {} });
   };
   const w = (fields) => fbUpdateChurchFields(docId, fields);
-  const online = !!(data && data.remoteState && (Date.now() - data.remoteState.ts) < 50000);
+  const [, chatTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => chatTick(n => n + 1), 10000);
+    const f = () => chatTick(n => n + 1);
+    document.addEventListener('visibilitychange', f); window.addEventListener('focus', f);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', f); window.removeEventListener('focus', f); };
+  }, []);
+  const online = !!(data && data.remoteState && data.remoteState.ts > 0 && (Date.now() - data.remoteState.ts) < 80000);
   const bubble = (m) => {
     const mine = m.d === devId;
     return html`<div key=${m.id} style=${{display:'flex', justifyContent: mine ? 'flex-end' : 'flex-start'}}>
@@ -7247,6 +7316,8 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       if (onUpdateChurch) onUpdateChurch({ otherActivities: merged });
     }
   }, [activities, churchId, day]);
+  // v.99: programação editada em OUTRO aparelho aparece aqui na hora (e nunca é sobrescrita por esta tela).
+  useCloudAdopt(isSabado ? (church && church.activities) : (church && church.otherActivities ? church.otherActivities[day] : undefined), activities, setActivities, skipFirstSync);
 
   // Atualiza sozinho o link de itens dinâmicos (Provai e Vede / Informativo) e completa quem ainda não tem
   useEffect(() => {
@@ -7322,6 +7393,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     if (docId) fbUpdateChurchFields(docId, { fixedTracks });
     if (onUpdateChurch) onUpdateChurch({ fixedTracks });
   }, [fixedTracks, churchId]);
+  useCloudAdopt(church && church.fixedTracks, fixedTracks, setFixedTracks, skipFirstFixedTracksSync);
 
   // Garante que toda atividade marcada como "acontece todo sábado" (📅) tenha um espaço criado em
   // Gestão > Trilhas Fixas pra receber a URL — mesmo que ainda esteja vazio.
@@ -7929,6 +8001,7 @@ function AutoSchedule({ churchId, teamKey, members, reminderTemplateForDate, doc
     if (docId) fbUpdateChurchFields(docId, { ['schedules.' + teamKey]: sched });
     if (onUpdateChurch) onUpdateChurch({ schedules: { ...(remoteSchedules || {}), [teamKey]: sched } });
   }, [sched, churchId, teamKey]);
+  useCloudAdopt(remoteSchedules ? remoteSchedules[teamKey] : undefined, sched, setSched, skipFirstSchedSync);
 
   const todayKey = dateKey(new Date());
   const regularKeys = useMemo(() => getSaturdaysForMonths(3), []);
@@ -8065,6 +8138,7 @@ function AutoScheduleTeams({ churchId, louvorTeams, docId, onUpdateChurch, remot
     if (docId) fbUpdateChurchFields(docId, { ['schedules.' + scheduleId]: sched });
     if (onUpdateChurch) onUpdateChurch({ schedules: { ...(remoteSchedules || {}), [scheduleId]: sched } });
   }, [sched, churchId]);
+  useCloudAdopt(remoteSchedules ? remoteSchedules[scheduleId] : undefined, sched, setSched, skipFirstSchedSync);
 
   const todayKey = dateKey(new Date());
   const regularKeys = useMemo(() => getSaturdaysForMonths(3), []);
@@ -8462,6 +8536,9 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
     if (docId) fbUpdateChurchFields(docId, { functionsList });
     if (onUpdateChurch) onUpdateChurch({ functionsList });
   }, [functionsList, churchId]);
+  // v.99: equipes/funções editadas em outro aparelho aparecem aqui na hora e nunca são sobrescritas por esta tela.
+  useCloudAdopt(church && church.teams, teams, setTeams, skipFirstTeamsSync);
+  useCloudAdopt(church && church.functionsList, functionsList, setFunctionsList, skipFirstFunctionsSync);
 
   // Trilhas Fixas (25/09) — mesmo padrão de sincronização usado acima pra teams/functionsList.
   const [fixedTracks, setFixedTracks] = useState(() => (church && church.fixedTracks) ? church.fixedTracks : loadFixedTracks(churchId));
@@ -8472,6 +8549,7 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
     if (docId) fbUpdateChurchFields(docId, { fixedTracks });
     if (onUpdateChurch) onUpdateChurch({ fixedTracks });
   }, [fixedTracks, churchId]);
+  useCloudAdopt(church && church.fixedTracks, fixedTracks, setFixedTracks, skipFirstFixedTracksSync);
   useEffect(() => {
     if (!activeLouvorId && teams.louvorTeams.length > 0) setActiveLouvorId(teams.louvorTeams[0].id);
   }, [teams.louvorTeams, activeLouvorId]);
