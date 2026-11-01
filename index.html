@@ -135,11 +135,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-01.104';
+const APP_VERSION = '2026-11-01.105';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.105',
+    date: '01/11/2026',
+    items: [
+      "NOVO — Aba Telas › 🧭 Rotas de conteúdo: uma tabela onde você escolhe EM QUAIS TELAS cada tipo de conteúdo aparece (Vídeo e música, Bíblia, Letras, Avisos, Mensagem, Cronômetro, Relógio, Plano de fundo). Ex.: vídeo/música em tudo menos a tela do notebook; avisos só no projetor e no retorno. Vale pros botões daqui e do celular; sem rota definida, tudo funciona como antes.",
+      "Vídeos/músicas ganharam o botão \"📡 Rota\": manda de uma vez pra todas as telas liberadas (o som sai só no projetor).",
+    ]
+  },
   {
     version: '2026-11-01.104',
     date: '01/11/2026',
@@ -2565,6 +2573,7 @@ function ProjectButton({ churchId, media, itemKey }) {
 
   const send = (scr, mute) => {
     try {
+      if (!routeAllows(churchId, 'video', scr)) { routeBlockedNotice(churchId, 'video', scr); return; }
       sendToScreenObj(scr, 'media', media, { mute });
     } catch (e) {
       alert('Erro ao projetar: ' + (e && e.message ? e.message : e));
@@ -2586,7 +2595,14 @@ function ProjectButton({ churchId, media, itemKey }) {
       let targets;
       if (which === 'projetor') {
         const projectors = enabled.filter(s => s.isProjector);
-        targets = projectors.length > 0 ? projectors : pickTargetScreens(churchId, itemKey, enabled);
+        targets = projectors.length > 0 ? projectors : pickTargetScreens(churchId, itemKey, enabled, 'video');
+      } else if (which === 'rota') {
+        // v.105: todas as telas liberadas pra "Vídeo e música" na aba Telas › Rotas de conteúdo; som só no projetor.
+        const routed = routeScreens(churchId, 'video', enabled) || [];
+        if (routed.length === 0) { alert('Nenhuma tela liberada para Vídeo e música. Vá na aba "Telas" › Rotas de conteúdo.'); return; }
+        const hasProj = routed.some(s => s.isProjector);
+        routed.forEach((scr, i) => send(scr, hasProj ? !scr.isProjector : i > 0));
+        return;
       } else if (which === 'retorno') {
         targets = enabled.filter(s => s.isReturnScreen);
         if (targets.length === 0) {
@@ -2610,6 +2626,7 @@ function ProjectButton({ churchId, media, itemKey }) {
   const buttons = [
     { text:'🎧 Operador', title:'Projetar só na tela do operador, sem som', onClick:()=>projectTo('operador') },
     { text:'🔊 Projetor', title:'Projetar no projetor, com som', onClick:()=>projectTo('projetor') },
+    ...(routeScreens(churchId, 'video', loadEnabledScreens(churchId)) ? [{ text:'📡 Rota', title:'Projetar em todas as telas liberadas para Vídeo e música (som só no projetor) — veja Telas › Rotas de conteúdo', onClick:()=>projectTo('rota') }] : []),
     ...(loadEnabledScreens(churchId).some(s => s.isReturnScreen) ? [{ text:'📺 Retorno', title:'Projetar na tela de retorno (voltada pra quem está falando), sem som', onClick:()=>projectTo('retorno') }] : []),
     ...screenQuickButtonDefs(churchId, (scr)=>send(scr, false)),
   ];
@@ -2681,7 +2698,8 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
 
-  const sendToMany = (scrs) => {
+  const sendToMany = (scrsIn) => {
+    const scrs = applyRoute(churchId, 'cronometro', scrsIn);
     setTargets(scrs);
     pushToTargets(scrs, running, remainingMs);
   };
@@ -2693,7 +2711,10 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
       let scrs;
       if (which === 'projetor') {
         const projectors = enabled.filter(s => s.isProjector);
-        scrs = projectors.length > 0 ? projectors : pickTargetScreens(churchId, itemKey, enabled);
+        scrs = projectors.length > 0 ? projectors : pickTargetScreens(churchId, itemKey, enabled, 'cronometro');
+      } else if (which === 'rota') {
+        scrs = routeScreens(churchId, 'cronometro', enabled) || [];
+        if (scrs.length === 0) { alert('Nenhuma tela liberada para o Cronômetro. Vá na aba "Telas" › Rotas de conteúdo.'); return; }
       } else if (which === 'retorno') {
         const ret = enabled.filter(s => s.isReturnScreen);
         if (ret.length === 0) { alert('Nenhuma tela de retorno configurada ainda. Vá na aba "Telas" e marque uma tela como "Definir como Retorno".'); return; }
@@ -2743,6 +2764,7 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
     { text:'🎧 Operador', title:'Mostrar o cronômetro só na tela do operador, sem som', onClick:()=>sendTo('operador') },
     { text:'🔊 Projetor', title:'Mostrar o cronômetro no projetor', onClick:()=>sendTo('projetor') },
     { text:'📺 Retorno', title:'Mostrar o cronômetro na tela de retorno (voltada pra quem está falando)', onClick:()=>sendTo('retorno') },
+    ...(routeScreens(churchId, 'cronometro', loadEnabledScreens(churchId)) ? [{ text:'📡 Rota', title:'Mostrar o cronômetro nas telas liberadas em Telas › Rotas de conteúdo', onClick:()=>sendTo('rota') }] : []),
     ...screenQuickButtonDefs(churchId, (scr)=>sendToMany([scr])),
   ];
   const statusExtra = html`
@@ -3646,15 +3668,85 @@ function saveScreenPref(churchId, itemKey, sig) {
 // SEM preferência (v.97, pedido do Paulo: "a Bíblia tem que projetar na mesma janela de popup dos
 // vídeos"): vai pra MESMA janela dos vídeos — a(s) tela(s) marcada(s) como Projetor; sem nenhuma marcada,
 // a janela de projeção que já estiver aberta; e, por último, todas as habilitadas (como era antes).
-function pickTargetScreens(churchId, itemKey, enabled) {
+// ===== 🧭 Rotas de conteúdo (v.105, pedido do Paulo: "quero poder escolher o que a tela principal e o retorno vão
+// transmitir… vídeo/música em todos os lugares, menos a tela do notebook; avisos só na projeção e no retorno") =====
+// Cada TIPO de conteúdo pode ter uma lista de telas onde ele aparece. Sem lista definida, vale o comportamento de
+// sempre (projetor / a janela já aberta / todas). Com lista, ela vale como padrão E como trava: o conteúdo não
+// aparece em tela fora dela (e um aviso rápido explica). Fica salva neste aparelho, junto das telas.
+const CONTENT_ROUTES = [
+  { key: 'video', icon: '🎬', label: 'Vídeo e música' },
+  { key: 'biblia', icon: '📖', label: 'Bíblia' },
+  { key: 'letra', icon: '🎵', label: 'Letras (estrofes)' },
+  { key: 'avisos', icon: '📢', label: 'Avisos / anúncios' },
+  { key: 'mensagem', icon: '💬', label: 'Mensagem (fotos, slides, vídeos locais)' },
+  { key: 'cronometro', icon: '⏱️', label: 'Cronômetro' },
+  { key: 'relogio', icon: '🕐', label: 'Relógio' },
+  { key: 'fundo', icon: '🖼️', label: 'Plano de fundo' },
+];
+function routesKey(churchId) { return 'gc_telas_rotas_' + churchId; }
+function loadRoutes(churchId) {
+  try { const o = JSON.parse(localStorage.getItem(routesKey(churchId)) || '{}'); return (o && typeof o === 'object') ? o : {}; } catch (e) { return {}; }
+}
+function saveRoutes(churchId, o) { try { localStorage.setItem(routesKey(churchId), JSON.stringify(o)); } catch (e) {} }
+function routeKeyOfItem(itemKey) {
+  const k = String(itemKey || '');
+  if (k === 'biblia-overlay') return 'biblia';
+  if (k === 'relogio') return 'relogio';
+  if (k.indexOf('img-') === 0) return 'avisos';
+  if (k.indexOf('msg-') === 0) return 'mensagem';
+  return '';
+}
+// null = esse tipo não tem rota (comportamento de sempre); senão, as telas habilitadas liberadas.
+function routeScreens(churchId, routeKey, enabled) {
+  if (!routeKey) return null;
+  const r = loadRoutes(churchId)[routeKey];
+  if (!Array.isArray(r)) return null;
+  return enabled.filter(s => r.includes(screenSig(s)));
+}
+function routeAllows(churchId, routeKey, scr) {
+  if (!routeKey) return true;
+  const r = loadRoutes(churchId)[routeKey];
+  if (!Array.isArray(r)) return true;
+  return r.includes(screenSig(scr));
+}
+function routeBlockedNotice(churchId, routeKey, scr) {
+  try {
+    const d = CONTENT_ROUTES.find(x => x.key === routeKey);
+    window.dispatchEvent(new CustomEvent('gc-route-blocked', { detail: { content: d ? d.label : routeKey, screen: scr ? screenName(churchId, scr) : '' } }));
+  } catch (e) {}
+}
+function applyRoute(churchId, routeKey, targets) {
+  if (!routeKey) return targets;
+  const r = loadRoutes(churchId)[routeKey];
+  if (!Array.isArray(r)) return targets;
+  const ok = targets.filter(s => r.includes(screenSig(s)));
+  if (ok.length === 0 && targets.length > 0) routeBlockedNotice(churchId, routeKey, targets[0]);
+  return ok;
+}
+function pickTargetScreens(churchId, itemKey, enabled, routeKey) {
+  const rk = routeKey || routeKeyOfItem(itemKey);
+  const routed = routeScreens(churchId, rk, enabled);
   const sig = loadScreenPref(churchId, itemKey);
-  if (sig === 'all') return enabled;
-  if (sig) { const chosen = enabled.filter(s => screenSig(s) === sig); if (chosen.length > 0) return chosen; }
-  const projectors = enabled.filter(s => s.isProjector);
-  if (projectors.length > 0) return projectors;
-  const open = enabled.filter(s => { const w = projectionWindows[screenSig(s)]; return !!(w && !w.closed); });
-  if (open.length > 0) return open;
-  return enabled;
+  let base = null;
+  if (sig === 'all') base = enabled;
+  else if (sig) { const chosen = enabled.filter(s => screenSig(s) === sig); if (chosen.length > 0) base = chosen; }
+  if (!base) {
+    if (routed) base = routed;
+    else {
+      const projectors = enabled.filter(s => s.isProjector);
+      if (projectors.length > 0) base = projectors;
+      else {
+        const open = enabled.filter(s => { const w = projectionWindows[screenSig(s)]; return !!(w && !w.closed); });
+        base = open.length > 0 ? open : enabled;
+      }
+    }
+  }
+  if (routed) {
+    const f = base.filter(s => routed.some(x => screenSig(x) === screenSig(s)));
+    if (f.length === 0 && enabled.length > 0) routeBlockedNotice(churchId, rk, base[0] || enabled[0]);
+    return f;
+  }
+  return base;
 }
 
 // Botãozinho "🖥️" que abre uma lista das telas habilitadas pra escolher (e salvar) qual delas deve
@@ -4091,7 +4183,7 @@ function sendBackgroundToAllScreens(churchId, church, quiet, onErr) {
   if (!url) return fail('Nenhuma imagem de plano de fundo cadastrada ainda. Cadastre em Configurações > Dados da Igreja.');
   const enabled = loadEnabledScreens(churchId);
   if (!enabled.length) return fail('Nenhuma tela de projeção habilitada. Habilite em Telas.');
-  enabled.forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet }).then(err => { if (err && onErr) onErr(err); }); } catch(e) {} });
+  applyRoute(churchId, 'fundo', enabled).forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet }).then(err => { if (err && onErr) onErr(err); }); } catch(e) {} });
   return '';
 }
 
@@ -4926,7 +5018,7 @@ function LetraProjectorPanel({ churchId, lyrics, itemKey }) {
     try {
       const enabled = loadEnabledScreens(churchId);
       if (enabled.length === 0) { alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.'); return; }
-      pickTargetScreens(churchId, itemKey, enabled).forEach(scr => sendToScreenObj(scr, 'texto', current));
+      pickTargetScreens(churchId, itemKey, enabled, 'letra').forEach(scr => sendToScreenObj(scr, 'texto', current));
     } catch (e) { alert('Erro ao projetar: ' + (e && e.message ? e.message : e)); }
   };
 
@@ -5721,6 +5813,78 @@ function AddManualScreenForm({ onAdd, onClose, suggestedLeft }) {
   `;
 }
 
+// Aviso rápido (canto de cima) quando um conteúdo é barrado por uma Rota — pra não parecer que o botão "não fez nada".
+function RouteNotice() {
+  const [msg, setMsg] = useState('');
+  const tRef = useRef(null);
+  useEffect(() => {
+    const f = (e) => {
+      const d = (e && e.detail) || {};
+      setMsg('🚫 ' + (d.content || 'Esse conteúdo') + ' não está liberado' + (d.screen ? ' para a tela "' + d.screen + '"' : ' para essa tela') + '. Mude em Telas › 🧭 Rotas de conteúdo.');
+      if (tRef.current) clearTimeout(tRef.current);
+      tRef.current = setTimeout(() => setMsg(''), 6000);
+    };
+    window.addEventListener('gc-route-blocked', f);
+    return () => { window.removeEventListener('gc-route-blocked', f); if (tRef.current) clearTimeout(tRef.current); };
+  }, []);
+  if (!msg) return '';
+  return html`<div role="status" style=${{position:'fixed', top:'56px', left:'50%', transform:'translateX(-50%)', zIndex:700, maxWidth:'min(92vw, 560px)', padding:'10px 16px', borderRadius:'12px', background:'#7f1d1d', color:'#fff', fontSize:'12.5px', fontWeight:700, boxShadow:'0 10px 28px -8px rgba(0,0,0,0.6)', textAlign:'center'}}>${msg}</div>`;
+}
+
+// Tabela "O que aparece em cada tela" (v.105): linhas = tipos de conteúdo, colunas = telas habilitadas.
+function RoutesPanel({ churchId, enabled }) {
+  const [routes, setRoutes] = useState(() => loadRoutes(churchId));
+  const save = (next) => { setRoutes(next); saveRoutes(churchId, next); };
+  const sigs = enabled.map(screenSig);
+  const toggle = (key, sig) => {
+    const cur = Array.isArray(routes[key]) ? routes[key] : null;
+    if (!cur) return;
+    save({ ...routes, [key]: cur.includes(sig) ? cur.filter(x => x !== sig) : [...cur, sig] });
+  };
+  const customize = (key) => save({ ...routes, [key]: sigs.slice() });
+  const reset = (key) => { const n = { ...routes }; delete n[key]; save(n); };
+  const allOn = (key) => save({ ...routes, [key]: sigs.slice() });
+  const th = { fontSize:'10px', fontWeight:800, color:'var(--text-dim)', textAlign:'center', padding:'4px 6px', verticalAlign:'bottom', minWidth:'84px' };
+  return html`
+    <div>
+      <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'16px 0 6px 0'}}>🧭 Rotas de conteúdo — o que aparece em cada tela</h3>
+      <div style=${{fontSize:'11px', color:'var(--text-dim)', marginBottom:'10px', lineHeight:1.45}}>Escolha, pra cada tipo de conteúdo, em quais telas habilitadas ele pode aparecer. Ex.: <b>Vídeo e música</b> em tudo menos a tela do notebook; <b>Avisos</b> só no projetor e no retorno. Em "Padrão do app" o conteúdo vai pro projetor, como sempre. Dá pra mudar a qualquer momento. O som dos vídeos sai só na tela marcada como 📽️ Projetor.</div>
+      <div class="glass" style=${{borderRadius:'14px', padding:'10px', overflowX:'auto'}}>
+        <table style=${{borderCollapse:'collapse', width:'100%', fontSize:'12px'}}>
+          <thead>
+            <tr>
+              <th style=${{...th, textAlign:'left', minWidth:'150px'}}>Conteúdo</th>
+              ${enabled.map(scr => html`<th key=${screenSig(scr)} style=${th}>${screenName(churchId, scr)}${scr.isProjector ? ' 📽️' : ''}${scr.isReturnScreen ? ' 📺' : ''}</th>`)}
+              <th style=${{...th, minWidth:'120px'}}></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${CONTENT_ROUTES.map(row => {
+              const cur = Array.isArray(routes[row.key]) ? routes[row.key] : null;
+              return html`
+                <tr key=${row.key} style=${{borderTop:'1px solid var(--border-soft)'}}>
+                  <td style=${{padding:'8px 6px', fontWeight:700}}>${row.icon} ${row.label}</td>
+                  ${enabled.map(scr => html`
+                    <td key=${screenSig(scr)} style=${{textAlign:'center', padding:'8px 6px'}}>
+                      ${cur ? html`<input type="checkbox" checked=${cur.includes(screenSig(scr))} onChange=${()=>toggle(row.key, screenSig(scr))} title=${'Mostrar ' + row.label + ' em ' + screenName(churchId, scr)} style=${{width:'18px', height:'18px'}} />` : html`<span style=${{color:'var(--text-dim)', fontSize:'10px'}}>padrão</span>`}
+                    </td>
+                  `)}
+                  <td style=${{padding:'8px 6px', whiteSpace:'nowrap'}}>
+                    ${cur ? html`
+                      <button type="button" onClick=${()=>allOn(row.key)} style=${{...btnGhost, padding:'4px 8px', fontSize:'10px'}}>Todas</button>
+                      <button type="button" onClick=${()=>reset(row.key)} style=${{...btnGhost, padding:'4px 8px', fontSize:'10px', marginLeft:'4px'}}>Padrão</button>
+                    ` : html`<button type="button" onClick=${()=>customize(row.key)} style=${{...btnGhost, padding:'4px 10px', fontSize:'10.5px'}}>Personalizar</button>`}
+                  </td>
+                </tr>
+              `;
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
 function TelasView({ churchId }) {
   const [screens, setScreens] = useState(null);
   const [permissionMsg, setPermissionMsg] = useState('');
@@ -5944,6 +6108,8 @@ function TelasView({ churchId }) {
             </div>
           `;
         })()}
+
+        ${enabled.length > 0 && html`<${RoutesPanel} churchId=${churchId} enabled=${enabled} />`}
 
         ${enabled.length > 0 && html`
           <div>
@@ -6840,6 +7006,8 @@ function remoteProjectMedia(churchId, media, itemKey, which, onErr) {
     targets = enabled.filter(s => !s.isProjector && !s.isReturnScreen);
     if (targets.length === 0) return 'Nenhuma tela de operador configurada na aba Telas.';
   }
+  targets = targets.filter(scr => routeAllows(churchId, 'video', scr));
+  if (targets.length === 0) return 'Nenhuma tela liberada para Vídeo e música (veja Telas › Rotas de conteúdo no computador).';
   targets.forEach(scr => { try { sendToScreenObj(scr, 'media', media, { mute: which === 'operador' || which === 'retorno', quiet: true }).then(err => { if (err && onErr) onErr(err); }); } catch (e) { if (onErr) onErr(String((e && e.message) || e)); } });
   return '';
 }
@@ -6909,7 +7077,7 @@ function RemoteControl({ churchId, church }) {
     if (!enabled.length) { alert('Nenhuma tela habilitada. Habilite na aba Telas.'); return; }
     const url = (churchRef.current && churchRef.current.backgroundImageDataUrl) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
     window.__gcSoundBlocked = false;
-    enabled.forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }); } catch (e) {} });
+    applyRoute(churchId, 'fundo', enabled).forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }); } catch (e) {} });
   };
   const releaseMain = () => { setLocal(false); if (docId && isMain) w({ remoteMain: null }); };
   const switchTo = (id) => { const c = computers[id]; if (c) w({ remoteMain: { id, name: c.name, ts: Date.now() } }); };
@@ -9867,6 +10035,7 @@ function App() {
   return html`
     <div>
       <${ChangelogWidget} />
+      <${RouteNotice} />
       ${!session ? html`<${LoginScreen} onLogin=${login} />` :
         session.type === 'developer' ? html`<${DeveloperPanel} onLogout=${logout} />` :
         html`<${ChurchDashboard} church=${session.church} onLogout=${logout} onUpdateChurch=${updateChurchSession} />`}
