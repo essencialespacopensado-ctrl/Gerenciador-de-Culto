@@ -141,6 +141,13 @@ const APP_VERSION = '2026-11-01.107';
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
   {
+    version: '2026-11-01.110',
+    date: '01/11/2026',
+    items: [
+      "Projeção aberta pelo celular: o app agora pergunta ao navegador se o som automático está liberado (Edge/Chrome › Reprodução automática › Permitir) e, estando, toca com som em vez de começar mudo.",
+    ]
+  },
+  {
     version: '2026-11-01.109',
     date: '01/11/2026',
     items: [
@@ -4045,7 +4052,7 @@ function projectionShellHtml(openerActive) {
       // (v.96) — aí o navegador costuma liberar o som aqui também, então tenta com som primeiro e só cai
       // pro mudo se o vídeo não começar (gcEnsurePlay/gcUnmuteGuard cuidam disso).
       + 'var gcOpenerActive=' + (openerActive ? 'true' : 'false') + ';'
-      + 'function gcCanSound(){return !navigator.userActivation||navigator.userActivation.hasBeenActive||gcOpenerActive;}'
+      + 'function gcCanSound(){try{if(navigator.getAutoplayPolicy&&navigator.getAutoplayPolicy("mediaelement")==="allowed")return true;}catch(e){}return !navigator.userActivation||navigator.userActivation.hasBeenActive||gcOpenerActive;}'
       + 'function gcApplyMute(){var m=lastMute||projMuted;if(!m&&!gcCanSound()){projMuted=true;gcSoundPending=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});m=true;}try{if(ytPlayer){if(m)ytPlayer.mute();else{ytPlayer.unMute();ytPlayer.setVolume(projVol);}}else{gcYtCmd(m?"mute":"unMute");if(!m)gcYtCmd("setVolume",[projVol]);}}catch(e){}try{if(localVideoEl){localVideoEl.muted=m;localVideoEl.volume=projVol/100;}}catch(e){}if(!m){gcSoundPending=false;gcHint(false);gcUnmuteGuard();}}'
       // Se o navegador pausar o vídeo por causa do "ligar som" sem clique, volta mudo e continua tocando
       // (nunca fica parado por causa disso) e avisa o mixer pra ele mostrar o mudo ligado.
