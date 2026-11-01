@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-01.114';
+const APP_VERSION = '2026-11-01.115';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.115',
+    date: '01/11/2026',
+    items: [
+      "Novidades: cada versão agora aparece com o número como título (ex.: v.115) acima do que mudou — no aviso de atualização e no histórico.",
+    ]
+  },
   {
     version: '2026-11-01.114',
     date: '01/11/2026',
@@ -10191,8 +10198,10 @@ function applyTheme(t) {
 // tempos) e avisa quando existe uma versão mais nova — sem recarregar sozinho, pra pessoa
 // atualizar no momento que for melhor pra ela. O botão (🗂️, canto inferior esquerdo) fica sempre visível, não só quando
 // tem atualização pendente, pra qualquer um poder abrir e ver o histórico do que já mudou.
+function gcVerLabel(v) { const n = String(v || '').split('.').pop(); return /^\d+$/.test(n) ? 'v.' + n : String(v || ''); }
 function useAppUpdateChecker() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [newVersion, setNewVersion] = useState('');
   const [changelog, setChangelog] = useState([]);
   useEffect(() => {
     let stopped = false;
@@ -10207,7 +10216,7 @@ function useAppUpdateChecker() {
           if (res.status === 206) {
             try { const r2 = await fetch(window.location.pathname + '?_v=' + Date.now(), { cache: 'no-store' }); if (r2.ok) text = await r2.text(); } catch(e) {}
           }
-          setUpdateAvailable(true);
+          setUpdateAvailable(true); setNewVersion(m[1]);
           // Lê a lista de novidades direto do arquivo novo publicado, pra mostrar pra quem
           // ainda está na versão antiga (que não tem essa lista nova embutida localmente).
           // Tenta primeiro o histórico completo (versões mais novas do app); se não achar
@@ -10236,11 +10245,11 @@ function useAppUpdateChecker() {
     window.addEventListener('focus', onVisible);
     return () => { stopped = true; clearInterval(id); document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); };
   }, []);
-  return { updateAvailable, changelog };
+  return { updateAvailable, changelog, newVersion };
 }
 
 function ChangelogWidget() {
-  const { updateAvailable, changelog } = useAppUpdateChecker();
+  const { updateAvailable, changelog, newVersion } = useAppUpdateChecker();
   const [open, setOpen] = useState(false);
   // v.100 (pedido do Paulo: "não apareceu atualização nos outros computadores"): além da bolinha no 🗂️,
   // uma faixa bem visível no topo avisa a versão nova, com o botão de atualizar — dá pra fechar e seguir usando.
@@ -10276,7 +10285,7 @@ function ChangelogWidget() {
   return html`
     ${updateAvailable && !bannerHidden && html`
       <div style=${{position:'fixed', top:0, left:0, right:0, zIndex:600, display:'flex', alignItems:'center', justifyContent:'center', gap:'10px', flexWrap:'wrap', padding:'8px 12px', background:'linear-gradient(90deg,var(--accent-1),var(--accent-2))', color:'#fff', fontSize:'12.5px', fontWeight:800, boxShadow:'0 6px 18px -6px rgba(0,0,0,0.6)'}}>
-        <span>📬 Nova versão do app disponível${changelog.length > 0 ? ' — ' + String(changelog[0]).slice(0, 90) + (String(changelog[0]).length > 90 ? '…' : '') : ''}</span>
+        <span>📬 Nova versão ${newVersion ? gcVerLabel(newVersion) + ' ' : ''}do app disponível${changelog.length > 0 ? ' — ' + String(changelog[0]).slice(0, 90) + (String(changelog[0]).length > 90 ? '…' : '') : ''}</span>
         <button onClick=${()=>window.location.reload()} style=${{...btnPrimary, width:'auto', padding:'6px 14px', background:'#0f172a', boxShadow:'none'}}>Atualizar agora</button>
         <button onClick=${()=>{ setBannerHidden(true); setOpen(true); }} title="Ver o que mudou" style=${{background:'rgba(255,255,255,0.18)', border:'none', color:'#fff', borderRadius:'10px', padding:'6px 10px', fontWeight:700, cursor:'pointer'}}>Ver novidades</button>
         <button onClick=${()=>setBannerHidden(true)} title="Fechar este aviso" style=${{background:'transparent', border:'none', color:'#fff', fontSize:'16px', cursor:'pointer'}}>✕</button>
@@ -10291,7 +10300,8 @@ function ChangelogWidget() {
         <div class="glass fade-up" style=${{position:'absolute', bottom:'56px', left:0, width:'310px', maxHeight:'60vh', overflowY:'auto', padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
           ${updateAvailable && html`
             <div style=${{display:'grid', gap:'8px', paddingBottom:'12px', borderBottom:'1px solid var(--border-soft)'}}>
-              <div style=${{fontWeight:800, fontSize:'13px'}}>📬 Nova atualização disponível</div>
+              <div style=${{fontWeight:800, fontSize:'14px'}}>📬 Nova atualização${newVersion ? ' — ' + gcVerLabel(newVersion) : ''}</div>
+              ${changelog.length > 0 && html`<div style=${{fontSize:'11px', fontWeight:800, color:'var(--text-dim)'}}>O que mudou:</div>`}
               ${changelog.length > 0 ? html`
                 <ul style=${{margin:0, padding:'0 0 0 16px', fontSize:'12px', color:'var(--text-hi)', lineHeight:1.5, display:'grid', gap:'4px'}}>
                   ${changelog.map(item => html`<li key=${item}>${item}</li>`)}
@@ -10312,8 +10322,7 @@ function ChangelogWidget() {
           <div style=${{display:'grid', gap:'14px'}}>
             ${APP_CHANGELOG_HISTORY.map(entry => html`
               <div key=${entry.version} style=${{display:'grid', gap:'4px'}}>
-                <div style=${{fontSize:'10.5px', fontWeight:800, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.04em'}}>
-                  ${entry.date}${entry.version === APP_VERSION ? html` <span style=${{color:'var(--success-1)'}}>· versão atual</span>` : ''}
+                <div style=${{fontSize:'13px', fontWeight:800, color:'var(--text-hi)'}}>${gcVerLabel(entry.version)} <span style=${{fontSize:'10.5px', color:'var(--text-dim)', fontWeight:700}}>· ${entry.date}</span>${entry.version === APP_VERSION ? html` <span style=${{color:'var(--success-1)'}}>· versão atual</span>` : ''}
                 </div>
                 <ul style=${{margin:0, padding:'0 0 0 16px', fontSize:'12px', color:'var(--text-hi)', lineHeight:1.5, display:'grid', gap:'3px'}}>
                   ${entry.items.map(item => html`<li key=${item}>${item}</li>`)}
