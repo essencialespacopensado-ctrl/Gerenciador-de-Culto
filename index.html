@@ -141,6 +141,13 @@ const APP_VERSION = '2026-11-01.107';
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
   {
+    version: '2026-11-01.109',
+    date: '01/11/2026',
+    items: [
+      "Novo botão 🔄 Atualizar app (no topo, ao lado de Instalar app): limpa o cache e recarrega na versão mais nova — serve também no app instalado. Não apaga nenhum dado (liturgia, telas, rotas, login).",
+    ]
+  },
+  {
     version: '2026-11-01.108',
     date: '01/11/2026',
     items: [
@@ -988,6 +995,23 @@ try {
 } catch (e) {}
 function gcIsStandalone() { try { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true; } catch (e) { return false; } }
 function gcIsIOS() { return /iPhone|iPad|iPod/i.test(navigator.userAgent || ''); }
+// v.109 (pedido do Paulo: "preciso de um botão de atualizar o app instalado"): limpa o cache do navegador/app
+// e recarrega na versão mais nova. NÃO mexe nos dados (liturgia, telas, rotas, login ficam guardados).
+async function gcForceUpdateApp() {
+  try { if ('serviceWorker' in navigator) { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister().catch(() => {}))); } } catch (e) {}
+  try { if (window.caches) { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k).catch(() => {}))); } } catch (e) {}
+  try { const u = new URL(window.location.href); u.searchParams.set('_u', String(Date.now())); window.location.replace(u.toString()); } catch (e) { window.location.reload(); }
+}
+function UpdateAppButton({ style }) {
+  const [busy, setBusy] = useState(false);
+  const go = () => {
+    let busyProj = false;
+    try { busyProj = Object.keys(projectionWindows).some(k => projectionWindows[k] && !projectionWindows[k].closed) || !!projectionAudio.playing; } catch (e) {}
+    if (busyProj && !confirm('Tem projeção aberta ou som tocando. Atualizar agora recarrega o app (a projeção pode piscar). Atualizar mesmo assim?')) return;
+    setBusy(true); gcForceUpdateApp();
+  };
+  return html`<button type="button" onClick=${go} disabled=${busy} title="Baixar a versão mais nova do app (não apaga nenhum dado seu)" style=${style || btnGhost}>${busy ? '⏳ Atualizando…' : '🔄 Atualizar app'}</button>`;
+}
 function InstallAppButton({ style }) {
   const [, force] = useState(0);
   useEffect(() => { const f = () => force(n => n + 1); window.addEventListener('gc-install-ready', f); return () => window.removeEventListener('gc-install-ready', f); }, []);
@@ -2540,6 +2564,7 @@ function ChurchHeader({ church, tab, setTab, onLogout, badges }) {
             </button>
           `}
           <${InstallAppButton} style=${{...btnGhost, padding: isMobile ? '7px 10px' : undefined, fontSize: isMobile ? '11px' : undefined}} />
+          <${UpdateAppButton} style=${{...btnGhost, padding: isMobile ? '7px 10px' : undefined, fontSize: isMobile ? '11px' : undefined}} />
           <button onClick=${shareAppLink} title="Compartilhar o link do app" style=${{...btnGhost, padding: isMobile ? '7px 10px' : undefined, fontSize: isMobile ? '11px' : undefined}}>🔗${isMobile ? '' : ' Compartilhar'}</button>
           <button onClick=${onLogout} style=${{...btnGhost, padding: isMobile ? '7px 10px' : undefined, fontSize: isMobile ? '11px' : undefined}}>Sair</button>
         </div>
