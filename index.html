@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-01.101';
+const APP_VERSION = '2026-11-01.102';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.102',
+    date: '01/11/2026',
+    items: [
+      "Aba Telas: dá pra EXCLUIR as telas adicionadas — botão \"🗑️ Excluir\" (com confirmação) em cada tela manual, e uma seção nova pras telas habilitadas que não estão mais conectadas, que antes ficavam presas na lista sem como remover.",
+    ]
+  },
   {
     version: '2026-11-01.101',
     date: '01/11/2026',
@@ -5710,6 +5717,12 @@ function TelasView({ churchId }) {
     });
   };
   const testScreen = (scr) => { try { sendToScreenObj(scr, 'texto', scr.label); } catch (e) {} };
+  // v.102 (pedido do Paulo: "quero poder excluir as telas adicionadas"): exclui (com confirmação) uma tela
+  // manual e/ou uma tela habilitada que não está mais conectada (órfã) — só mexe na que ele escolheu.
+  const confirmRemoveScreen = (scr) => {
+    let ok = true; try { ok = window.confirm('Excluir a tela "' + scr.label + '"?\n\nEla sai da lista deste aparelho (as outras telas não mudam).'); } catch (e) {}
+    if (ok) removeManualScreen(screenSig(scr));
+  };
 
   const setChoice = (sig, patch) => setChoices(c => ({ ...c, [sig]: { ...(c[sig]||{type:'blank'}), ...patch } }));
 
@@ -5783,7 +5796,7 @@ function TelasView({ churchId }) {
                       ${isOn && html`<button onClick=${()=>setProjector(sig)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isProjector ? '📽️ Projetor' : 'Definir como Projetor'}</button>`}
                       ${isOn && html`<button onClick=${()=>setReturnScreen(sig)} title="Tela voltada pra quem está na frente (pregador/apresentador), pra ele ver o cronômetro" style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isReturnScreen ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isReturnScreen ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isReturnScreen ? '📺 Retorno' : 'Definir como Retorno'}</button>`}
                       <button onClick=${()=>testScreen(scr)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px'}} title="Abre essa tela mostrando o nome dela, pra você arrastar/conferir se caiu no monitor certo">🧪 Testar</button>
-                      <button onClick=${()=>removeManualScreen(sig)} style=${{background:'transparent', border:'none', color:'var(--danger)', fontSize:'15px', padding:'4px 6px'}} title="Remover essa tela">✕</button>
+                      <button onClick=${()=>confirmRemoveScreen(scr)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}} title="Excluir essa tela da lista">🗑️ Excluir</button>
                     </div>
                   </div>
                 `;
@@ -5791,6 +5804,28 @@ function TelasView({ churchId }) {
             </div>
           </div>
         `}
+
+        ${(() => {
+          const known = allScreens.map(screenSig);
+          const orphans = enabled.filter(s => !known.includes(screenSig(s)));
+          if (orphans.length === 0) return '';
+          return html`
+            <div>
+              <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'16px 0 10px 0'}}>Habilitadas que não estão mais conectadas (${orphans.length})</h3>
+              <div style=${{display:'grid', gap:'8px'}}>
+                ${orphans.map(scr => html`
+                  <div key=${screenSig(scr)} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', border:'1px dashed var(--border-soft)'}}>
+                    <div style=${{flex:'1 1 160px', minWidth:'160px'}}>
+                      <div style=${{fontWeight:700, fontSize:'13px'}}>${scr.label}</div>
+                      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Posição: ${scr.left},${scr.top} • ${scr.width}x${scr.height} — não aparece mais entre as telas conectadas</div>
+                    </div>
+                    <button onClick=${()=>confirmRemoveScreen(scr)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}} title="Excluir essa tela da lista">🗑️ Excluir</button>
+                  </div>
+                `)}
+              </div>
+            </div>
+          `;
+        })()}
 
         ${enabled.length > 0 && html`
           <div>
