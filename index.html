@@ -135,11 +135,20 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-01.102';
+const APP_VERSION = '2026-11-01.103';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.103',
+    date: '01/11/2026',
+    items: [
+      "Aba Telas: cada tela pode ter um NOME seu (ex.: \"Projetor do salão\", \"TV da frente\") — o nome aparece nos botões de projetar e no seletor 🖥️.",
+      "Aba Telas, seção Transmitir: cada tela ganhou o botão \"🗑️ Excluir\" (tira a tela da transmissão; se for tela adicionada manualmente, exclui de vez — sempre com confirmação).",
+      "Aba Telas: o app identifica o tipo da conexão — 🔌 cabo (HDMI/DisplayPort), 📡 transmissão Wi-Fi, 💻 tela do notebook — pelo que o Windows informa; se errar, você escolhe o tipo na mão.",
+    ]
+  },
   {
     version: '2026-11-01.102',
     date: '01/11/2026',
@@ -2535,9 +2544,10 @@ function ScreenSendRow({ isMobile, label, buttons, extra }) {
 function screenQuickButtonDefs(churchId, onSendToScreen) {
   const enabled = loadEnabledScreens(churchId);
   if (enabled.length < 2) return [];
+  const names = loadScreenNames(churchId);
   return enabled.map((scr, i) => ({
-    text: '🖥️ Tela ' + (i+1),
-    title: scr.label + (scr.isProjector ? ' (projetor)' : ''),
+    text: '🖥️ ' + ((names[screenSig(scr)] && names[screenSig(scr)].name) || ('Tela ' + (i+1))),
+    title: screenName(churchId, scr) + (scr.isProjector ? ' (projetor)' : ''),
     onClick: () => onSendToScreen(scr),
   }));
 }
@@ -3522,6 +3532,85 @@ function getReturnScreen(churchId) {
   return list.find(s => s.isReturnScreen) || null;
 }
 
+// ===== Nome e tipo de cada tela (v.103, pedido do Paulo: "dar nomes às telas; identificar o que é HDMI ou
+// transmissão Wi-Fi") =====
+// O nome que ele dá e o tipo (se ele corrigir) ficam guardados neste aparelho, por posição da tela.
+// O tipo automático vem do que o navegador/Windows informa: tela interna = notebook; nome com "Miracast/
+// Wireless/Cast…" = transmissão Wi-Fi; nome com "HDMI" = HDMI; qualquer outra externa = cabo (o navegador não
+// distingue HDMI de DisplayPort). Se o Windows não der pista, ele escolhe o tipo na mão.
+function screenNamesKey(churchId) { return 'gc_telas_nomes_' + churchId; }
+function loadScreenNames(churchId) {
+  try { const raw = localStorage.getItem(screenNamesKey(churchId)); if (raw) { const o = JSON.parse(raw); if (o && typeof o === 'object') return o; } } catch (e) {}
+  return {};
+}
+function saveScreenMeta(churchId, sig, patch) {
+  try {
+    const all = loadScreenNames(churchId);
+    const next = { ...(all[sig] || {}), ...patch };
+    if (!next.name) delete next.name;
+    if (!next.kind) delete next.kind;
+    if (Object.keys(next).length === 0) delete all[sig]; else all[sig] = next;
+    localStorage.setItem(screenNamesKey(churchId), JSON.stringify(all));
+  } catch (e) {}
+}
+const SCREEN_KINDS = {
+  hdmi: { icon: '🔌', text: 'HDMI' },
+  cabo: { icon: '🔌', text: 'Cabo (HDMI/DisplayPort)' },
+  wifi: { icon: '📡', text: 'Transmissão Wi-Fi' },
+  notebook: { icon: '💻', text: 'Tela do notebook' },
+  manual: { icon: '✍️', text: 'Adicionada manualmente' },
+};
+function autoScreenKind(scr, isManual) {
+  if (isManual) return 'manual';
+  const lbl = String((scr && scr.label) || '');
+  if (/miracast|wireless|wi-?fi|chromecast|airplay|anycast|ezcast|cast\b|wfd|sem fio|dongle/i.test(lbl)) return 'wifi';
+  if (/hdmi/i.test(lbl)) return 'hdmi';
+  if (scr && scr.isInternal === true) return 'notebook';
+  if (scr && scr.isInternal === false) return 'cabo';
+  return '';
+}
+function screenKindOf(churchId, scr, isManual) {
+  const m = loadScreenNames(churchId)[screenSig(scr)];
+  if (m && m.kind && SCREEN_KINDS[m.kind]) return m.kind;
+  return autoScreenKind(scr, isManual);
+}
+function screenName(churchId, scr) {
+  const m = loadScreenNames(churchId)[screenSig(scr)];
+  return (m && m.name) || scr.label;
+}
+function ScreenKindBadge({ churchId, scr, isManual }) {
+  const k = screenKindOf(churchId, scr, isManual);
+  if (!k) return '';
+  const d = SCREEN_KINDS[k];
+  return html`<span title="Tipo de conexão" style=${{fontSize:'9.5px', fontWeight:700, padding:'2px 7px', borderRadius:'999px', background:'rgba(16,185,129,0.14)', color:'var(--success-1)', whiteSpace:'nowrap'}}>${d.icon} ${d.text}</span>`;
+}
+function ScreenMetaEditor({ churchId, scr, isManual, onChange }) {
+  const sig = screenSig(scr);
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [kind, setKind] = useState('');
+  const start = () => { const m = loadScreenNames(churchId)[sig] || {}; setName(m.name || ''); setKind(m.kind || ''); setOpen(true); };
+  const save = () => { saveScreenMeta(churchId, sig, { name: name.trim(), kind }); setOpen(false); if (onChange) onChange(); };
+  const auto = autoScreenKind(scr, isManual);
+  return html`
+    <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center', flexBasis: open ? '100%' : 'auto'}}>
+      ${!open && html`<button type="button" onClick=${start} title="Dar um nome a esta tela e escolher o tipo de conexão" style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px'}}>✏️ Nome / tipo</button>`}
+      ${open && html`
+        <input value=${name} onInput=${e=>setName(e.target.value)} onKeyDown=${e=>{ if (e.key === 'Enter') save(); }} placeholder=${'Nome da tela (ex.: Projetor do salão) — original: ' + scr.label} maxlength="60" style=${{...inputStyle, flex:'1 1 220px', fontSize:'12px', padding:'7px 9px'}} />
+        <select value=${kind} onChange=${e=>setKind(e.target.value)} style=${{...inputStyle, flex:'0 1 200px', fontSize:'12px', padding:'7px 9px'}}>
+          <option value="">${'Tipo: automático' + (auto ? ' (' + SCREEN_KINDS[auto].text + ')' : ' (não identificado)')}</option>
+          <option value="hdmi">🔌 HDMI</option>
+          <option value="cabo">🔌 Cabo (HDMI/DisplayPort)</option>
+          <option value="wifi">📡 Transmissão Wi-Fi</option>
+          <option value="notebook">💻 Tela do notebook</option>
+        </select>
+        <button type="button" onClick=${save} style=${{...btnPrimary, width:'auto', padding:'7px 14px'}}>Salvar</button>
+        <button type="button" onClick=${()=>setOpen(false)} style=${btnGhost}>Cancelar</button>
+      `}
+    </div>
+  `;
+}
+
 // Guarda, por item (uma atividade, um anúncio, um vídeo da semana), pra qual tela ele deve ir
 // quando a pessoa aperta "Projetar" — em vez de mandar sempre pra todas as telas habilitadas.
 // Fica salvo neste aparelho (cada operador escolhe suas próprias telas).
@@ -3567,14 +3656,14 @@ function ScreenPickerButton({ churchId, itemKey }) {
   return html`
     <div style=${{position:'relative'}}>
       <button type="button" onClick=${toggle} title="Escolher em qual tela projetar" style=${{...btnGhost, padding:'6px 8px', fontSize:'10.5px', whiteSpace:'nowrap'}}>
-        🖥️${current ? ' '+current.label : ''}
+        🖥️${current ? ' '+screenName(churchId, current) : ''}
       </button>
       ${open && html`
         <div class="glass fade-up" style=${{position:'absolute', top:'calc(100% + 4px)', right:0, zIndex:200, borderRadius:'10px', padding:'5px', display:'grid', gap:'3px', minWidth:'190px', boxShadow:'0 12px 26px -8px rgba(0,0,0,0.5)'}}>
           <button type="button" onClick=${()=>choose('')} style=${{textAlign:'left', padding:'6px 8px', borderRadius:'7px', border:'none', background: !pref ? 'rgba(99,102,241,0.18)' : 'transparent', fontSize:'11px', color:'var(--text-hi)'}}>🎬 Mesma janela dos vídeos (projetor)</button>
           <button type="button" onClick=${()=>choose('all')} style=${{textAlign:'left', padding:'6px 8px', borderRadius:'7px', border:'none', background: pref==='all' ? 'rgba(99,102,241,0.18)' : 'transparent', fontSize:'11px', color:'var(--text-hi)'}}>📡 Todas as telas habilitadas</button>
           ${screens.map(s => html`
-            <button key=${screenSig(s)} type="button" onClick=${()=>choose(screenSig(s))} style=${{textAlign:'left', padding:'6px 8px', borderRadius:'7px', border:'none', background: pref===screenSig(s) ? 'rgba(99,102,241,0.18)' : 'transparent', fontSize:'11px', color:'var(--text-hi)'}}>🖥️ ${s.label}${s.isProjector ? ' (projetor)' : ''}</button>
+            <button key=${screenSig(s)} type="button" onClick=${()=>choose(screenSig(s))} style=${{textAlign:'left', padding:'6px 8px', borderRadius:'7px', border:'none', background: pref===screenSig(s) ? 'rgba(99,102,241,0.18)' : 'transparent', fontSize:'11px', color:'var(--text-hi)'}}>🖥️ ${screenName(churchId, s)}${s.isProjector ? ' (projetor)' : ''}</button>
           `)}
         </div>
       `}
@@ -5624,6 +5713,7 @@ function TelasView({ churchId }) {
   const [manualScreens, setManualScreens] = useState(() => loadManualScreens(churchId));
   const [showAddManual, setShowAddManual] = useState(false);
   const [choices, setChoices] = useState({});
+  const [, metaTick] = useState(0);
   const activities = loadActivities(churchId);
 
   const mediaOptions = activities.filter(a => a.media && a.media.title).map(a => ({ label: a.name+' — '+a.media.title, url: a.media.url, playlistId: a.media.playlistId || null, videoId: a.media.videoId || null }));
@@ -5640,7 +5730,7 @@ function TelasView({ churchId }) {
           const nomeWindows = (s.label && s.label.trim()) ? s.label.trim() : '';
           const base = s.isPrimary ? 'Tela Principal' : 'Tela '+(i+1);
           const label = (nomeWindows ? base+' — '+nomeWindows : base) + ' — '+s.width+'x'+s.height;
-          return { label, left: s.left, top: s.top, width: s.width, height: s.height };
+          return { label, left: s.left, top: s.top, width: s.width, height: s.height, isInternal: (s.isInternal === true ? true : (s.isInternal === false ? false : undefined)) };
         });
         setScreens(list);
       } catch (e) {
@@ -5716,11 +5806,22 @@ function TelasView({ churchId }) {
       return next;
     });
   };
-  const testScreen = (scr) => { try { sendToScreenObj(scr, 'texto', scr.label); } catch (e) {} };
+  const testScreen = (scr) => { try { sendToScreenObj(scr, 'texto', screenName(churchId, scr)); } catch (e) {} };
+  // v.103 (pedido do Paulo: "na aba de transmitir tem que ter como excluir também"): na seção Transmitir, tela
+  // manual/órfã é excluída de vez; tela detectada (vem do Windows) só sai da lista de habilitadas e pode voltar a
+  // ser habilitada a qualquer momento.
+  const confirmRemoveFromTransmit = (scr) => {
+    const sig = screenSig(scr);
+    const isManualScr = manualScreens.some(m => screenSig(m) === sig);
+    const isDetectedScr = (screens || []).some(d => screenSig(d) === sig);
+    if (isManualScr || !isDetectedScr) { confirmRemoveScreen(scr); return; }
+    let ok = true; try { ok = window.confirm('Tirar a tela "' + screenName(churchId, scr) + '" da transmissão?\n\nEla continua conectada e pode ser habilitada de novo na lista "Telas Detectadas".'); } catch (e) {}
+    if (ok) setEnabled(list => { const next = list.filter(x => screenSig(x) !== sig); saveEnabledScreens(churchId, next); return next; });
+  };
   // v.102 (pedido do Paulo: "quero poder excluir as telas adicionadas"): exclui (com confirmação) uma tela
   // manual e/ou uma tela habilitada que não está mais conectada (órfã) — só mexe na que ele escolheu.
   const confirmRemoveScreen = (scr) => {
-    let ok = true; try { ok = window.confirm('Excluir a tela "' + scr.label + '"?\n\nEla sai da lista deste aparelho (as outras telas não mudam).'); } catch (e) {}
+    let ok = true; try { ok = window.confirm('Excluir a tela "' + screenName(churchId, scr) + '"?\n\nEla sai da lista deste aparelho (as outras telas não mudam).'); } catch (e) {}
     if (ok) removeManualScreen(screenSig(scr));
   };
 
@@ -5761,9 +5862,10 @@ function TelasView({ churchId }) {
                 <div key=${sig} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', border: isOn ? '1.5px solid var(--accent-1)' : '1px solid var(--border-soft)'}}>
                   <input type="checkbox" checked=${isOn} onChange=${()=>toggleEnabled(scr)} style=${{width:'18px', height:'18px', flexShrink:0}} />
                   <div style=${{flex:'1 1 160px', minWidth:'160px'}}>
-                    <div style=${{fontWeight:700, fontSize:'13px', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>${scr.label} ${numLabel && html`<span style=${{fontSize:'9.5px', fontWeight:700, padding:'2px 6px', borderRadius:'999px', background:'rgba(99,102,241,0.16)', color:'var(--accent-1)'}}>${numLabel}</span>`}</div>
-                    <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Posição: ${scr.left},${scr.top}</div>
+                    <div style=${{fontWeight:700, fontSize:'13px', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>${screenName(churchId, scr)} <${ScreenKindBadge} churchId=${churchId} scr=${scr} isManual=${false} /> ${numLabel && html`<span style=${{fontSize:'9.5px', fontWeight:700, padding:'2px 6px', borderRadius:'999px', background:'rgba(99,102,241,0.16)', color:'var(--accent-1)'}}>${numLabel}</span>`}</div>
+                    <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Posição: ${scr.left},${scr.top}${(screenName(churchId, scr) !== scr.label) ? ' • original: ' + scr.label : ''}</div>
                   </div>
+                  <${ScreenMetaEditor} churchId=${churchId} scr=${scr} isManual=${false} onChange=${()=>metaTick(n=>n+1)} />
                   ${isOn && html`
                     <div style=${{display:'flex', gap:'8px', flexWrap:'wrap', flexShrink:0}}>
                       <button onClick=${()=>setProjector(sig)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isProjector ? '📽️ Projetor' : 'Definir como Projetor'}</button>
@@ -5789,9 +5891,10 @@ function TelasView({ churchId }) {
                   <div key=${sig} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', border: isOn ? '1.5px solid var(--accent-1)' : '1px solid var(--border-soft)'}}>
                     <input type="checkbox" checked=${isOn} onChange=${()=>toggleEnabled(scr)} style=${{width:'18px', height:'18px', flexShrink:0}} />
                     <div style=${{flex:'1 1 160px', minWidth:'160px'}}>
-                      <div style=${{fontWeight:700, fontSize:'13px', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>${scr.label} ${numLabel && html`<span style=${{fontSize:'9.5px', fontWeight:700, padding:'2px 6px', borderRadius:'999px', background:'rgba(99,102,241,0.16)', color:'var(--accent-1)'}}>${numLabel}</span>`}</div>
+                      <div style=${{fontWeight:700, fontSize:'13px', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>${screenName(churchId, scr)} <${ScreenKindBadge} churchId=${churchId} scr=${scr} isManual=${true} /> ${numLabel && html`<span style=${{fontSize:'9.5px', fontWeight:700, padding:'2px 6px', borderRadius:'999px', background:'rgba(99,102,241,0.16)', color:'var(--accent-1)'}}>${numLabel}</span>`}</div>
                       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Posição: ${scr.left},${scr.top} • ${scr.width}x${scr.height}</div>
                     </div>
+                    <${ScreenMetaEditor} churchId=${churchId} scr=${scr} isManual=${true} onChange=${()=>metaTick(n=>n+1)} />
                     <div style=${{display:'flex', gap:'8px', flexWrap:'wrap', flexShrink:0}}>
                       ${isOn && html`<button onClick=${()=>setProjector(sig)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isProjector ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isProjector ? '📽️ Projetor' : 'Definir como Projetor'}</button>`}
                       ${isOn && html`<button onClick=${()=>setReturnScreen(sig)} title="Tela voltada pra quem está na frente (pregador/apresentador), pra ele ver o cronômetro" style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color: enabledObj && enabledObj.isReturnScreen ? 'var(--highlight)' : 'var(--text-dim)', borderColor: enabledObj && enabledObj.isReturnScreen ? 'var(--highlight)' : 'var(--border-soft)'}}>${enabledObj && enabledObj.isReturnScreen ? '📺 Retorno' : 'Definir como Retorno'}</button>`}
@@ -5816,7 +5919,7 @@ function TelasView({ churchId }) {
                 ${orphans.map(scr => html`
                   <div key=${screenSig(scr)} class="glass fade-up" style=${{padding:'12px 16px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', border:'1px dashed var(--border-soft)'}}>
                     <div style=${{flex:'1 1 160px', minWidth:'160px'}}>
-                      <div style=${{fontWeight:700, fontSize:'13px'}}>${scr.label}</div>
+                      <div style=${{fontWeight:700, fontSize:'13px'}}>${screenName(churchId, scr)}</div>
                       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Posição: ${scr.left},${scr.top} • ${scr.width}x${scr.height} — não aparece mais entre as telas conectadas</div>
                     </div>
                     <button onClick=${()=>confirmRemoveScreen(scr)} style=${{...btnGhost, padding:'6px 10px', fontSize:'10.5px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}} title="Excluir essa tela da lista">🗑️ Excluir</button>
@@ -5836,7 +5939,7 @@ function TelasView({ churchId }) {
                 const choice = choices[sig] || { type:'blank' };
                 return html`
                   <div key=${sig} class="glass fade-up" style=${{padding:'14px', borderRadius:'14px', display:'grid', gap:'8px'}}>
-                    <div style=${{fontWeight:700, fontSize:'12.5px'}}>Tela ${enabledSigs.indexOf(sig)+1} — ${scr.label}${scr.isProjector ? ' 📽️' : ''}${scr.isReturnScreen ? ' 📺' : ''}</div>
+                    <div style=${{fontWeight:700, fontSize:'12.5px'}}>Tela ${enabledSigs.indexOf(sig)+1} — ${screenName(churchId, scr)}${scr.isProjector ? ' 📽️' : ''}${scr.isReturnScreen ? ' 📺' : ''}</div>
                     <select value=${choice.type} onChange=${e=>setChoice(sig, {type:e.target.value})} style=${{...inputStyle, fontSize:'12px'}}>
                       <option value="blank">⬛ Tela Preta</option>
                       <option value="media">🎬 Vídeo/Música da Liturgia</option>
@@ -5851,7 +5954,10 @@ function TelasView({ churchId }) {
                     ${choice.type === 'texto' && html`
                       <input placeholder="Texto a exibir" value=${choice.text||''} onChange=${e=>setChoice(sig, {text:e.target.value})} style=${{...inputStyle, fontSize:'12px'}} />
                     `}
-                    <button onClick=${()=>sendToScreen(scr, sig)} style=${{...btnPrimary, width:'auto', justifySelf:'start', padding:'8px 16px'}}>📤 Enviar para esta Tela</button>
+                    <div style=${{display:'flex', gap:'8px', flexWrap:'wrap', alignItems:'center'}}>
+                      <button onClick=${()=>sendToScreen(scr, sig)} style=${{...btnPrimary, width:'auto', justifySelf:'start', padding:'8px 16px'}}>📤 Enviar para esta Tela</button>
+                      <button onClick=${()=>confirmRemoveFromTransmit(scr)} style=${{...btnGhost, padding:'8px 12px', fontSize:'11px', color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}} title="Excluir esta tela da transmissão">🗑️ Excluir</button>
+                    </div>
                   </div>
                 `;
               })}
