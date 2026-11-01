@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-01.100';
+const APP_VERSION = '2026-11-01.101';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.101',
+    date: '01/11/2026',
+    items: [
+      "Caixa de novidades/atualização: ao clicar ou tocar fora dela, ela fecha sozinha.",
+    ]
+  },
   {
     version: '2026-11-01.100',
     date: '01/11/2026',
@@ -9533,6 +9540,17 @@ function ChangelogWidget() {
   // v.100 (pedido do Paulo: "não apareceu atualização nos outros computadores"): além da bolinha no 🗂️,
   // uma faixa bem visível no topo avisa a versão nova, com o botão de atualizar — dá pra fechar e seguir usando.
   const [bannerHidden, setBannerHidden] = useState(false);
+  // v.101 (pedido do Paulo): clicar/tocar fora da caixa de novidades fecha ela automaticamente.
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e) => { try { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); } catch (x) {} };
+    document.addEventListener('mousedown', away, true);
+    document.addEventListener('touchstart', away, true);
+    const esc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', away, true); document.removeEventListener('touchstart', away, true); document.removeEventListener('keydown', esc); };
+  }, [open]);
   return html`
     ${updateAvailable && !bannerHidden && html`
       <div style=${{position:'fixed', top:0, left:0, right:0, zIndex:600, display:'flex', alignItems:'center', justifyContent:'center', gap:'10px', flexWrap:'wrap', padding:'8px 12px', background:'linear-gradient(90deg,var(--accent-1),var(--accent-2))', color:'#fff', fontSize:'12.5px', fontWeight:800, boxShadow:'0 6px 18px -6px rgba(0,0,0,0.6)'}}>
@@ -9542,7 +9560,7 @@ function ChangelogWidget() {
         <button onClick=${()=>setBannerHidden(true)} title="Fechar este aviso" style=${{background:'transparent', border:'none', color:'#fff', fontSize:'16px', cursor:'pointer'}}>✕</button>
       </div>
     `}
-    <div style=${{position:'fixed', bottom:'92px', left:'24px', zIndex:500}}>
+    <div ref=${boxRef} style=${{position:'fixed', bottom:'92px', left:'24px', zIndex:500}}>
       <button onClick=${()=>setOpen(o=>!o)} title="Novidades — veja o que mudou" style=${{width:'46px', height:'46px', borderRadius:'50%', border:'none', background: updateAvailable ? 'linear-gradient(135deg,var(--accent-1),var(--accent-2))' : 'rgba(148,163,184,0.18)', color: updateAvailable ? '#fff' : 'var(--text-mid)', fontSize:'19px', cursor:'pointer', boxShadow:'0 8px 22px -8px rgba(0,0,0,0.5)', position:'relative'}}>
         🗂️
         ${updateAvailable && html`<span class="breathe" style=${{position:'absolute', top:'-1px', right:'-1px', width:'13px', height:'13px', borderRadius:'50%', background:'var(--danger)', border:'2px solid var(--bg-page)'}}></span>`}
