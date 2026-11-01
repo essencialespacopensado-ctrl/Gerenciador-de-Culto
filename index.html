@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-01.107';
+const APP_VERSION = '2026-11-01.112';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.112',
+    date: '01/11/2026',
+    items: [
+      "Celular (📱): mostra a versão do app no computador principal e, se estiver desatualizado, tem o botão \"Atualizar o computador agora\" — o computador recarrega sozinho, sem ninguém mexer nele.",
+    ]
+  },
   {
     version: '2026-11-01.111',
     date: '01/11/2026',
@@ -7150,6 +7157,7 @@ function remoteExecute(churchId, church, cmd, onErr) {
     case 'fullscreen': retryFullscreenAllScreens(churchId); return '';
     case 'background': return sendBackgroundToAllScreens(churchId, church, true, onErr) || '';
     case 'freeze': setProjectionFrozen(!isProjectionFrozen()); return '';
+    case 'reload': setTimeout(() => { try { gcForceUpdateApp(); } catch (e) { window.location.reload(); } }, 400); return '';
     case 'close': Object.keys(gcBlockedQueue).forEach(k => delete gcBlockedQueue[k]); setProjectionFrozen(false); closeAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); return '';
     case 'pvol': setProjectionVolume(a.value); return '';
     case 'pmute': setProjectionMuted(!projectionAudio.muted); return '';
@@ -7359,7 +7367,7 @@ function RemoteControl({ churchId, church }) {
       let acts = [];
       try { acts = loadActivities(churchId).map(a => ({ id: a.id, name: a.name, time: a.time || '', media: !!(a.media && a.media.title), done: !!a.done })); } catch (e) {}
       let wins = 0; try { wins = Object.keys(projectionWindows).filter(k => projectionWindows[k] && !projectionWindows[k].closed).length; } catch (e) {}
-      const s = { wins, blocked: !!window.__gcSoundBlocked, pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, err: lastErr.current || '' };
+      const s = { v: APP_VERSION, wins, blocked: !!window.__gcSoundBlocked, pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, err: lastErr.current || '' };
       const json = JSON.stringify(s);
       if (json === lastJson && Date.now() - lastAt < 35000) return;
       fbUpdateChurchFields(docId, { remoteState: { ...s, ts: Date.now() } }).then(ok => { if (ok) { lastJson = json; lastAt = Date.now(); } });
@@ -7466,6 +7474,11 @@ function RemoteControl({ churchId, church }) {
                 <div style=${{fontSize:'11px', color:'var(--success-1)', fontWeight:800}}>✅ ${me.name} habilitado</div>
                 ${st && st.wins === 0 && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>ℹ️ A projeção está fechada no computador principal — ela abre sozinha quando você projetar. Pro som sair, lá no computador: 📱 > "Preparar projeção e som" (1 clique).</div>`}
                 ${st && st.blocked && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>🔇 O navegador do computador bloqueou o som. Lá, toque em 📱 > "Preparar projeção e som" (ou clique uma vez na tela de projeção).</div>`}
+                ${st && st.v && st.v !== APP_VERSION && html`<div style=${{fontSize:'11px', color:'var(--highlight)', display:'grid', gap:'6px'}}>
+                  <div>🔁 Versões diferentes: computador na <b>${st.v.split('-').pop()}</b>, este celular na <b>${APP_VERSION.split('-').pop()}</b>. ${st.v < APP_VERSION ? 'O computador está desatualizado.' : 'Este celular está desatualizado.'}</div>
+                  ${st.v < APP_VERSION && html`<button type="button" onClick=${()=>send('reload')} style=${small}>🔄 Atualizar o computador agora</button>`}
+                  ${st.v > APP_VERSION && html`<button type="button" onClick=${()=>gcForceUpdateApp()} style=${small}>🔄 Atualizar este celular agora</button>`}
+                </div>`}
                 ${st && st.err && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>⚠️ ${st.err}</div>`}
                 <div style=${{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'6px'}}>
                   ${rbtn('▶️','Play','play')}${rbtn('⏸️','Pause','pause')}${rbtn('⛶','Tela cheia','fullscreen')}
