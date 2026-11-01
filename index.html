@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-01.103';
+const APP_VERSION = '2026-11-01.104';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-01.104',
+    date: '01/11/2026',
+    items: [
+      "Tela de Retorno INDEPENDENTE: ganhou o botão próprio \"📺 Retorno\" ao projetar vídeos/músicas (aqui e no celular, sem som) e deixou de receber o que vai no botão \"🎧 Operador\" — antes ela ficava misturada com o operador.",
+    ]
+  },
   {
     version: '2026-11-01.103',
     date: '01/11/2026',
@@ -2580,14 +2587,21 @@ function ProjectButton({ churchId, media, itemKey }) {
       if (which === 'projetor') {
         const projectors = enabled.filter(s => s.isProjector);
         targets = projectors.length > 0 ? projectors : pickTargetScreens(churchId, itemKey, enabled);
-      } else {
-        targets = enabled.filter(s => !s.isProjector);
+      } else if (which === 'retorno') {
+        targets = enabled.filter(s => s.isReturnScreen);
         if (targets.length === 0) {
-          alert('Nenhuma tela de operador configurada ainda. Vá na aba "Telas", habilite uma tela a mais (sem marcar como Projetor) pra usar esse botão sem som.');
+          alert('Nenhuma tela de retorno configurada ainda. Vá na aba "Telas" e marque uma tela como "Definir como Retorno".');
+          return;
+        }
+      } else {
+        // v.104: a tela de Retorno é independente — não entra no "Operador".
+        targets = enabled.filter(s => !s.isProjector && !s.isReturnScreen);
+        if (targets.length === 0) {
+          alert('Nenhuma tela de operador configurada ainda. Vá na aba "Telas", habilite uma tela a mais (sem marcar como Projetor nem Retorno) pra usar esse botão sem som.');
           return;
         }
       }
-      targets.forEach(scr => send(scr, which === 'operador'));
+      targets.forEach(scr => send(scr, which === 'operador' || which === 'retorno'));
     } catch (e) {
       alert('Erro ao preparar a projeção: ' + (e && e.message ? e.message : e));
     }
@@ -2596,6 +2610,7 @@ function ProjectButton({ churchId, media, itemKey }) {
   const buttons = [
     { text:'🎧 Operador', title:'Projetar só na tela do operador, sem som', onClick:()=>projectTo('operador') },
     { text:'🔊 Projetor', title:'Projetar no projetor, com som', onClick:()=>projectTo('projetor') },
+    ...(loadEnabledScreens(churchId).some(s => s.isReturnScreen) ? [{ text:'📺 Retorno', title:'Projetar na tela de retorno (voltada pra quem está falando), sem som', onClick:()=>projectTo('retorno') }] : []),
     ...screenQuickButtonDefs(churchId, (scr)=>send(scr, false)),
   ];
 
@@ -2684,8 +2699,8 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
         if (ret.length === 0) { alert('Nenhuma tela de retorno configurada ainda. Vá na aba "Telas" e marque uma tela como "Definir como Retorno".'); return; }
         scrs = ret;
       } else {
-        scrs = enabled.filter(s => !s.isProjector);
-        if (scrs.length === 0) { alert('Nenhuma tela de operador configurada ainda. Vá na aba "Telas", habilite uma tela a mais (sem marcar como Projetor) pra usar esse botão sem som.'); return; }
+        scrs = enabled.filter(s => !s.isProjector && !s.isReturnScreen);
+        if (scrs.length === 0) { alert('Nenhuma tela de operador configurada ainda. Vá na aba "Telas", habilite uma tela a mais (sem marcar como Projetor nem Retorno) pra usar esse botão sem som.'); return; }
       }
       sendToMany(scrs);
     } catch (e) {
@@ -6818,11 +6833,14 @@ function remoteProjectMedia(churchId, media, itemKey, which, onErr) {
   if (which === 'projetor') {
     const projectors = enabled.filter(s => s.isProjector);
     targets = projectors.length > 0 ? projectors : pickTargetScreens(churchId, itemKey, enabled);
+  } else if (which === 'retorno') {
+    targets = enabled.filter(s => s.isReturnScreen);
+    if (targets.length === 0) return 'Nenhuma tela de retorno configurada na aba Telas.';
   } else {
-    targets = enabled.filter(s => !s.isProjector);
+    targets = enabled.filter(s => !s.isProjector && !s.isReturnScreen);
     if (targets.length === 0) return 'Nenhuma tela de operador configurada na aba Telas.';
   }
-  targets.forEach(scr => { try { sendToScreenObj(scr, 'media', media, { mute: which === 'operador', quiet: true }).then(err => { if (err && onErr) onErr(err); }); } catch (e) { if (onErr) onErr(String((e && e.message) || e)); } });
+  targets.forEach(scr => { try { sendToScreenObj(scr, 'media', media, { mute: which === 'operador' || which === 'retorno', quiet: true }).then(err => { if (err && onErr) onErr(err); }); } catch (e) { if (onErr) onErr(String((e && e.message) || e)); } });
   return '';
 }
 function remoteExecute(churchId, church, cmd, onErr) {
@@ -6840,7 +6858,7 @@ function remoteExecute(churchId, church, cmd, onErr) {
     case 'project': {
       const act = loadActivities(churchId).find(x => x.id === a.actId);
       if (!act || !act.media || !act.media.title) return 'Essa atividade não tem vídeo/música.';
-      return remoteProjectMedia(churchId, act.media, act.id, a.which === 'operador' ? 'operador' : 'projetor', onErr);
+      return remoteProjectMedia(churchId, act.media, act.id, a.which === 'operador' ? 'operador' : (a.which === 'retorno' ? 'retorno' : 'projetor'), onErr);
     }
   }
   return '';
@@ -7043,6 +7061,7 @@ function RemoteControl({ churchId, church }) {
                     <div style=${{flex:1, fontSize:'11.5px', minWidth:'120px'}}>${a.time ? a.time+' · ' : ''}${a.name}</div>
                     <button type="button" onClick=${()=>send('project',{actId:a.id, which:'projetor'})} style=${small}>🔊 Projetor</button>
                     <button type="button" onClick=${()=>send('project',{actId:a.id, which:'operador'})} style=${small}>🎧 Operador</button>
+                    <button type="button" onClick=${()=>send('project',{actId:a.id, which:'retorno'})} style=${small}>📺 Retorno</button>
                   </div>`)}
                 ` : html`<div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Esperando o computador principal enviar o estado…</div>`}
               </div>`}
