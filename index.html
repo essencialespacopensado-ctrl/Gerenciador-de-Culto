@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-02.121';
+const APP_VERSION = '2026-11-02.122';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-02.122',
+    date: '02/11/2026',
+    items: [
+      "Ensaios: corrigido o conteúdo cortado na lateral — Original, Playback, Kits e Ensaios agora cabem na largura da tela (botões de projetar/tocar não ficam mais escondidos).",
+    ]
+  },
   {
     version: '2026-11-02.121',
     date: '02/11/2026',
@@ -4982,13 +4989,13 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
   const upSub = (gid, sid, field, id, patch) => upS(gid, sid, x => ({ ...x, [field]: (x[field] || []).map(k => k.id === id ? { ...k, ...patch } : k) }));
   const delSub = (gid, sid, field, id) => upS(gid, sid, x => ({ ...x, [field]: (x[field] || []).filter(k => k.id !== id) }));
   const [subName, setSubName] = useState({});
-  const mediaBlock = (searchKey, media, onChange, itemKey) => html`<div style=${{display:'grid', gap:'6px'}}>
+  const mediaBlock = (searchKey, media, onChange, itemKey) => html`<div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'6px'}}>
     <${MediaSearchField} media=${media} onChange=${onChange} searchKey=${searchKey} />
     ${media && media.title && html`<${ProjectButton} churchId=${churchId} media=${media} itemKey=${itemKey} />`}
   </div>`;
-  const subList = (g, sg, field, title, icon, ph) => html`<div style=${{display:'grid', gap:'8px'}}>
+  const subList = (g, sg, field, title, icon, ph) => html`<div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'8px'}}>
     <div style=${{fontWeight:800, fontSize:'12px'}}>${icon} ${title} <span style=${{fontWeight:600, color:'var(--text-dim)', fontSize:'11px'}}>(${(sg[field] || []).length})</span></div>
-    ${(sg[field] || []).map(k => html`<div key=${k.id} style=${{padding:'8px', borderRadius:'10px', background:'rgba(2,6,23,0.25)', border:'1px solid var(--border-soft)', display:'grid', gap:'6px'}}>
+    ${(sg[field] || []).map(k => html`<div key=${k.id} style=${{padding:'8px', borderRadius:'10px', background:'rgba(2,6,23,0.25)', border:'1px solid var(--border-soft)', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'6px'}}>
       <div style=${{display:'flex', gap:'6px'}}>
         <input value=${k.name || ''} onInput=${e=>upSub(g.id, sg.id, field, k.id, { name: e.target.value })} placeholder=${ph} style=${{...inputStyle, flex:1, fontWeight:700}} />
         <button type="button" onClick=${()=>{ if (confirm('Apagar "' + (k.name || title) + '"?')) delSub(g.id, sg.id, field, k.id); }} style=${{...btnGhost, padding:'5px 9px', fontSize:'11px', color:'var(--danger)'}}>🗑️</button>
@@ -5001,7 +5008,7 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
     </div>
   </div>`;
   return html`
-    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
+    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'12px'}}>
       <div style=${{fontWeight:800, fontSize:'13px'}}>🎼 Ensaios</div>
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Cadastre os grupos (que não são as equipes de louvor). Dentro de cada grupo fica o repertório; clique numa música para ver o Original, o Playback e adicionar Kits de ensaio e Ensaios. Tudo projeta como a Liturgia — aqui ou pelo celular (Controle Remoto › Ensaios).</div>
       <div style=${{display:'flex', gap:'8px'}}>
@@ -5010,7 +5017,7 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
       </div>
       ${groups.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhum grupo cadastrado ainda.</div>`}
       ${groups.map(g => html`
-        <div key=${g.id} class="glass" style=${{padding:'12px', borderRadius:'14px', border:'1px solid var(--border-soft)', display:'grid', gap:'10px'}}>
+        <div key=${g.id} class="glass" style=${{padding:'12px', borderRadius:'14px', border:'1px solid var(--border-soft)', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'10px'}}>
           <div style=${{display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap'}}>
             <button type="button" onClick=${()=>setOpenId(o => o === g.id ? null : g.id)} style=${{...btnGhost, padding:'6px 10px', fontSize:'12px'}}>${openId === g.id ? '▼' : '▶'}</button>
             <input value=${g.name} onInput=${e=>rename(g.id, e.target.value)} style=${{...inputStyle, flex:1, minWidth:'140px', fontWeight:800}} />
@@ -5018,7 +5025,7 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
             <button type="button" onClick=${()=>removeGroup(g)} title="Apagar grupo" style=${{...btnGhost, padding:'6px 10px', fontSize:'11px', color:'var(--danger)'}}>🗑️</button>
           </div>
           ${openId === g.id && html`
-            <div style=${{display:'grid', gap:'8px'}}>
+            <div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'8px'}}>
               <div style=${{fontWeight:800, fontSize:'12.5px'}}>🎵 Repertório</div>
               ${(g.songs || []).length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhuma música no repertório ainda.</div>`}
               ${(g.songs || []).map((sg, i) => html`
@@ -5031,10 +5038,10 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
                     <button type="button" onClick=${e=>{ e.stopPropagation(); moveSong(g.id, sg.id, 1); }} style=${{...btnGhost, padding:'3px 8px', fontSize:'11px'}}>↓</button>
                     <button type="button" onClick=${e=>{ e.stopPropagation(); removeSong(g.id, sg); }} style=${{...btnGhost, padding:'3px 8px', fontSize:'11px', color:'var(--danger)'}}>✕</button>
                   </div>
-                  ${openSong === sg.id && html`<div style=${{display:'grid', gap:'14px', padding:'4px 10px 12px'}}>
+                  ${openSong === sg.id && html`<div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'14px', padding:'4px 10px 12px'}}>
                     <input value=${sg.name || ''} onInput=${e=>upS(g.id, sg.id, x => ({ ...x, name: e.target.value }))} placeholder="Nome da música (opcional — senão usa o título do vídeo)" style=${{...inputStyle, fontWeight:700}} />
-                    <div style=${{display:'grid', gap:'6px'}}><div style=${{fontWeight:800, fontSize:'12px'}}>🎵 Original</div>${mediaBlock('ens-' + sg.id, sg.media, (m)=>upS(g.id, sg.id, x => ({ ...x, media: m || null })), 'ensaio-' + sg.id + '-orig')}</div>
-                    <div style=${{display:'grid', gap:'6px'}}><div style=${{fontWeight:800, fontSize:'12px'}}>🎹 Playback</div>${mediaBlock('ens-pb-' + sg.id, sg.playback, (m)=>upS(g.id, sg.id, x => ({ ...x, playback: m || null })), 'ensaio-' + sg.id + '-play')}</div>
+                    <div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'6px'}}><div style=${{fontWeight:800, fontSize:'12px'}}>🎵 Original</div>${mediaBlock('ens-' + sg.id, sg.media, (m)=>upS(g.id, sg.id, x => ({ ...x, media: m || null })), 'ensaio-' + sg.id + '-orig')}</div>
+                    <div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'6px'}}><div style=${{fontWeight:800, fontSize:'12px'}}>🎹 Playback</div>${mediaBlock('ens-pb-' + sg.id, sg.playback, (m)=>upS(g.id, sg.id, x => ({ ...x, playback: m || null })), 'ensaio-' + sg.id + '-play')}</div>
                     ${subList(g, sg, 'kits', 'Kits de ensaio', '🧰', 'Nome do kit (ex.: Soprano, Vozes, Base)')}
                     ${subList(g, sg, 'ensaios', 'Ensaios', '🎧', 'Nome do ensaio (ex.: Ensaio de sexta)')}
                   </div>`}
