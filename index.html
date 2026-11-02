@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-02.118';
+const APP_VERSION = '2026-11-02.119';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-02.119',
+    date: '02/11/2026',
+    items: [
+      "Ensaios reorganizado: a tela do grupo mostra as músicas do repertório; ao clicar numa música abrem Original, Playback e campos para adicionar Kits de ensaio e Ensaios (cada um com busca/link e projeção). Igual no celular.",
+    ]
+  },
   {
     version: '2026-11-02.118',
     date: '02/11/2026',
@@ -2426,11 +2433,16 @@ function loadEnsaios(churchId) {
   try { const raw = localStorage.getItem(ensaiosKey(churchId)); if (raw) { const v = JSON.parse(raw); if (Array.isArray(v)) return v; } } catch(e) {}
   return [];
 }
-const ENSAIO_KINDS = [
-  { key:'musica', icon:'🎵', label:'Músicas' },
-  { key:'playback', icon:'🎹', label:'Playback' },
-  { key:'cantado', icon:'🎤', label:'Cantados' },
-];
+// v.119: cada música do repertório tem Original (media), Playback (playback) e listas de Kits de ensaio e Ensaios.
+function ensaioSongName(sg) { return (sg && (sg.name || (sg.media && sg.media.title))) || 'Música sem nome'; }
+function ensaioItems(sg) {
+  const out = [];
+  if (sg && sg.media && sg.media.title) out.push({ key:'orig', label:'🎵 Original', media: sg.media });
+  if (sg && sg.playback && sg.playback.title) out.push({ key:'play', label:'🎹 Playback', media: sg.playback });
+  ((sg && sg.kits) || []).forEach(k => { if (k.media && k.media.title) out.push({ key:'k:' + k.id, label:'🧰 ' + (k.name || 'Kit'), media: k.media }); });
+  ((sg && sg.ensaios) || []).forEach(k => { if (k.media && k.media.title) out.push({ key:'e:' + k.id, label:'🎧 ' + (k.name || 'Ensaio'), media: k.media }); });
+  return out;
+}
 function saveEnsaios(churchId, list) { try { localStorage.setItem(ensaiosKey(churchId), JSON.stringify(list)); } catch(e) {} }
 function defaultLiturgyKey(churchId, day) { return (day && day !== 'sabado') ? ('gc_default_liturgy_' + churchId + '_' + day) : ('gc_default_liturgy_' + churchId); }
 function loadDefaultLiturgy(churchId, day) {
@@ -4889,14 +4901,15 @@ function CatalogoMusicasTool({ churchId }) {
   `;
 }
 
-// v.117: Ensaios — grupos que não são as equipes de louvor, cada um com seu repertório (músicas/links),
-// projetáveis igual à Liturgia e pelo celular. Tudo salvo no aparelho e na nuvem (campo "rehearsals").
+// v.117/119: Ensaios — grupos que não são as equipes de louvor. Tela do grupo = repertório (músicas). Ao clicar numa
+// música: Original, Playback, Kits de ensaio e Ensaios, cada um projetável como a Liturgia e pelo celular.
 function EnsaiosTool({ churchId, church, onUpdateChurch }) {
   const docId = church && (church.fbDocId || church.docId);
   const [groups, setGroups] = useState(() => (church && Array.isArray(church.rehearsals) && church.rehearsals.length) ? church.rehearsals : loadEnsaios(churchId));
   useEffect(() => { if (church && Array.isArray(church.rehearsals) && church.rehearsals.length) setGroups(church.rehearsals); }, [church && church.rehearsals]);
   const [newName, setNewName] = useState('');
   const [openId, setOpenId] = useState(null);
+  const [openSong, setOpenSong] = useState(null);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const commit = (fn) => {
     setGroups(cur => {
@@ -4912,30 +4925,43 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
     const g = { id: uid(), name: n, songs: [] };
     commit(l => [...l, g]); setNewName(''); setOpenId(g.id);
   };
-  const rename = (gid, name) => commit(l => l.map(g => g.id === gid ? { ...g, name } : g));
+  const upG = (gid, fn) => commit(l => l.map(g => g.id === gid ? fn(g) : g));
+  const upS = (gid, sid, fn) => upG(gid, g => ({ ...g, songs: (g.songs || []).map(x => x.id === sid ? fn(x) : x) }));
+  const rename = (gid, name) => upG(gid, g => ({ ...g, name }));
   const removeGroup = (g) => { if (confirm('Apagar o grupo "' + g.name + '" e todas as músicas dele?')) commit(l => l.filter(x => x.id !== g.id)); };
-  const addSong = (gid, kind) => commit(l => l.map(g => g.id === gid ? { ...g, songs: [...(g.songs || []), { id: uid(), kind: kind || 'musica', media: null }] } : g));
-  const addKit = (gid, name) => { const n = (name || '').trim(); if (!n) return; commit(l => l.map(g => g.id === gid ? { ...g, kits: [...(g.kits || []), { id: uid(), name: n, songIds: [] }] } : g)); };
-  const renameKit = (gid, kid, name) => commit(l => l.map(g => g.id === gid ? { ...g, kits: (g.kits || []).map(k => k.id === kid ? { ...k, name } : k) } : g));
-  const removeKit = (gid, k) => { if (confirm('Apagar o kit "' + k.name + '"? (as músicas continuam no grupo)')) commit(l => l.map(g => g.id === gid ? { ...g, kits: (g.kits || []).filter(x => x.id !== k.id) } : g)); };
-  const toggleKitSong = (gid, kid, sid) => commit(l => l.map(g => g.id === gid ? { ...g, kits: (g.kits || []).map(k => k.id === kid ? { ...k, songIds: (k.songIds || []).includes(sid) ? k.songIds.filter(x => x !== sid) : [...(k.songIds || []), sid] } : k) } : g));
-  const moveKitSong = (gid, kid, sid, d) => commit(l => l.map(g => g.id === gid ? { ...g, kits: (g.kits || []).map(k => { if (k.id !== kid) return k; const arr = [...(k.songIds || [])]; const i = arr.indexOf(sid), j = i + d; if (i < 0 || j < 0 || j >= arr.length) return k; [arr[i], arr[j]] = [arr[j], arr[i]]; return { ...k, songIds: arr }; }) } : g));
-  const setSongKind = (gid, sid, kind) => commit(l => l.map(g => g.id === gid ? { ...g, songs: (g.songs || []).map(x => x.id === sid ? { ...x, kind } : x) } : g));
-  const [kitName, setKitName] = useState('');
-  const setSongMedia = (gid, sid, media) => commit(l => l.map(g => g.id === gid ? { ...g, songs: (g.songs || []).map(x => x.id === sid ? { ...x, media: media || null } : x) } : g));
-  const removeSong = (gid, sid) => commit(l => l.map(g => g.id === gid ? { ...g, songs: (g.songs || []).filter(x => x.id !== sid) } : g));
-  const moveSong = (gid, sid, d) => commit(l => l.map(g => {
-    if (g.id !== gid) return g;
-    const arr = [...(g.songs || [])]; const i = arr.findIndex(x => x.id === sid); if (i < 0) return g;
-    const kd = arr[i].kind || 'musica'; let j = i + d;
-    while (j >= 0 && j < arr.length && (arr[j].kind || 'musica') !== kd) j += d;
-    if (j < 0 || j >= arr.length) return g;
+  const addSong = (gid) => { const id = uid(); upG(gid, g => ({ ...g, songs: [...(g.songs || []), { id, name: '', media: null, playback: null, kits: [], ensaios: [] }] })); setOpenSong(id); };
+  const removeSong = (gid, sg) => { if (confirm('Apagar "' + ensaioSongName(sg) + '" do repertório (com Playback, Kits e Ensaios dela)?')) upG(gid, g => ({ ...g, songs: (g.songs || []).filter(x => x.id !== sg.id) })); };
+  const moveSong = (gid, sid, d) => upG(gid, g => {
+    const arr = [...(g.songs || [])]; const i = arr.findIndex(x => x.id === sid); const j = i + d;
+    if (i < 0 || j < 0 || j >= arr.length) return g;
     [arr[i], arr[j]] = [arr[j], arr[i]]; return { ...g, songs: arr };
-  }));
+  });
+  const addSub = (gid, sid, field, name) => upS(gid, sid, x => ({ ...x, [field]: [...(x[field] || []), { id: uid(), name, media: null }] }));
+  const upSub = (gid, sid, field, id, patch) => upS(gid, sid, x => ({ ...x, [field]: (x[field] || []).map(k => k.id === id ? { ...k, ...patch } : k) }));
+  const delSub = (gid, sid, field, id) => upS(gid, sid, x => ({ ...x, [field]: (x[field] || []).filter(k => k.id !== id) }));
+  const [subName, setSubName] = useState({});
+  const mediaBlock = (searchKey, media, onChange, itemKey) => html`<div style=${{display:'grid', gap:'6px'}}>
+    <${MediaSearchField} media=${media} onChange=${onChange} searchKey=${searchKey} />
+    ${media && media.title && html`<${ProjectButton} churchId=${churchId} media=${media} itemKey=${itemKey} />`}
+  </div>`;
+  const subList = (g, sg, field, title, icon, ph) => html`<div style=${{display:'grid', gap:'8px'}}>
+    <div style=${{fontWeight:800, fontSize:'12px'}}>${icon} ${title} <span style=${{fontWeight:600, color:'var(--text-dim)', fontSize:'11px'}}>(${(sg[field] || []).length})</span></div>
+    ${(sg[field] || []).map(k => html`<div key=${k.id} style=${{padding:'8px', borderRadius:'10px', background:'rgba(2,6,23,0.25)', border:'1px solid var(--border-soft)', display:'grid', gap:'6px'}}>
+      <div style=${{display:'flex', gap:'6px'}}>
+        <input value=${k.name || ''} onInput=${e=>upSub(g.id, sg.id, field, k.id, { name: e.target.value })} placeholder=${ph} style=${{...inputStyle, flex:1, fontWeight:700}} />
+        <button type="button" onClick=${()=>{ if (confirm('Apagar "' + (k.name || title) + '"?')) delSub(g.id, sg.id, field, k.id); }} style=${{...btnGhost, padding:'5px 9px', fontSize:'11px', color:'var(--danger)'}}>🗑️</button>
+      </div>
+      ${mediaBlock('ens-' + field + '-' + k.id, k.media, (m)=>upSub(g.id, sg.id, field, k.id, { media: m || null }), 'ensaio-' + sg.id + '-' + (field === 'kits' ? 'k:' : 'e:') + k.id)}
+    </div>`)}
+    <div style=${{display:'flex', gap:'8px'}}>
+      <input value=${subName[sg.id + field] || ''} onInput=${e=>setSubName(v => ({ ...v, [sg.id + field]: e.target.value }))} onKeyDown=${e=>{ if (e.key === 'Enter') { addSub(g.id, sg.id, field, (subName[sg.id + field] || '').trim()); setSubName(v => ({ ...v, [sg.id + field]: '' })); } }} placeholder=${ph} style=${{...inputStyle, flex:1}} />
+      <button type="button" onClick=${()=>{ addSub(g.id, sg.id, field, (subName[sg.id + field] || '').trim()); setSubName(v => ({ ...v, [sg.id + field]: '' })); }} style=${{...btnGhost, fontSize:'12px'}}>➕ Adicionar</button>
+    </div>
+  </div>`;
   return html`
     <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
       <div style=${{fontWeight:800, fontSize:'13px'}}>🎼 Ensaios</div>
-      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Cadastre os grupos (que não são as equipes de louvor) e, dentro de cada um, as músicas/links que serão ensaiadas. O repertório fica salvo. Cada música projeta como as da Liturgia — aqui ou pelo celular (Controle Remoto › Ensaios).</div>
+      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Cadastre os grupos (que não são as equipes de louvor). Dentro de cada grupo fica o repertório; clique numa música para ver o Original, o Playback e adicionar Kits de ensaio e Ensaios. Tudo projeta como a Liturgia — aqui ou pelo celular (Controle Remoto › Ensaios).</div>
       <div style=${{display:'flex', gap:'8px'}}>
         <input value=${newName} onInput=${e=>setNewName(e.target.value)} onKeyDown=${e=>{ if (e.key === 'Enter') addGroup(); }} placeholder="Nome do grupo (ex.: Coral, Jovens, Crianças)" style=${{...inputStyle, flex:1}} />
         <button type="button" onClick=${addGroup} disabled=${!newName.trim()} style=${{...btnPrimary, width:'auto', padding:'10px 16px', opacity: newName.trim() ? 1 : 0.6}}>➕ Cadastrar grupo</button>
@@ -4946,70 +4972,33 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
           <div style=${{display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap'}}>
             <button type="button" onClick=${()=>setOpenId(o => o === g.id ? null : g.id)} style=${{...btnGhost, padding:'6px 10px', fontSize:'12px'}}>${openId === g.id ? '▼' : '▶'}</button>
             <input value=${g.name} onInput=${e=>rename(g.id, e.target.value)} style=${{...inputStyle, flex:1, minWidth:'140px', fontWeight:800}} />
-            <span style=${{fontSize:'11px', color:'var(--text-dim)'}}>${(g.songs || []).filter(x => x.media && x.media.title).length} música(s)</span>
+            <span style=${{fontSize:'11px', color:'var(--text-dim)'}}>${(g.songs || []).length} música(s)</span>
             <button type="button" onClick=${()=>removeGroup(g)} title="Apagar grupo" style=${{...btnGhost, padding:'6px 10px', fontSize:'11px', color:'var(--danger)'}}>🗑️</button>
           </div>
           ${openId === g.id && html`
-            <div style=${{display:'grid', gap:'14px'}}>
-              ${ENSAIO_KINDS.map(kd => {
-                const list = (g.songs || []).filter(x => (x.kind || 'musica') === kd.key);
-                return html`<div key=${kd.key} style=${{display:'grid', gap:'8px'}}>
-                  <div style=${{fontWeight:800, fontSize:'12.5px'}}>${kd.icon} ${kd.label} <span style=${{fontWeight:600, color:'var(--text-dim)', fontSize:'11px'}}>(${list.length})</span></div>
-                  ${list.map((sg, i) => html`
-                    <div key=${sg.id} style=${{padding:'10px', borderRadius:'12px', background:'rgba(2,6,23,0.25)', border:'1px solid var(--border-soft)', display:'grid', gap:'8px'}}>
-                      <div style=${{display:'flex', gap:'6px', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap'}}>
-                        <div style=${{fontSize:'11px', fontWeight:800, color:'var(--text-dim)'}}>${kd.label.replace(/s$/, '')} ${i + 1}</div>
-                        <div style=${{display:'flex', gap:'4px', alignItems:'center'}}>
-                          <select value=${sg.kind || 'musica'} onChange=${e=>setSongKind(g.id, sg.id, e.target.value)} title="Mover para outra divisão" style=${{...inputStyle, width:'auto', padding:'3px 6px', fontSize:'11px'}}>${ENSAIO_KINDS.map(k2 => html`<option key=${k2.key} value=${k2.key}>${k2.icon} ${k2.label}</option>`)}</select>
-                          <button type="button" onClick=${()=>moveSong(g.id, sg.id, -1)} style=${{...btnGhost, padding:'3px 8px', fontSize:'11px'}}>↑</button>
-                          <button type="button" onClick=${()=>moveSong(g.id, sg.id, 1)} style=${{...btnGhost, padding:'3px 8px', fontSize:'11px'}}>↓</button>
-                          <button type="button" onClick=${()=>removeSong(g.id, sg.id)} style=${{...btnGhost, padding:'3px 8px', fontSize:'11px', color:'var(--danger)'}}>✕</button>
-                        </div>
-                      </div>
-                      <${MediaSearchField} media=${sg.media} onChange=${(m)=>setSongMedia(g.id, sg.id, m)} searchKey=${'ens-' + sg.id} />
-                      ${sg.media && sg.media.title && html`<${ProjectButton} churchId=${churchId} media=${sg.media} itemKey=${'ensaio-' + sg.id} />`}
-                    </div>
-                  `)}
-                  <button type="button" onClick=${()=>addSong(g.id, kd.key)} style=${{...btnGhost, justifySelf:'start', fontSize:'12px'}}>➕ Adicionar em ${kd.label}</button>
-                </div>`;
-              })}
-              <div style=${{display:'grid', gap:'8px', paddingTop:'10px', borderTop:'1px solid var(--border-soft)'}}>
-                <div style=${{fontWeight:800, fontSize:'12.5px'}}>🧰 Kits de ensaio <span style=${{fontWeight:600, color:'var(--text-dim)', fontSize:'11px'}}>(${(g.kits || []).length})</span></div>
-                <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Um kit é um conjunto de músicas deste grupo (Músicas, Playback e Cantados misturados) na ordem do ensaio. Marque as músicas e projete cada uma na sequência.</div>
-                ${(g.kits || []).map(k => {
-                  const byId = Object.fromEntries((g.songs || []).map(x => [x.id, x]));
-                  const inKit = (k.songIds || []).map(id => byId[id]).filter(Boolean);
-                  return html`<div key=${k.id} style=${{padding:'10px', borderRadius:'12px', background:'rgba(2,6,23,0.25)', border:'1px solid var(--border-soft)', display:'grid', gap:'8px'}}>
-                    <div style=${{display:'flex', gap:'6px', alignItems:'center'}}>
-                      <input value=${k.name} onInput=${e=>renameKit(g.id, k.id, e.target.value)} style=${{...inputStyle, flex:1, fontWeight:700}} />
-                      <button type="button" onClick=${()=>removeKit(g.id, k)} style=${{...btnGhost, padding:'5px 9px', fontSize:'11px', color:'var(--danger)'}}>🗑️</button>
-                    </div>
-                    ${inKit.length === 0 && html`<div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Kit vazio — marque músicas abaixo.</div>`}
-                    ${inKit.map((sg, i) => html`<div key=${sg.id} style=${{display:'grid', gap:'6px'}}>
-                      <div style=${{display:'flex', gap:'6px', alignItems:'center'}}>
-                        <div style=${{flex:1, fontSize:'12px', fontWeight:700}}>${i + 1}. ${(ENSAIO_KINDS.find(x => x.key === (sg.kind || 'musica')) || {}).icon} ${(sg.media && sg.media.title) || 'Sem vídeo/link ainda'}</div>
-                        <button type="button" onClick=${()=>moveKitSong(g.id, k.id, sg.id, -1)} style=${{...btnGhost, padding:'3px 8px', fontSize:'11px'}}>↑</button>
-                        <button type="button" onClick=${()=>moveKitSong(g.id, k.id, sg.id, 1)} style=${{...btnGhost, padding:'3px 8px', fontSize:'11px'}}>↓</button>
-                      </div>
-                      ${sg.media && sg.media.title && html`<${ProjectButton} churchId=${churchId} media=${sg.media} itemKey=${'ensaio-' + sg.id} />`}
-                    </div>`)}
-                    <details>
-                      <summary style=${{fontSize:'11.5px', cursor:'pointer', fontWeight:700}}>Escolher músicas do kit</summary>
-                      <div style=${{display:'grid', gap:'4px', marginTop:'6px'}}>
-                        ${(g.songs || []).length === 0 && html`<div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Cadastre músicas no grupo primeiro.</div>`}
-                        ${(g.songs || []).map(sg => html`<label key=${sg.id} style=${{display:'flex', gap:'8px', alignItems:'center', fontSize:'12px'}}>
-                          <input type="checkbox" checked=${(k.songIds || []).includes(sg.id)} onChange=${()=>toggleKitSong(g.id, k.id, sg.id)} />
-                          ${(ENSAIO_KINDS.find(x => x.key === (sg.kind || 'musica')) || {}).icon} ${(sg.media && sg.media.title) || 'Sem vídeo/link ainda'}
-                        </label>`)}
-                      </div>
-                    </details>
-                  </div>`;
-                })}
-                <div style=${{display:'flex', gap:'8px'}}>
-                  <input value=${kitName} onInput=${e=>setKitName(e.target.value)} onKeyDown=${e=>{ if (e.key === 'Enter') { addKit(g.id, kitName); setKitName(''); } }} placeholder="Nome do kit (ex.: Ensaio de sexta)" style=${{...inputStyle, flex:1}} />
-                  <button type="button" onClick=${()=>{ addKit(g.id, kitName); setKitName(''); }} disabled=${!kitName.trim()} style=${{...btnGhost, fontSize:'12px', opacity: kitName.trim() ? 1 : 0.6}}>➕ Criar kit</button>
+            <div style=${{display:'grid', gap:'8px'}}>
+              <div style=${{fontWeight:800, fontSize:'12.5px'}}>🎵 Repertório</div>
+              ${(g.songs || []).length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhuma música no repertório ainda.</div>`}
+              ${(g.songs || []).map((sg, i) => html`
+                <div key=${sg.id} style=${{borderRadius:'12px', background:'rgba(2,6,23,0.25)', border:'1px solid var(--border-soft)', overflow:'hidden'}}>
+                  <div style=${{display:'flex', gap:'6px', alignItems:'center', padding:'8px 10px', cursor:'pointer'}} onClick=${()=>setOpenSong(o => o === sg.id ? null : sg.id)}>
+                    <span style=${{fontSize:'11px'}}>${openSong === sg.id ? '▼' : '▶'}</span>
+                    <div style=${{flex:1, fontSize:'12.5px', fontWeight:700}}>${i + 1}. ${ensaioSongName(sg)}</div>
+                    <span style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>${ensaioItems(sg).length} item(ns)</span>
+                    <button type="button" onClick=${e=>{ e.stopPropagation(); moveSong(g.id, sg.id, -1); }} style=${{...btnGhost, padding:'3px 8px', fontSize:'11px'}}>↑</button>
+                    <button type="button" onClick=${e=>{ e.stopPropagation(); moveSong(g.id, sg.id, 1); }} style=${{...btnGhost, padding:'3px 8px', fontSize:'11px'}}>↓</button>
+                    <button type="button" onClick=${e=>{ e.stopPropagation(); removeSong(g.id, sg); }} style=${{...btnGhost, padding:'3px 8px', fontSize:'11px', color:'var(--danger)'}}>✕</button>
+                  </div>
+                  ${openSong === sg.id && html`<div style=${{display:'grid', gap:'14px', padding:'4px 10px 12px'}}>
+                    <input value=${sg.name || ''} onInput=${e=>upS(g.id, sg.id, x => ({ ...x, name: e.target.value }))} placeholder="Nome da música (opcional — senão usa o título do vídeo)" style=${{...inputStyle, fontWeight:700}} />
+                    <div style=${{display:'grid', gap:'6px'}}><div style=${{fontWeight:800, fontSize:'12px'}}>🎵 Original</div>${mediaBlock('ens-' + sg.id, sg.media, (m)=>upS(g.id, sg.id, x => ({ ...x, media: m || null })), 'ensaio-' + sg.id + '-orig')}</div>
+                    <div style=${{display:'grid', gap:'6px'}}><div style=${{fontWeight:800, fontSize:'12px'}}>🎹 Playback</div>${mediaBlock('ens-pb-' + sg.id, sg.playback, (m)=>upS(g.id, sg.id, x => ({ ...x, playback: m || null })), 'ensaio-' + sg.id + '-play')}</div>
+                    ${subList(g, sg, 'kits', 'Kits de ensaio', '🧰', 'Nome do kit (ex.: Soprano, Vozes, Base)')}
+                    ${subList(g, sg, 'ensaios', 'Ensaios', '🎧', 'Nome do ensaio (ex.: Ensaio de sexta)')}
+                  </div>`}
                 </div>
-              </div>
+              `)}
+              <button type="button" onClick=${()=>addSong(g.id)} style=${{...btnGhost, justifySelf:'start', fontSize:'12px'}}>➕ Adicionar música ao repertório</button>
             </div>
           `}
         </div>
@@ -7423,8 +7412,9 @@ function remoteExecute(churchId, church, cmd, onErr) {
     case 'project_ens': {
       const g = loadEnsaios(churchId).find(x => x.id === a.gid);
       const sg = g && (g.songs || []).find(x => x.id === a.sid);
-      if (!sg || !sg.media || !sg.media.title) return 'Essa música do ensaio não tem vídeo/link.';
-      return remoteProjectMedia(churchId, sg.media, 'ensaio-' + sg.id, a.which === 'operador' ? 'operador' : (a.which === 'retorno' ? 'retorno' : 'projetor'), onErr);
+      const it = sg && ensaioItems(sg).find(x => x.key === (a.item || 'orig'));
+      if (!it) return 'Esse item do ensaio não tem vídeo/link.';
+      return remoteProjectMedia(churchId, it.media, 'ensaio-' + sg.id + '-' + it.key, a.which === 'operador' ? 'operador' : (a.which === 'retorno' ? 'retorno' : 'projetor'), onErr);
     }
   }
   return '';
@@ -7615,7 +7605,7 @@ function RemoteControl({ churchId, church }) {
     const push = () => {
       let acts = [];
       try { acts = loadActivities(churchId).map(a => ({ id: a.id, name: a.name, time: a.time || '', media: !!(a.media && a.media.title), done: !!a.done })); } catch (e) {}
-      let ens = []; try { ens = loadEnsaios(churchId).map(g => ({ id: g.id, name: g.name, songs: (g.songs || []).filter(x => x.media && x.media.title).map(x => ({ id: x.id, title: x.media.title, kind: x.kind || 'musica' })), kits: (g.kits || []).map(k => ({ id: k.id, name: k.name, songIds: (k.songIds || []).filter(id => (g.songs || []).some(x => x.id === id && x.media && x.media.title)) })).filter(k => k.songIds.length) })).filter(g => g.songs.length); } catch (e) {}
+      let ens = []; try { ens = loadEnsaios(churchId).map(g => ({ id: g.id, name: g.name, songs: (g.songs || []).map(sg => ({ id: sg.id, name: ensaioSongName(sg), items: ensaioItems(sg).map(it => ({ key: it.key, label: it.label })) })).filter(x => x.items.length) })).filter(g => g.songs.length); } catch (e) {}
       let wins = 0; try { wins = Object.keys(projectionWindows).filter(k => projectionWindows[k] && !projectionWindows[k].closed).length; } catch (e) {}
       const s = { v: APP_VERSION, wins, blocked: !!window.__gcSoundBlocked, pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, ens, err: lastErr.current || '' };
       const json = JSON.stringify(s);
@@ -7746,21 +7736,22 @@ function RemoteControl({ churchId, church }) {
                     <button type="button" onClick=${()=>send('project',{actId:a.id, which:'retorno'})} style=${small}>📺 Retorno</button>
                   </div>`)}
                   ${(st.ens || []).length > 0 && html`<div style=${{fontWeight:800, fontSize:'12px', marginTop:'8px'}}>🎼 Ensaios</div>`}
-                  ${(st.ens || []).map(g => {
-                    const row = (sg) => html`<div key=${sg.id} style=${{display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap'}}>
-                        <div style=${{flex:1, fontSize:'11.5px', minWidth:'120px'}}>${sg.title}</div>
-                        <button type="button" onClick=${()=>send('project_ens',{gid:g.id, sid:sg.id, which:'projetor'})} style=${small}>🔊 Projetor</button>
-                        <button type="button" onClick=${()=>send('project_ens',{gid:g.id, sid:sg.id, which:'operador'})} style=${small}>🎧 Operador</button>
-                        <button type="button" onClick=${()=>send('project_ens',{gid:g.id, sid:sg.id, which:'retorno'})} style=${small}>📺 Retorno</button>
-                      </div>`;
-                    const byId = Object.fromEntries(g.songs.map(x => [x.id, x]));
-                    return html`<details key=${g.id} style=${{padding:'6px 8px', borderRadius:'10px', border:'1px solid var(--border-soft)'}}>
+                  ${(st.ens || []).map(g => html`<details key=${g.id} style=${{padding:'6px 8px', borderRadius:'10px', border:'1px solid var(--border-soft)'}}>
                     <summary style=${{fontWeight:700, fontSize:'12px', cursor:'pointer'}}>${g.name} (${g.songs.length})</summary>
-                    <div style=${{display:'grid', gap:'8px', marginTop:'8px'}}>
-                      ${ENSAIO_KINDS.map(kd => { const l = g.songs.filter(x => x.kind === kd.key); return l.length ? html`<div key=${kd.key} style=${{display:'grid', gap:'6px'}}><div style=${{fontWeight:800, fontSize:'11.5px'}}>${kd.icon} ${kd.label}</div>${l.map(row)}</div>` : ''; })}
-                      ${(g.kits || []).map(k => html`<div key=${k.id} style=${{display:'grid', gap:'6px'}}><div style=${{fontWeight:800, fontSize:'11.5px'}}>🧰 Kit: ${k.name}</div>${k.songIds.map(id => byId[id]).filter(Boolean).map(row)}</div>`)}
+                    <div style=${{display:'grid', gap:'6px', marginTop:'8px'}}>
+                      ${g.songs.map(sg => html`<details key=${sg.id} style=${{padding:'4px 6px', borderRadius:'8px', background:'rgba(2,6,23,0.25)'}}>
+                        <summary style=${{fontSize:'12px', fontWeight:700, cursor:'pointer'}}>${sg.name}</summary>
+                        <div style=${{display:'grid', gap:'8px', marginTop:'6px'}}>
+                          ${sg.items.map(it => html`<div key=${it.key} style=${{display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap'}}>
+                            <div style=${{flex:1, fontSize:'11.5px', minWidth:'110px'}}>${it.label}</div>
+                            <button type="button" onClick=${()=>send('project_ens',{gid:g.id, sid:sg.id, item:it.key, which:'projetor'})} style=${small}>🔊 Projetor</button>
+                            <button type="button" onClick=${()=>send('project_ens',{gid:g.id, sid:sg.id, item:it.key, which:'operador'})} style=${small}>🎧 Operador</button>
+                            <button type="button" onClick=${()=>send('project_ens',{gid:g.id, sid:sg.id, item:it.key, which:'retorno'})} style=${small}>📺 Retorno</button>
+                          </div>`)}
+                        </div>
+                      </details>`)}
                     </div>
-                  </details>`; })}
+                  </details>`)}
                 ` : html`<div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Esperando o computador principal enviar o estado…</div>`}
 
               </div>`}
