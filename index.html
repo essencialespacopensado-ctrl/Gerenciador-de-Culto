@@ -136,11 +136,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-02.125';
+const APP_VERSION = '2026-11-02.126';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-02.126',
+    date: '02/11/2026',
+    items: [
+      "Ensaios: o título do vídeo agora aparece inteiro (quebra em mais de uma linha) e cada item tem só o botão Projetor — sem Operador e Rota.",
+    ]
+  },
   {
     version: '2026-11-02.125',
     date: '02/11/2026',
@@ -2758,7 +2765,7 @@ function screenQuickButtonDefs(churchId, onSendToScreen) {
   }));
 }
 
-function ProjectButton({ churchId, media, itemKey }) {
+function ProjectButton({ churchId, media, itemKey, only }) {
   const isMobile = useIsMobile();
   if (!media || !media.title) return '';
 
@@ -2822,7 +2829,9 @@ function ProjectButton({ churchId, media, itemKey }) {
     ...screenQuickButtonDefs(churchId, (scr)=>send(scr, false)),
   ];
 
-  return html`<${ScreenSendRow} isMobile=${isMobile} buttons=${buttons} extra=${itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`} />`;
+  // v.126: 'only' mostra só os botões cujo texto bate (ex.: só "Projetor" na aba Ensaios, pra ficar enxuto no celular).
+  const shown = only ? buttons.filter(b => String(b.text).includes(only)) : buttons;
+  return html`<${ScreenSendRow} isMobile=${isMobile} buttons=${shown} extra=${!only && itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`} />`;
 }
 
 // Cronômetro REGRESSIVO (contagem decrescente) pra atividades que NÃO têm vídeo/música (oração,
@@ -5053,21 +5062,20 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
   // Linha compacta: rótulo + título (ou busca, se vazio) + ▶/✕, e logo abaixo os botões de projetar.
   const itemRow = (label, searchKey, media, onChange, itemKey, onDelete, labelNode) => html`<div style=${{padding:'6px 8px', borderRadius:'8px', background:'rgba(2,6,23,0.3)', border:'1px solid var(--border-soft)', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'4px'}}>
     <div style=${{display:'flex', alignItems:'center', gap:'6px', minWidth:0}}>
-      ${labelNode || html`<span style=${{fontWeight:800, fontSize:'11px', flexShrink:0}}>${label}</span>`}
-      ${media && media.title && html`<span style=${{flex:1, minWidth:0, fontSize:'10.5px', color:'var(--text-mid)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${media.title}</span>
-        <button type="button" onClick=${()=>openMediaInNewTab(media)} style=${mini}>▶</button>
+      ${labelNode || html`<span style=${{fontWeight:800, fontSize:'11px', flex:1, minWidth:0}}>${label}</span>`}
+      ${media && media.title && html`<button type="button" onClick=${()=>openMediaInNewTab(media)} style=${mini}>▶</button>
         <button type="button" title="Trocar vídeo" onClick=${()=>onChange(null)} style=${{...mini, color:'var(--text-dim)'}}>✕</button>`}
-      ${!(media && media.title) && onDelete && html`<span style=${{flex:1}}></span>`}
       ${onDelete && html`<button type="button" onClick=${onDelete} style=${{...mini, color:'var(--danger)'}}>🗑️</button>`}
     </div>
+    ${media && media.title && html`<div style=${{fontSize:'10.5px', color:'var(--text-mid)', lineHeight:1.25, wordBreak:'break-word'}}>${media.title}</div>`}
     ${!(media && media.title) && html`<${MediaSearchField} media=${media} onChange=${onChange} searchKey=${searchKey} />`}
-    ${media && media.title && html`<${ProjectButton} churchId=${churchId} media=${media} itemKey=${itemKey} />`}
+    ${media && media.title && html`<${ProjectButton} churchId=${churchId} media=${media} itemKey=${itemKey} only="Projetor" />`}
   </div>`;
   const subList = (g, sg, field, title, icon, ph) => html`<div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'5px'}}>
     <div style=${{fontWeight:800, fontSize:'11px'}}>${icon} ${title} <span style=${{fontWeight:600, color:'var(--text-dim)'}}>(${(sg[field] || []).length})</span></div>
     ${(sg[field] || []).map(k => itemRow(null, 'ens-' + field + '-' + k.id, k.media, (m)=>upSub(g.id, sg.id, field, k.id, { media: m || null }), 'ensaio-' + sg.id + '-' + (field === 'kits' ? 'k:' : 'e:') + k.id,
       ()=>{ if (confirm('Apagar "' + (k.name || title) + '"?')) delSub(g.id, sg.id, field, k.id); },
-      html`<input key=${k.id} value=${k.name || ''} onInput=${e=>upSub(g.id, sg.id, field, k.id, { name: e.target.value })} placeholder=${ph} style=${{...small, width:'92px', flexShrink:0, fontWeight:700, padding:'3px 6px'}} />`))}
+      html`<input key=${k.id} value=${k.name || ''} onInput=${e=>upSub(g.id, sg.id, field, k.id, { name: e.target.value })} placeholder=${ph} style=${{...small, flex:1, minWidth:0, fontWeight:800, padding:'3px 6px'}} />`))}
     <div style=${{display:'flex', gap:'5px'}}>
       <input value=${subName[sg.id + field] || ''} onInput=${e=>setSubName(v => ({ ...v, [sg.id + field]: e.target.value }))} onKeyDown=${e=>{ if (e.key === 'Enter') { addSub(g.id, sg.id, field, (subName[sg.id + field] || '').trim()); setSubName(v => ({ ...v, [sg.id + field]: '' })); } }} placeholder=${ph} style=${{...small, flex:1, minWidth:0}} />
       <button type="button" onClick=${()=>{ addSub(g.id, sg.id, field, (subName[sg.id + field] || '').trim()); setSubName(v => ({ ...v, [sg.id + field]: '' })); }} style=${mini}>➕</button>
