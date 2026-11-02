@@ -46,8 +46,10 @@
     background-color: var(--bg-page); background-size: 42px 42px, 42px 42px, 200% 200%, 200% 200%, 200% 200%, 200% 200%; 
   }
   @keyframes aurora { 0%,100%{background-position:0% 0%;} 50%{background-position:100% 60%;} }
-  * { scrollbar-width: thin; scrollbar-color: rgba(99,102,241,.45) transparent; }
-  *::-webkit-scrollbar{width:8px;height:8px;} *::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--accent-1),var(--accent-2));border-radius:999px;}
+  /* v.128: barra de rolagem bem visível (larga, com trilho e sempre aparente — também no celular). */
+  @supports not selector(::-webkit-scrollbar) { * { scrollbar-width: auto; scrollbar-color: var(--accent-1) rgba(148,163,184,.25); } }
+  *::-webkit-scrollbar{width:16px;height:16px;} *::-webkit-scrollbar-track{background:rgba(148,163,184,.18);border-radius:999px;}
+  *::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--accent-1),var(--accent-2));border-radius:999px;border:3px solid rgba(15,23,42,.55);min-height:56px;min-width:56px;}
   .glass{background:var(--glass-bg, #0f172acc);border:1px solid var(--border-soft);box-shadow:0 0 22px -12px var(--edge-glow), inset 0 0 0 1px var(--edge-glow);}
   @media (prefers-color-scheme: light){ :root:not([data-theme="dark"]) .glass{background:var(--glass-bg, #ffffffee);} }
   :root[data-theme="dark"] .glass{background:var(--glass-bg, #0f172acc);}
@@ -75,7 +77,7 @@
   html[data-tech="1"] *::-webkit-scrollbar-thumb{background:#00ff9d;}
   html[data-tech="1"] button[style*="linear-gradient"]{background:#0a8cff !important;box-shadow:0 0 14px -4px rgba(10,140,255,0.9) !important;}
   html[data-tech="1"] button[style*="linear-gradient"]:hover{box-shadow:0 0 0 1px #00ff9d,0 0 18px -2px rgba(0,255,157,0.8) !important;}
-  html[data-tech="1"] *{scrollbar-color:#00ff9d transparent;}
+  @supports not selector(::-webkit-scrollbar) { html[data-tech="1"] *{scrollbar-color:#00ff9d rgba(148,163,184,.25);} }
   /* Console de projeção + mixer (faders verticais) */
   .gc-fader{-webkit-appearance:none;appearance:none;writing-mode:vertical-lr;direction:rtl;width:30px;height:150px;margin:0;padding:0;background:transparent;cursor:pointer;}
   .gc-fader::-webkit-slider-runnable-track{width:8px;border-radius:4px;background:#04090a;border:1px solid var(--highlight);}
@@ -136,11 +138,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-02.127';
+const APP_VERSION = '2026-11-02.128';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-02.128',
+    date: '02/11/2026',
+    items: [
+      "Barra de rolagem bem mais visível: mais larga, com trilho e sempre aparente (no computador e no celular), pra dar para voltar a página quando quiser.",
+    ]
+  },
   {
     version: '2026-11-02.127',
     date: '02/11/2026',
