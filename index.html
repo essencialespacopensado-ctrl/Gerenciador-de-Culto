@@ -136,11 +136,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-02.123';
+const APP_VERSION = '2026-11-02.124';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-02.124',
+    date: '02/11/2026',
+    items: [
+      "Corrigido: ao clicar numa aba (ex.: Músicas) com a página rolada, o cabeçalho cobria o começo da aba e ela parecia vazia. Agora ao trocar de aba a página volta para o topo.",
+    ]
+  },
   {
     version: '2026-11-02.123',
     date: '02/11/2026',
@@ -10248,6 +10255,8 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
 
 function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   const [tab, setTab] = useState('liturgia');
+  // v.124: ao trocar de aba principal volta pro topo — senão o cabeçalho fixo cobria o começo da aba nova.
+  useEffect(() => { try { window.scrollTo(0, 0); } catch (e) {} }, [tab]);
   // Fica aqui (não dentro da aba Mensagem) de propósito: assim, os arquivos carregados do pendrive
   // continuam disponíveis mesmo trocando de aba (ex: voltar pra Liturgia pra ver a atividade do
   // sermão). Ainda assim NÃO é salvo em disco/nuvem — some se recarregar a página, como sempre foi.
