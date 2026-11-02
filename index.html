@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-02.119';
+const APP_VERSION = '2026-11-02.120';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-02.120',
+    date: '02/11/2026',
+    items: [
+      "Momentos de Louvor e Mensagens Musicais: agora dá para escolher o DIA da semana (Sábado a Sexta) e o link compartilhado é do dia escolhido — quem abre o link cadastra a música daquele dia.",
+    ]
+  },
   {
     version: '2026-11-02.119',
     date: '02/11/2026',
@@ -4801,33 +4808,56 @@ function NumberDrawTool({ churchId }) {
 // Ligado direto às atividades de categoria "mensagem_musical" da liturgia da semana (mesmo
 // armazenamento usado pela aba Liturgia) — a pessoa só escolhe o vídeo, o horário já vem pronto.
 // Pensado pra ser preenchido pelo celular, por quem vai cantar/tocar, sem precisar mexer na liturgia inteira.
-function MensagensMusicaisTool({ churchId, church, onUpdateChurch, shareUrl }) {
+// v.120: cadastro de música por DIA da semana. Sábado = church.activities (como sempre); os outros dias ficam em
+// church.otherActivities[dia]. A gravação na nuvem usa caminho pontilhado (otherActivities.<dia>) — nunca regrava os outros dias.
+function useCadastroDay(churchId, church, onUpdateChurch, fixedDay) {
   const docId = church && (church.fbDocId || church.docId);
-  const [activities, setActivities] = useState(() => (church && church.activities) || loadActivities(churchId));
-  // Reagir quando "church.activities" chega/muda depois da montagem (por exemplo, na página pública
-  // de cadastro, onde o documento vem do Firestore de forma assíncrona) — sem isso a lista ficava
-  // presa no valor de quando o componente montou. Mesma causa raiz do bug já corrigido no ActivityCard.
-  useEffect(() => { if (church && church.activities) setActivities(church.activities); }, [church && church.activities]);
-  const items = activities.filter(a => a.category === 'mensagem_musical');
-
+  const [day, setDay] = useState(fixedDay || 'sabado');
+  const read = (d, c) => {
+    if (d === 'sabado') return (c && c.activities) || loadActivities(churchId);
+    const st = c && c.otherActivities && c.otherActivities[d];
+    return st !== undefined ? st : loadActivities(churchId, d);
+  };
+  const [activities, setActivities] = useState(() => read(day, church));
+  useEffect(() => { setActivities(read(day, church)); }, [day, church && church.activities, church && church.otherActivities && church.otherActivities[day]]);
   const setMediaFor = (actId, media) => {
     setActivities(list => {
       const next = list.map(a => a.id === actId ? { ...a, media: media || null } : a);
-      saveActivities(churchId, next);
-      if (docId) fbUpdateChurchFields(docId, { activities: next });
-      if (onUpdateChurch) onUpdateChurch({ activities: next });
+      saveActivities(churchId, next, day);
+      if (day === 'sabado') {
+        if (docId) fbUpdateChurchFields(docId, { activities: next });
+        if (onUpdateChurch) onUpdateChurch({ activities: next });
+      } else {
+        if (docId) fbUpdateChurchFields(docId, { ['otherActivities.' + day]: next });
+        if (onUpdateChurch) onUpdateChurch({ otherActivities: { ...((church && church.otherActivities) || {}), [day]: next } });
+      }
       return next;
     });
   };
+  return { day, setDay, activities, setMediaFor, locked: !!fixedDay };
+}
+function CadastroDayPicker({ day, setDay, locked }) {
+  if (locked) return html`<div style=${{fontSize:'12px', fontWeight:800}}>📅 ${liturgiaDayLabel(day)}</div>`;
+  return html`<div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+    <span style=${{fontSize:'11px', fontWeight:800}}>📅 Dia:</span>
+    ${LITURGIA_DAYS.map(d => html`<button key=${d.key} type="button" onClick=${()=>setDay(d.key)} style=${{...btnGhost, padding:'5px 10px', fontSize:'11px', fontWeight: day === d.key ? 800 : 500, outline: day === d.key ? '2px solid var(--accent-1)' : 'none'}}>${d.label}</button>`)}
+  </div>`;
+}
+function dayShareUrl(shareUrl, day) { return shareUrl ? shareUrl + '&dia=' + day : shareUrl; }
+
+function MensagensMusicaisTool({ churchId, church, onUpdateChurch, shareUrl, fixedDay }) {
+  const { day, setDay, activities, setMediaFor, locked } = useCadastroDay(churchId, church, onUpdateChurch, fixedDay);
+  const items = activities.filter(a => a.category === 'mensagem_musical');
 
   return html`
     <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
       <div style=${{fontWeight:800, fontSize:'13px'}}>🎙️ Mensagens Musicais</div>
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Feito pra usar pelo celular: escolha qual mensagem musical da semana é a sua e busque o vídeo — o horário já vem certo. Isso atualiza na hora a liturgia do sábado.</div>
-      ${shareUrl && html`<button type="button" onClick=${()=>shareLinkUrl(shareUrl, 'Cadastro de Mensagem Musical')} style=${{...btnGhost, fontSize:'11px', padding:'8px 12px', justifySelf:'start'}}>🔗 Copiar link pra quem vai cantar</button>`}
+      ${shareUrl && html`<button type="button" onClick=${()=>shareLinkUrl(dayShareUrl(shareUrl, day), 'Cadastro de Mensagem Musical — ' + liturgiaDayLabel(day))} style=${{...btnGhost, fontSize:'11px', padding:'8px 12px', justifySelf:'start'}}>🔗 Copiar link de ${liturgiaDayLabel(day)} pra quem vai cantar</button>`}
+      <${CadastroDayPicker} day=${day} setDay=${setDay} locked=${locked} />
 
       <div style=${{display:'grid', gap:'10px'}}>
-        ${items.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhuma mensagem musical na liturgia desta semana ainda. Vá na aba Liturgia pra criar a atividade primeiro.</div>`}
+        ${items.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhuma mensagem musical na liturgia de ${liturgiaDayLabel(day)} ainda. Vá na aba Liturgia pra criar a atividade primeiro.</div>`}
         ${items.map((a,i) => html`
           <div key=${a.id} class="glass" style=${{padding:'12px', borderRadius:'14px', border:'1px solid var(--border-soft)', display:'grid', gap:'8px'}}>
             <div>
@@ -5051,7 +5081,8 @@ function getPublicCadastroParams() {
     const params = new URLSearchParams(window.location.search);
     const cad = params.get('cad');
     const id = params.get('id');
-    if ((cad === 'louvor' || cad === 'mensagem') && id) return { tipo: cad, docId: id };
+    const dia = params.get('dia');
+    if ((cad === 'louvor' || cad === 'mensagem') && id) return { tipo: cad, docId: id, dia: LITURGIA_DAYS.some(d => d.key === dia) ? dia : null };
   } catch(e) {}
   return null;
 }
@@ -5060,7 +5091,7 @@ function getPublicCadastroParams() {
 // (Momentos de Louvor ou Mensagem Musical) pra escolher a música dela — nada do resto do app. Lê a
 // igreja direto do Firestore pelo docId (sem passar pela lista de login), então funciona em qualquer
 // aparelho, mesmo sem nunca ter aberto o app antes.
-function PublicCadastroPage({ tipo, docId }) {
+function PublicCadastroPage({ tipo, docId, dia }) {
   const [church, setChurch] = useState(null);
   const [status, setStatus] = useState('loading'); // loading | ok | notfound
 
@@ -5075,7 +5106,7 @@ function PublicCadastroPage({ tipo, docId }) {
           if (stopped) return;
           if (!snap.exists()) { setStatus('notfound'); return; }
           const data = snap.data() || {};
-          setChurch({ id: data.churchId || docId, fbDocId: docId, name: data.name || 'Igreja', activities: data.activities || [] });
+          setChurch({ id: data.churchId || docId, fbDocId: docId, name: data.name || 'Igreja', activities: data.activities || [], otherActivities: data.otherActivities || {} });
           setStatus('ok');
         }, () => { if (!stopped) setStatus('notfound'); });
       } catch(e) { setStatus('notfound'); return () => {}; }
@@ -5099,7 +5130,7 @@ function PublicCadastroPage({ tipo, docId }) {
         <div style=${{fontSize:'11px', color:'var(--text-dim)', fontWeight:700, letterSpacing:'0.5px', textTransform:'uppercase'}}>${church.name}</div>
         <div style=${{fontSize:'16px', fontWeight:800, marginTop:'4px'}}>${tipo === 'louvor' ? 'Cadastro de Momento de Louvor' : 'Cadastro de Mensagem Musical'}</div>
       </div>
-      <${Tool} churchId=${church.id} church=${church} onUpdateChurch=${(patch)=>setChurch(c=>({...c, ...patch}))} />
+      <${Tool} churchId=${church.id} church=${church} fixedDay=${dia} onUpdateChurch=${(patch)=>setChurch(c=>({...c, ...patch}))} />
     </div>
   `;
 }
@@ -5725,29 +5756,16 @@ function ColetaneasCategoryGrid({ churchId, category }) {
 // Ligado direto às atividades de categoria "louvor" da liturgia da semana (mesmo armazenamento
 // usado pela aba Liturgia) — a equipe só escolhe qual louvor é o seu (1, 2 ou 3) e busca o vídeo;
 // o horário já vem pronto. Pensado pra ser preenchido pelo celular, sem precisar mexer na liturgia inteira.
-function MomentosLouvorTool({ churchId, church, onUpdateChurch, shareUrl }) {
-  const docId = church && (church.fbDocId || church.docId);
-  const [activities, setActivities] = useState(() => (church && church.activities) || loadActivities(churchId));
-  // Mesma correção aplicada em MensagensMusicaisTool: reagir a "church.activities" chegando depois
-  // da montagem (página pública de cadastro, onde o Firestore responde de forma assíncrona).
-  useEffect(() => { if (church && church.activities) setActivities(church.activities); }, [church && church.activities]);
+function MomentosLouvorTool({ churchId, church, onUpdateChurch, shareUrl, fixedDay }) {
+  const { day, setDay, activities, setMediaFor, locked } = useCadastroDay(churchId, church, onUpdateChurch, fixedDay);
   const items = activities.filter(a => a.category === 'louvor');
-
-  const setMediaFor = (actId, media) => {
-    setActivities(list => {
-      const next = list.map(a => a.id === actId ? { ...a, media: media || null } : a);
-      saveActivities(churchId, next);
-      if (docId) fbUpdateChurchFields(docId, { activities: next });
-      if (onUpdateChurch) onUpdateChurch({ activities: next });
-      return next;
-    });
-  };
 
   return html`
     <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
       <div style=${{fontWeight:800, fontSize:'13px'}}>🎤 Momentos de Louvor</div>
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Feito pra usar pelo celular: escolha qual louvor da semana é o seu (Louvor 1, 2 ou 3) e busque o vídeo — o horário já vem certo. Isso atualiza na hora a liturgia do sábado.</div>
-      ${shareUrl && html`<button type="button" onClick=${()=>shareLinkUrl(shareUrl, 'Cadastro de Momento de Louvor')} style=${{...btnGhost, fontSize:'11px', padding:'8px 12px', justifySelf:'start'}}>🔗 Copiar link pros regentes</button>`}
+      ${shareUrl && html`<button type="button" onClick=${()=>shareLinkUrl(dayShareUrl(shareUrl, day), 'Cadastro de Momento de Louvor — ' + liturgiaDayLabel(day))} style=${{...btnGhost, fontSize:'11px', padding:'8px 12px', justifySelf:'start'}}>🔗 Copiar link de ${liturgiaDayLabel(day)} pros regentes</button>`}
+      <${CadastroDayPicker} day=${day} setDay=${setDay} locked=${locked} />
 
       <div style=${{display:'grid', gap:'10px'}}>
         ${items.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhum momento de louvor na liturgia desta semana ainda. Vá na aba Liturgia pra criar a atividade primeiro.</div>`}
@@ -10574,7 +10592,7 @@ function App() {
   // causa problema de ordem de hooks pra esta instância de App().
   const publicCadastro = getPublicCadastroParams();
   if (publicCadastro) {
-    return html`<${PublicCadastroPage} tipo=${publicCadastro.tipo} docId=${publicCadastro.docId} />`;
+    return html`<${PublicCadastroPage} tipo=${publicCadastro.tipo} docId=${publicCadastro.docId} dia=${publicCadastro.dia} />`;
   }
 
   useChurchBackfillSync();
