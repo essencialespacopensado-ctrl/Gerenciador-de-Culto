@@ -136,11 +136,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-02.126';
+const APP_VERSION = '2026-11-02.127';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-02.127',
+    date: '02/11/2026',
+    items: [
+      "Ensaios pelo celular: o botão Projetor da aba Ensaios, num celular habilitado no Controle Remoto, agora manda o pedido para o computador principal (antes projetava no próprio celular). Mostra \"Enviado ao computador\".",
+    ]
+  },
   {
     version: '2026-11-02.126',
     date: '02/11/2026',
@@ -2765,8 +2772,9 @@ function screenQuickButtonDefs(churchId, onSendToScreen) {
   }));
 }
 
-function ProjectButton({ churchId, media, itemKey, only }) {
+function ProjectButton({ churchId, media, itemKey, only, remote }) {
   const isMobile = useIsMobile();
+  const [sent, setSent] = useState('');
   if (!media || !media.title) return '';
 
   const send = (scr, mute) => {
@@ -2785,6 +2793,13 @@ function ProjectButton({ churchId, media, itemKey, only }) {
   // lógica de sempre (preferência salva pra esse item, ou todas as telas habilitadas).
   const projectTo = (which) => {
     try {
+      // v.127: celular habilitado → manda pro computador principal (que tem as telas e o som).
+      if (remote && gcPhoneRemote.on && which !== 'rota') {
+        if (!gcPhoneRemote.online) { alert('O computador principal não está conectado agora. Abra o app lá e tente de novo.'); return; }
+        gcRemoteSend(remote.type, { ...remote.arg, which });
+        setSent(which); setTimeout(() => setSent(''), 2500);
+        return;
+      }
       const enabled = loadEnabledScreens(churchId);
       if (enabled.length === 0) {
         alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.');
@@ -2830,7 +2845,8 @@ function ProjectButton({ churchId, media, itemKey, only }) {
   ];
 
   // v.126: 'only' mostra só os botões cujo texto bate (ex.: só "Projetor" na aba Ensaios, pra ficar enxuto no celular).
-  const shown = only ? buttons.filter(b => String(b.text).includes(only)) : buttons;
+  const shown0 = only ? buttons.filter(b => String(b.text).includes(only)) : buttons;
+  const shown = sent ? shown0.map(b => String(b.text).includes('Projetor') ? { ...b, text: '✅ Enviado ao computador' } : b) : shown0;
   return html`<${ScreenSendRow} isMobile=${isMobile} buttons=${shown} extra=${!only && itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`} />`;
 }
 
@@ -5060,7 +5076,7 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
   const small = { ...inputStyle, fontSize:'11.5px', padding:'6px 8px' };
   const mini = { ...btnGhost, padding:'3px 7px', fontSize:'10.5px' };
   // Linha compacta: rótulo + título (ou busca, se vazio) + ▶/✕, e logo abaixo os botões de projetar.
-  const itemRow = (label, searchKey, media, onChange, itemKey, onDelete, labelNode) => html`<div style=${{padding:'6px 8px', borderRadius:'8px', background:'rgba(2,6,23,0.3)', border:'1px solid var(--border-soft)', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'4px'}}>
+  const itemRow = (label, searchKey, media, onChange, itemKey, onDelete, labelNode, remoteArg) => html`<div style=${{padding:'6px 8px', borderRadius:'8px', background:'rgba(2,6,23,0.3)', border:'1px solid var(--border-soft)', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'4px'}}>
     <div style=${{display:'flex', alignItems:'center', gap:'6px', minWidth:0}}>
       ${labelNode || html`<span style=${{fontWeight:800, fontSize:'11px', flex:1, minWidth:0}}>${label}</span>`}
       ${media && media.title && html`<button type="button" onClick=${()=>openMediaInNewTab(media)} style=${mini}>▶</button>
@@ -5069,13 +5085,14 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
     </div>
     ${media && media.title && html`<div style=${{fontSize:'10.5px', color:'var(--text-mid)', lineHeight:1.25, wordBreak:'break-word'}}>${media.title}</div>`}
     ${!(media && media.title) && html`<${MediaSearchField} media=${media} onChange=${onChange} searchKey=${searchKey} />`}
-    ${media && media.title && html`<${ProjectButton} churchId=${churchId} media=${media} itemKey=${itemKey} only="Projetor" />`}
+    ${media && media.title && html`<${ProjectButton} churchId=${churchId} media=${media} itemKey=${itemKey} only="Projetor" remote=${remoteArg} />`}
   </div>`;
   const subList = (g, sg, field, title, icon, ph) => html`<div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'5px'}}>
     <div style=${{fontWeight:800, fontSize:'11px'}}>${icon} ${title} <span style=${{fontWeight:600, color:'var(--text-dim)'}}>(${(sg[field] || []).length})</span></div>
     ${(sg[field] || []).map(k => itemRow(null, 'ens-' + field + '-' + k.id, k.media, (m)=>upSub(g.id, sg.id, field, k.id, { media: m || null }), 'ensaio-' + sg.id + '-' + (field === 'kits' ? 'k:' : 'e:') + k.id,
       ()=>{ if (confirm('Apagar "' + (k.name || title) + '"?')) delSub(g.id, sg.id, field, k.id); },
-      html`<input key=${k.id} value=${k.name || ''} onInput=${e=>upSub(g.id, sg.id, field, k.id, { name: e.target.value })} placeholder=${ph} style=${{...small, flex:1, minWidth:0, fontWeight:800, padding:'3px 6px'}} />`))}
+      html`<input key=${k.id} value=${k.name || ''} onInput=${e=>upSub(g.id, sg.id, field, k.id, { name: e.target.value })} placeholder=${ph} style=${{...small, flex:1, minWidth:0, fontWeight:800, padding:'3px 6px'}} />`,
+      { type:'project_ens', arg:{ gid:g.id, sid:sg.id, item:(field === 'kits' ? 'k:' : 'e:') + k.id } }))}
     <div style=${{display:'flex', gap:'5px'}}>
       <input value=${subName[sg.id + field] || ''} onInput=${e=>setSubName(v => ({ ...v, [sg.id + field]: e.target.value }))} onKeyDown=${e=>{ if (e.key === 'Enter') { addSub(g.id, sg.id, field, (subName[sg.id + field] || '').trim()); setSubName(v => ({ ...v, [sg.id + field]: '' })); } }} placeholder=${ph} style=${{...small, flex:1, minWidth:0}} />
       <button type="button" onClick=${()=>{ addSub(g.id, sg.id, field, (subName[sg.id + field] || '').trim()); setSubName(v => ({ ...v, [sg.id + field]: '' })); }} style=${mini}>➕</button>
@@ -5114,8 +5131,8 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
                   </div>
                   ${openSong === sg.id && html`<div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'8px', padding:'2px 8px 8px'}}>
                     <input value=${sg.name || ''} onInput=${e=>upS(g.id, sg.id, x => ({ ...x, name: e.target.value }))} onKeyDown=${e=>{ if (e.key === 'Enter') autoFill(g.id, sg.id, e.target.value); }} placeholder="Nome da música (Enter busca o que falta)" style=${{...small, fontWeight:700}} />
-                    ${itemRow('🎵 Original', 'ens-' + sg.id, sg.media, (m)=>upS(g.id, sg.id, x => ({ ...x, media: m || null })), 'ensaio-' + sg.id + '-orig')}
-                    ${itemRow('🎹 Playback', 'ens-pb-' + sg.id, sg.playback, (m)=>upS(g.id, sg.id, x => ({ ...x, playback: m || null })), 'ensaio-' + sg.id + '-play')}
+                    ${itemRow('🎵 Original', 'ens-' + sg.id, sg.media, (m)=>upS(g.id, sg.id, x => ({ ...x, media: m || null })), 'ensaio-' + sg.id + '-orig', null, null, { type:'project_ens', arg:{ gid:g.id, sid:sg.id, item:'orig' } })}
+                    ${itemRow('🎹 Playback', 'ens-pb-' + sg.id, sg.playback, (m)=>upS(g.id, sg.id, x => ({ ...x, playback: m || null })), 'ensaio-' + sg.id + '-play', null, null, { type:'project_ens', arg:{ gid:g.id, sid:sg.id, item:'play' } })}
                     ${subList(g, sg, 'kits', 'Kits de ensaio', '🧰', 'Nome do kit')}
                     ${subList(g, sg, 'ensaios', 'Ensaios', '🎧', 'Nome do ensaio')}
                   </div>`}
@@ -7416,6 +7433,14 @@ const gcBgState = { tracks: [] };
 function remoteToday() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
 // Celular habilitado = cadastrado e com a habilitação ligada. Quem foi habilitado antes da v.95 (só com a
 // data do dia gravada) continua valendo — não precisa habilitar de novo.
+// v.127: este aparelho é um celular habilitado (não o principal)? Quem projeta do celular (ex.: aba Ensaios)
+// manda o pedido pro computador principal em vez de abrir a projeção no próprio celular.
+const gcPhoneRemote = { on: false, docId: '', online: false };
+function gcRemoteSend(type, arg) {
+  if (!gcPhoneRemote.docId) return false;
+  fbUpdateChurchFields(gcPhoneRemote.docId, { ['remoteCmds.' + remoteDeviceId()]: { id: Date.now() + '-' + Math.random().toString(36).slice(2,6), type, arg: arg || null, ts: Date.now() } });
+  return true;
+}
 function remotePhoneOn(ph) { return !!(ph && ph.status === 'registered' && (ph.enabled === true || (ph.enabled === undefined && ph.enabledDay))); }
 function remoteDeviceId() {
   try {
@@ -7671,6 +7696,7 @@ function RemoteControl({ churchId, church }) {
     return () => { window.removeEventListener('gc-blocked-changed', f); document.removeEventListener('click', flush, true); document.removeEventListener('keydown', flush, true); };
   }, []);
   const blockedCount = isMain ? Object.keys(gcBlockedQueue).length : 0;
+  gcPhoneRemote.on = !!(!isMain && meOk); gcPhoneRemote.docId = docId || ''; gcPhoneRemote.online = online;
 
   const setLocal = (on) => { try { localStorage.setItem('gc_remote_main_' + churchId, on ? '1' : '0'); } catch (e) {} setLocalMain(on); };
   const claimMain = () => {
