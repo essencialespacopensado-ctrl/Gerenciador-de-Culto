@@ -135,11 +135,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-02.120';
+const APP_VERSION = '2026-11-02.121';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-02.121',
+    date: '02/11/2026',
+    items: [
+      "Corrigido de verdade: a janela de projeção que já estava aberta (inclusive depois de atualizar/recarregar o app) era reescrita do zero ao projetar — saía da tela cheia e o som liberado travava de novo. Agora ela é reaproveitada como está.",
+    ]
+  },
   {
     version: '2026-11-02.120',
     date: '02/11/2026',
@@ -4300,7 +4307,12 @@ async function sendToScreenObj(scr, kind, payload, opts) {
       } catch(e) {}
       win = window.open('', 'gc_screen_'+sig, features);
       projectionWindows[sig] = win;
-      isNewWindow = true;
+      // v.121: window.open com o MESMO nome devolve a janela que já existe (acontece sempre que o app principal
+      // foi atualizado/recarregado e perdeu a referência). Se ela já tem a nossa página de projeção, NÃO reescreve:
+      // reescrever tira da tela cheia e zera a liberação do som.
+      let reused = false;
+      try { reused = !!(win && win.document && (win.__gcShell || win.document.getElementById('gc-stage'))); } catch (e) {}
+      isNewWindow = !reused;
     } else {
       // v.118: mover/redimensionar uma janela que já está em TELA CHEIA a tira da tela cheia (e o som volta a
       // ficar bloqueado). Janela em tela cheia já está no lugar certo — não mexe nela.
