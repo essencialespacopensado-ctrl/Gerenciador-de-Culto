@@ -33,6 +33,7 @@
   * { box-sizing: border-box; }
   html, body { margin:0; padding:0; }
   body { background: var(--bg-page); color: var(--text-hi); font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif; min-height:100vh; position:relative; zoom:1.18; }
+  #root { padding-bottom: 120px; }
   body::before {
     content:""; position:fixed; inset:0; z-index:-1;
     background:
@@ -135,11 +136,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-02.122';
+const APP_VERSION = '2026-11-02.123';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-02.123',
+    date: '02/11/2026',
+    items: [
+      "Mensagens Musicais e Momentos de Louvor: corrigido o conteúdo cortado na lateral (no PC e no celular) — o botão Play e o ✕ não ficam mais escondidos embaixo dos botões flutuantes.",
+    ]
+  },
   {
     version: '2026-11-02.122',
     date: '02/11/2026',
@@ -2361,7 +2369,7 @@ function MediaSearchField({ media, onChange, searchKey }) {
     return html`
       <div style=${{display:'flex', alignItems:'center', gap:'8px', padding:'8px 10px', borderRadius:'10px', background:'rgba(99,102,241,0.1)'}}>
         <span style=${{fontSize:'14px'}}>🎬</span>
-        <span style=${{flex:1, fontSize:'12px', color:'var(--text-hi)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${media.title}</span>
+        <span style=${{flex:1, minWidth:0, fontSize:'12px', color:'var(--text-hi)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${media.title}</span>
         <button type="button" onClick=${()=>openMediaInNewTab(media)} style=${{...btnGhost, padding:'6px 12px', fontSize:'11px', whiteSpace:'nowrap'}}>▶ Play</button>
         <button type="button" onClick=${()=>onChange(null)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'13px'}}>✕</button>
       </div>
@@ -4869,16 +4877,16 @@ function MensagensMusicaisTool({ churchId, church, onUpdateChurch, shareUrl, fix
   const items = activities.filter(a => a.category === 'mensagem_musical');
 
   return html`
-    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
+    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'12px'}}>
       <div style=${{fontWeight:800, fontSize:'13px'}}>🎙️ Mensagens Musicais</div>
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Feito pra usar pelo celular: escolha qual mensagem musical da semana é a sua e busque o vídeo — o horário já vem certo. Isso atualiza na hora a liturgia do sábado.</div>
       ${shareUrl && html`<button type="button" onClick=${()=>shareLinkUrl(dayShareUrl(shareUrl, day), 'Cadastro de Mensagem Musical — ' + liturgiaDayLabel(day))} style=${{...btnGhost, fontSize:'11px', padding:'8px 12px', justifySelf:'start'}}>🔗 Copiar link de ${liturgiaDayLabel(day)} pra quem vai cantar</button>`}
       <${CadastroDayPicker} day=${day} setDay=${setDay} locked=${locked} />
 
-      <div style=${{display:'grid', gap:'10px'}}>
+      <div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'10px'}}>
         ${items.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhuma mensagem musical na liturgia de ${liturgiaDayLabel(day)} ainda. Vá na aba Liturgia pra criar a atividade primeiro.</div>`}
         ${items.map((a,i) => html`
-          <div key=${a.id} class="glass" style=${{padding:'12px', borderRadius:'14px', border:'1px solid var(--border-soft)', display:'grid', gap:'8px'}}>
+          <div key=${a.id} class="glass" style=${{padding:'12px', borderRadius:'14px', border:'1px solid var(--border-soft)', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'8px'}}>
             <div>
               <div style=${{display:'inline-flex', alignItems:'center', gap:'5px', padding:'3px 9px', borderRadius:'999px', background:'rgba(99,102,241,0.15)', color:'var(--accent-1)', fontWeight:800, fontSize:'10.5px', marginBottom:'6px'}}>🕐 ${a.time} · ${SECTION_LABELS[a.section] || a.section}</div>
               <div style=${{fontWeight:700, fontSize:'12.5px'}}>${items.length > 1 ? 'Mensagem Musical '+(i+1)+' — ' : ''}${a.name}</div>
@@ -5780,16 +5788,16 @@ function MomentosLouvorTool({ churchId, church, onUpdateChurch, shareUrl, fixedD
   const items = activities.filter(a => a.category === 'louvor');
 
   return html`
-    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gap:'12px'}}>
+    <div class="glass fade-up" style=${{padding:'16px', borderRadius:'16px', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'12px'}}>
       <div style=${{fontWeight:800, fontSize:'13px'}}>🎤 Momentos de Louvor</div>
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Feito pra usar pelo celular: escolha qual louvor da semana é o seu (Louvor 1, 2 ou 3) e busque o vídeo — o horário já vem certo. Isso atualiza na hora a liturgia do sábado.</div>
       ${shareUrl && html`<button type="button" onClick=${()=>shareLinkUrl(dayShareUrl(shareUrl, day), 'Cadastro de Momento de Louvor — ' + liturgiaDayLabel(day))} style=${{...btnGhost, fontSize:'11px', padding:'8px 12px', justifySelf:'start'}}>🔗 Copiar link de ${liturgiaDayLabel(day)} pros regentes</button>`}
       <${CadastroDayPicker} day=${day} setDay=${setDay} locked=${locked} />
 
-      <div style=${{display:'grid', gap:'10px'}}>
+      <div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'10px'}}>
         ${items.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Nenhum momento de louvor na liturgia desta semana ainda. Vá na aba Liturgia pra criar a atividade primeiro.</div>`}
         ${items.map((a,i) => html`
-          <div key=${a.id} class="glass" style=${{padding:'12px', borderRadius:'14px', border:'1px solid var(--border-soft)', display:'grid', gap:'8px'}}>
+          <div key=${a.id} class="glass" style=${{padding:'12px', borderRadius:'14px', border:'1px solid var(--border-soft)', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'8px'}}>
             <div>
               <div style=${{display:'inline-flex', alignItems:'center', gap:'5px', padding:'3px 9px', borderRadius:'999px', background:'rgba(99,102,241,0.15)', color:'var(--accent-1)', fontWeight:800, fontSize:'10.5px', marginBottom:'6px'}}>🕐 ${a.time} · ${SECTION_LABELS[a.section] || a.section}</div>
               <div style=${{fontWeight:700, fontSize:'12.5px'}}>Louvor ${i+1} — ${a.name}</div>
