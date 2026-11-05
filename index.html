@@ -138,11 +138,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-05.131';
+const APP_VERSION = '2026-11-05.132';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-05.132',
+    date: '05/11/2026',
+    items: [
+      "Novo Hinário Adventista: na aba Músicas há um botão novo com os hinos 1 a 600 e o vídeo oficial com letra (Casa Publicadora Brasileira) de cada um. Dá para buscar por número ou título, ver o vídeo, projetar e trocar o link de algum hino.",
+    ]
+  },
   {
     version: '2026-11-05.131',
     date: '05/11/2026',
@@ -2162,6 +2169,611 @@ const HYMNS = [
   {n:530,t:'Quem Sou Eu?',c:'Graça e Salvação',k:'C',s:'Quem sou eu para que o Senhor de todo o mundo conheça o meu nome?...'},
   {n:550,t:'Provai e Vede',c:'Fidelidade e Mordomia',k:'Eb',s:'Provai e vede que o Senhor é bom...'},
 ];
+
+// Novo Hinário Adventista (hinos 1–600): vídeos oficiais com letra da Casa Publicadora Brasileira (CPB) no YouTube.
+// Cada linha: número|idDoVídeo|título. O 587 tem duas versões (587 = A, 587b = B).
+const NHA_RAW = `1|FDpludwY46U|Santo Santo Santo!
+2|u4c66cbU9-c|Ó Adorai O Senhor
+3|BpMD-UziYbc|O Deus Eterno Reina
+4|hfH_dQpEMhk|Louvor ao Trino Deus
+5|e6r1kYZJ1hg|Jubilosos Te Adoramos
+6|gUX4rONKdeI|Nós Te Adoramos
+7|jRo9W3iHhLc|Sejas Louvado
+8|W0Ha0nqpVtY|Ó Deus de Amor
+9|d-Jm5BqIHms|Santo, Santo, Pai Bondoso
+10|XafjwXQ7OF8|O Senhor Está Aqui!
+11|7UlUMa8dlBg|Maior que Tudo
+12|2WLfNPD0uhw|Vinde, Povo do Senhor
+13|xAzZsKdefi0|Louvamos Te, Ó Deus
+14|KARmqJz3Ktg|Louvemos o Rei
+15|lVBzxAcXTVk|Tu És fiel, Senhor
+16|724USSpz4ls|Sublime Amor
+17|1fkhW76iKSs|Deus é Nosso Pai Amado
+18|5Zm_BUpeWHI|Deus é Nosso Pai Celeste
+19|MnBH-e_BpZQ|A Deus Demos Glória
+20|4C23Lx1lwso|Grande é o Senhor
+21|BjHv6tOnhn0|Eu Te Amo, Ó Deus
+22|BwISjJU028U|A Tí Toda Glória
+23|0LeRHv_eCgk|Louvai A Cristo
+24|AlTWVhSsndI|Rei dos Reis
+25|T5jU2aXD0cI|Jesus Sempre Te Amo
+26|qQuZ30_VVbU|Saudai o Nome de Jesus
+27|xlkwuGo10Os|Com Glória Coroai
+28|DRYgNLQNjmU|Lindo És, Meu Mestre
+29|rDqhjaMUu8I|O Amor De Jesus
+30|SvLmewB4-tc|Sempre Vencendo
+31|LL5Pak4zcuA|Jesus Tu És A Minha Vida
+32|pnjg15RB6f8|Brilha Jesus
+33|8hKR6ohrexE|A Esperança É Jesus
+34|i_1znegpxLI|Precioso Nome
+35|KAu7WO38klQ|Ele É Exaltado
+36|h2zY2yqEhH8|Por Seu Imenso Amor
+37|PRVP3fMMOJ8|Cristo
+38|Sju2hLQ6hKU|A Tí Rendemos Glória
+39|aARgwr11kt4|Glória Ao Rei do Amor
+40|AEIOZHynZ10|Concede-Nos o Espírito
+41|BaJF1Tg3CJM|Chuvas de Bênçãos
+42|GHr5fUzMD-8|Vive Em Mim
+43|q7ckGf7nsU4|Vem, Santo Espírito, Agora
+44|niiUqUc9j1s|O Santo Espírito
+45|zoxr6xrtoa8|Suave Espírito
+46|Vwpc1inHrwA|Dia de Chuva
+47|5pCbe4IUoSQ|Cheio Do Espírito
+48|dq4XfQZJrbg|O Poder Do Espírito
+49|YiYxrq_0LuI|Que Firme Alicerce
+50|s8iTxsqiiqM|Alicerce Seguro
+51|k-O7d-lvwtE|Dá-me a Bíblia
+52|ZKGM3HzpOZo|Novas de Amor e Vida
+53|hNdx9bWb_0s|Que Diz a Bíblia
+54|2rH9XgY6SGQ|Unidos Pela Palavra
+55|L81Mjny13d4|Tua Palavra
+56|5-PCVhz6uzg|Nossa Inspiração
+57|86bzYwgHtG4|A Palavra do Senhor
+58|uNq843-YAvo|O Pão da Vida
+59|ogxYKQWtuCo|Por Belezas Naturais
+60|2khAUPUJ5VM|Ao Deus De Abraão Louvai
+61|EUHb7-depCY|Vós Criaturas do Senhor
+62|gwi_gzBwl98|Quão Grande És tu
+63|xopoI-il52Y|O Mundo é de Meu Deus
+64|Dh24lTXOorc|Vaso Novo
+65|38nr_ig4oYk|Das mãos do Criador
+66|1XYJWYHuZdg|Não Há Outro Igual A Você
+67|IN0WMRcnYq4|Restaura Em Mim
+68|98rSocNlrtw|Restaura
+69|4XkYx2_xuPA|Obrigado, Bom Pai
+70|vs4fs-zc66M|A Real Bandeira
+71|wQFi-aVjuo0|Vitória em Cristo
+72|0QqmaJAVCss|Firme Nas Promessas
+73|r130BsOP1Cs|Castelo Forte
+74|pDF_yaObO8M|Grande Comandante
+75|1k3ayNZz8jQ|Fé é a Vitória
+76|-0M7gBeQI78|Vencedor Cada Dia
+77|3-mP_nKu8yQ|Ó Cristãos, Avante!
+78|JzD8Fe1ICcw|Um Vencedor
+79|EbHIw7hpduI|Noite De Paz
+80|j_LfpCFhM1o|Soou Em Meio a Noite
+81|kkHG9hyVZFI|Surgem Anjos Proclamando
+82|RDNxaHfPnLE|Num Berço de Palha
+83|j3eoiJdeg9k|Canção da Manjedoura
+84|eNDUTp27XrI|Ó Vinde, Adoremos
+85|C3cAaEQRlSg|Estrela de Luz
+86|G4KswVUWNM8|Nasce Jesus
+87|GVg5Enb5OU4|Belém, Bendita És
+88|HXHaY7MkNoI|Cristo Nasceu
+89|02SEzuF8Yeg|Natal! Feliz Natal!
+90|UiF50HoVxmQ|Glória ao Rei que Vos Nasceu
+91|manYe2ql8Kg|Ó Noite Santa
+92|neN3QmMPIf4|Onde Estavam?
+93|Lp2_WQaM8KQ|Nasceu O Salvador
+94|jgwICRa17Ts|Vestido em Linho
+95|Pwa7fRMbURU|Amor que por Amor Desceste
+96|qJXgvVGefyc|Foi Amor
+97|KXB43Rs8SyU|Por Que Me Amou Assim
+98|pcShGyOHlig|Conta-me a História de Cristo
+99|nkGGdNovUXg|Conta-me a Velha História
+100|LgbciTZ1VwM|A Doce História
+101|yey65PRKnwY|Seu Maravilhoso Olhar
+102|xXSfV9DBfuU|Ó Vem, Emanuel!
+103|uARK7ATNd94|Rude Cruz
+104|6dOjCNKG3H8|Na Senda do Calvário
+105|HRIFTOPGfQo|Oh! Fronte Ensanguentada!
+106|PjPkdT0RdVg|Cristo no Horto
+107|1LBGWEG23uc|Na Cruz Morri Por Ti
+108|LYPwUpwFqJU|Foi por Você Também
+109|xoUiEda5iJM|Houve Alguém
+110|RRpKJGGwcXE|Monte do Calvário
+111|2wRdBPHruHU|Ao Ver a Cruz
+112|QvcJtKyiJaQ|Cordeiro de Deus
+113|5EB_afTMfPc|'Stavas Lá?
+114|Jxim-KyuzMw|Cristo Já Ressuscitou
+115|3uF79G1Wwjw|Preciosa Graça
+116|Kfplvg2IX6w|Maravilhosa Graça
+117|kQbEAjwxHXU|Infinita Graça
+118|p0HlgYN5D6Q|Imenso Amor
+119|cS1Nl3pkS6g|Graça de Deus
+120|pb6P7_xmUQs|Graça
+121|1d_Sj5oJk2k|Por Um Pecador Qual Eu
+122|zJqNjxb-7SI|Só um passo
+123|IMJRhe3K1EA|Seu Sangue Tem Poder
+124|VlxR27Iy9LQ|Deixa a Luz do Céu Entrar
+125|t0ehkXbVZvw|A Terna Voz do Salvador
+126|1SBM9-TndOU|Foge Para o Monte
+127|DMdabK3IbAU|Vida em Olhar
+128|FHqRzJ1Pj0Q|Se Tu Buscares a Jesus
+129|R3J8A4uVooQ|Deixa Entrar o Rei da Glória
+130|KeUClZbg8Uk|Jesus esta Esperando
+131|U1MtpuMnAK8|Manso e Suave
+132|WLANtS8injM|Pra Quem Nada Tem
+133|1kM5QluWwqc|O Vem, Aflito Coração
+134|hXrjWCkDmpY|Junto à Cruz
+135|f9VL-sdtUHg|Vinde às Águas
+136|20XieWKvvvA|Quero Estar ao Pé da Cruz
+137|m2XiTAFMXJ0|Pai, Eu Me Achego a Ti
+138|NTBQm-5nTZ0|Tal Qual Estou
+139|9SHy1_R9Rx4|Sou de Jesus Agora
+140|80eW16boEDg|Ao Pé da Cruz de Cristo
+141|0xi3zUDft6g|Cristo Tocou-me
+142|QbgZAOmi0lc|Perdão, Poder e Paz
+143|Jxr4l1rb47Q|Ao Olhar pra Cruz
+144|ENC3wRLqSWY|Foi na Cruz
+145|BAVvAtp5I7M|É Jesus o Salvador
+146|Cp1MchLAT4Q|Eu Não Sou Mais Eu
+147|Lw5boxvR22k|Jesus Me Transformou
+148|gmYPdCt9IlM|Jesus Achou-me
+149|yi08qQYUizE|Pedras
+150|H6uJzMKrSF8|Ó Jesus, Habita em Mim
+151|J-LrXdce3BQ|Amor Glorioso
+152|PugB4piaHHo|A Voz de Jesus
+153|Qc_6UoL0Y2g|O Que Penso de Meu Mestre
+154|E1wkziOywHE|Alvo Mais que a Neve
+155|RZ7z3wlZ6w0|Meu Calice Transborda
+156|Tse3sRoZjUY|Remido
+157|xf46ZtpsWFU|Jesus Me Remiu
+158|3bsZ_hMpaG8|Creio em Milagres
+159|OZHToenZk6k|Um Novo Nome Lá na Glória
+160|UFgPVxywUzk|Crescendo em Graça
+161|d2TGxq6cUdc|Salva-me Também
+162|lNnC4Lj998s|Sou de Jesus
+163|_G5qqB7zbx4|Para o Céu Por Jesus Irei
+164|6_dlUP46mEQ|Meu Nome em Suas Mãos
+165|X4VP_cLQCSY|Hoje Sou Feliz
+166|h7uQpNUh9Cw|Caminhando
+167|ajWDH9CUcXU|Tão Triste Eu Andava
+168|tsPbzFTxyD8|Eu Achei
+169|Dyd6mAe1LoI|Salvo em Jesus
+170|ZdBnuWtqR0c|Oh, Que Belo Hino Deus Me Deu!
+171|OvOiXTDTiIk|Com Cristo no Meu Coração
+172|qY07MGsAkZ0|Ando Sempre Alegre
+173|1AaW6xXABWM|Que Prazer é Ser de Cristo
+174|AbkpBk1b3Rc|Que Consolo e Paz!
+175|7SuzQVHTvb8|De Ti Careço, Ó Deus
+176|UM42XBG0EoY|Nunca Desanimes
+177|fwvoO_TPhwY|Conduze-me, Meu Mestre
+178|WHCMQjeWqVs|Deus Cuidara de Ti
+179|tA4BbhaEKeA|Eu Sei Em Quem Eu Creio
+180|WBXKUyPkNqo|Nunca te Deixarei
+181|Ti-3MEfiTHQ|Cuidara de Mim Também
+182|ubclOJpcEgc|Eu Pertenço ao meu Rei
+183|1JIetpF0Ihk|Oh, Não Temas, Sou Contigo
+184|z3FtUwqdEU4|Quero Ter Jesus Comigo
+185|RvM8AvWDnSQ|Cada Momento
+186|Qqp1ZZi1wSw|O Mestre, O Mar Se Revolta
+187|485b67iCENY|Refugio em temporal
+188|cRUWUT-jwYc|Minha Esperança
+189|EHbbpkoLJ5U|Deus Sabe, Deus Ouve, Deus Vê
+190|NxdttzyFf2o|Pertenço a Cristo
+191|TZnLhvVG68Y|Olha com Fé Para Cima
+192|HUY6sJkScBQ|Brilho Celeste
+193|pheGcnEq8p8|Sob Suas Asas
+194|UabnP6pgbTc|Tem Fé em Deus
+195|A4izEhw2FLE|Minha Fé Bem Segura Está
+196|Dsy2ouhHzIs|Ao Jesus me Tomar a Mão
+197|Xmna0YjSQ-s|Sou Feliz com Jesus
+198|J0dZy3WKJCc|Deus Vos Guarde
+199|V6AW8M1Jg-0|Ao Passares Pelas Águas
+200|V37Xhq3pVj8|Nunca me Deixar
+201|kUuN3BnJnaI|Dia a Dia
+202|kQWEGODrfKc|Não Ando Só
+203|TqplFQwwgGM|Abrigo na Rocha
+204|llDMZ7vVsQU|Meu Divino Protetor
+205|x097Y9HQpL4|Ergo os Meus Olhos
+206|aWL-qItB_uY|Fixa Teus Olhos no Mestre
+207|t9Pp34pZ1AQ|Confiei no Meu Senhor
+208|u_D5Tk3qn1Y|Confia em Deus
+209|ZTX7-BadhSc|Todas as Coisas Contribuem
+210|3axUf7ybwqA|Sempre Confiante
+211|vBfU_89IE44|Jesus Meu Guia É
+212|6NYekrMlTQY|Bendita Segurança
+213|ILnsDgw5E30|Não Me Esqueci de Ti
+214|RylJ4GK3r0k|Não Há o Que Temer
+215|dhYaXaT7SBQ|A Única Saída
+216|OAjs3XGoNS8|Pode Cair o Mundo
+217|BCeuEXUiNas|Fé dos Nossos Pais
+218|yF9207i7eQQ|Ouve-nos, Pastor Divino
+219|S8Xd30MZcNY|Da Igreja o Fundamento
+220|ddnROB-Iagk|Fortalece Tua Igreja
+221|Gd-0ohdm-PI|Somos Igreja
+222|ttA_S0UZpCI|Somos Um Pequeno Povo
+223|cWZK-r9LP2I|Há Um Dever
+224|bENSL9Ox2LU|Mensagem ao Mundo
+225|6VG21tjg0bM|Dai-nos Luz
+226|DcKQcVY394U|Cristo Nos Conclama
+227|IfM3j1Zbkh0|Se Cristo For Comigo
+228|ZzFbbopH8Vo|Onde Quer Que Seja
+229|oE4qRzuFjk4|Trabalho Cristão
+230|Sv1Mk5f8Gm4|Ao Mundo Vou Contar
+231|NWbx4RI3mAg|Trabalhar e Orar
+232|PNeCs4J9jfE|Jesus Precisa de Ti
+233|s8nEm0RjysI|Brilha Por Cristo em Teu Viver
+234|6T8ajgIR4Mk|Hoje Ajuda a Alguém
+235|6gOhEHoEcGA|Somos Teus, Senhor
+236|qAu0J5_yhqg|Transbordando em Amor
+237|fI_xWfXjWcg|A Colheita
+238|SEEy-WPicdc|Oração Pela Missão
+239|irEOEYk8ZkI|Geração Esperança
+240|Rv0F4c4C-Wg|Brilhar por Ti
+241|tSDeT4aYMlY|A Todo Semelhante Meu
+242|olcB1p-umdQ|Benditos Laços
+243|ZHK2rdtAjTs|Jesus, Pastor Amado
+244|Q1aD3qdatVI|O Vem a Igreja Comigo
+245|ZrnPn--2-C0|Lado a Lado
+246|blOjsarznsQ|Em Família
+247|LCRzBt65wQA|Unidos em Cristo
+248|zpfmhV1bkS8|Encontros
+249|RGvKiqTibOc|Oh! Que Belos Hinos!
+250|AH39bafXKrE|A Jesus Seguir eu Quero
+251|ZHzaGAfdoCM|Meu Jesus Esta Chamando
+252|BvKZVC9cK9Q|Volto ao Lar
+253|7Ci4QNv-pKA|Importa Renascer
+254|VxOMU2J_ZAI|Agora Posso Ver
+255|vf3jfoQFP3U|As Águas Batismais
+256|DEIsgr6rAXU|A Ceia do Senhor
+257|LSLQ7w4we1M|Senhor, Tu nos Convidas
+258|VbPvb63MO7E|A Última Ceia
+259|nWIsUdDHHmc|Em Memória de Ti
+260|c4JUrBiNjas|Em Memória de Mim
+261|OOCiWJTMvkI|Quem se Dispõe a Ir
+262|PEUoGbpsQo4|Irei Aonde Jesus Mandar
+263|eC_SG8HxQ_4|Mãos
+264|MGgZCcpZIYE|Envio a Ti
+265|MTnD-Y7pjZA|Faz Me Um Servo
+266|Wdz8uN0DPFY|No Serviço do Meu Rei
+267|qShdC3CEHN0|As Searas Maduras
+268|maPqiR2yjy0|Compensa Servir a Jesus
+269|ROWbiKrX-1U|Sal da Terra
+270|tLhObj3zj-c|Vaso de Benção
+271|Kr-tDldyFmQ|Vaso de Honra
+272|c9f7n3Ro6_Y|Através de Nós
+273|cgNzy67c04E|A Escola Sabatina
+274|XdXaEhP6LjU|O Encontro
+275|As-X-j6HRdE|Hino dos Aventureiros
+276|0v1ihqB0gpI|Hino dos Desbravadores
+277|r9KpN18SQDg|Bem Aventurança
+278|sXZgMQKfLfk|A Voz de Deus
+279|7XEXWM9JX0E|A Verdade Brilhará
+280|O4pIdHTqSlM|O Espírito de Profecia
+281|4B2i8A9v4qc|Filhos da Promessa
+282|64erEGHX6tg|Em Sua Presença
+283|lXpmeNNeztI|Crer e Observar
+284|UBzEdvwvAQY|Obedecer é Melhor
+285|qNqAq54JUxg|Eu Amo a Tua Lei
+286|179Ih-iPnk0|Tua Lei
+287|qkiZ-pjlcqs|A Lei de Deus
+288|ndQK0QjLHlU|Fiel a Toda Prova
+289|DnJh2Iu9_4Y|A Tua Lei
+290|EhZFepZ47yY|Do Santo Sábado És Senhor
+291|rHs4oa1_D9Q|Sábado do Meu Senhor
+292|_EJR05GlhLQ|Sábado
+293|V7Qx617dQQU|O Sábado Chegou
+294|5w3Xrdf5i_0|Lembre-se do Sábado
+295|5BB1MAN3g1I|Sábado Bendito
+296|JGnzZ3eY5Xg|Bem-vindo o Sábado
+297|25cPKkUP8go|Dia de Esperança
+298|diMJD80zr30|Deus Fez o Sábado Para Mim
+299|2jlp0c_gOck|Dia Santo
+300|HZxnyB3lJ-k|Tempo de Ser Santo
+301|X6AAFwBkfEM|Toma, Ó Deus, Meu Coração
+302|bzXmFmM4CTM|Tudo Entregarei
+303|FlkCgkhQ5CI|Minha Entrega
+304|wAW5aQOksIg|Que Te Darei, Meu Mestre
+305|nYohbTMsyfo|Sobre o Altar
+306|hwSVlpmYTWM|Eis-Nos Prontos
+307|ai_AQ1CwA2A|Conta as Bênçãos
+308|lCz31f0wvvI|Faze Como Daniel
+309|J-JW7ALhif8|Em Tuas Mãos
+310|vylQz82zkKE|Entrega
+311|CVC5EOg8pCM|Inteiramente Fiel
+312|g9B7YsUgUNM|Nas Tuas Mãos
+313|pI6-8Jet0YU|Tudo Para Deus
+314|TlArU2RQ2YY|Se Ele Não For o Primeiro
+315|jBfNNgtMVUA|A Cristo Eu Amo
+316|5RRcpOBlXeA|Achei Um Grande Amigo
+317|_8yIJOzF0rw|Amigo Mui Precioso
+318|hrtXSRc5Ces|Cantarei de Meu Jesus
+319|s99navSSdWM|Cristo é Tudo Para Mim
+320|Wl9Xe0a1WRI|Eu Te Amo, Meu Mestre
+321|4OR2dSNYuXk|Jesus é Melhor
+322|WmkAm7Eog80|Jesus Me Guia
+323|ti8OJHZqvUs|Há Um Amigo
+324|VyKaiFCoIXA|Jesus Teu Nome Satisfaz
+325|v76WHJ132HI|Ao Bondoso Deus
+326|CsPuhdOn8ko|Manancial de Toda Bênção
+327|1ibGBe9svTw|Nao Há Amigo Igual A Cristo
+328|AW5sH1Z4XYs|Meu Deus e Eu
+329|0SoM9vhYIwc|Não Ha Nome Mais Amável
+330|mQblvleLL40|O Melhor Amigo
+331|ol-pFzHphIQ|Nome Precioso
+332|1dA0FMuuftU|Tudo És Pra Mim
+333|MeeNmIEjLVs|Oh! Que Amigo em Cristo Temos
+334|JCYBqVqtKGQ|Oh, Eu Amo a Cristo!
+335|WOpYIxGYvK0|Precioso e Jesus Para Mim
+336|2QuelXhYD8w|Salmo dos Salmos
+337|6qSurkv7NNM|Amor Nos Faz Contentes
+338|SuB1C8QF8RM|Deus Não Se Cansa de Amar
+339|9VR9YnK2D04|Eu Sou Um Pobre Peregrino
+340|s0qMxW-q6BY|Sou Forasteiro Aqui
+341|aG7uBv3mnsg|Magoas
+342|6nJvSdQk0es|Eu Não Te Deixarei
+343|D60qJG7tseU|Meu Refugio Está no Monte
+344|y_tr7ucTMHY|Confiarei
+345|Xm1zBfeI-RY|Novo Dia Chegara
+346|K0dtLwEBX3Q|Como Agradecer
+347|yRp9mr9TgcA|Obrigado
+348|On65YomkD4g|Graças
+349|cnHNKIuzMVk|Gratidão
+350|rYV_vBMei_A|Senhor Jesus, Muito Obrigado
+351|Qo1T9ZuepmY|Jesus, Muito Obrigado
+352|EeFroE51w8Y|Luz Bendita, Luz Gloriosa
+353|QTuACjQAEqQ|É Prazer Servir A Cristo
+354|pb4tGtxy9yE|Paz
+355|rL9g1Vr1jWs|Sempre Alegre
+356|veBLWvLwvQ8|Tenho Um Hino Em Meu Coração
+357|Z6as5nyLYa8|Bendita Hora de Oração
+358|PJlt94VhU_M|Só Com Teu Deus
+359|-p9a4BxDUdE|Lugar de Paz
+360|lUaHAM1HZdQ|Deus ouve, Deus Responde
+361|DCRsK6diXAE|Deus Nos Ouvirá
+362|7M1qS8d9a8E|O Melhor Lugar do Mundo
+363|xp-d4CRRylI|O Jardim de Oração
+364|D7NLGP2-GLc|Que Tempo Já Faz
+365|p9DHQ5v2LgE|Santa Hora de Oração
+366|SnSVCN7Vuzk|No Jardim
+367|FkaoRqCR1Qc|Falar Com Deus
+368|fk-hDs89Z8I|Ao Teu Lado Quero Andar
+369|9eU0EyNyVNk|Seguindo a Jesus
+370|WW-CwdrG7Zo|Bem Junto a Cristo
+371|9eUp7OZe4NA|Cada Vez Mais Puro
+372|20rnfeAocEo|Abre, Senhor, Os Olhos Meus
+373|2Os83OCiqo4|Deixa-me Contigo Andar
+374|dtSsQXZeSqQ|Contigo, O Deus, Almejo Andar
+375|EyOkqnp-boI|Canção da Vida
+376|iHocK6sFQG4|Cristo, Da-nos Tua Paz
+377|-pYZX4k5weo|Mais de Cristo
+378|8S4HBQ8vSKY|Mais Perto Quero Estar
+379|_g7rOev2ybA|Fala Á Minh'alma
+380|hfvTjhIT-DQ|Sonda-me, Ó Deus
+381|yEIIRYcw480|Teu Divinal Amor
+382|zdqCReoBjNA|Minha Oração
+383|_Y7x4rwunTM|Em Mim Vem Habitar
+384|kcyghSL8dwc|O Teu Querer
+385|wScrNQt-IhU|Música Celeste
+386|Z4MGD-mnSHo|Abre Os Olhos Meus
+387|MSXFfVqU2Rk|Jesus, Não Eu
+388|-cigdfK-ktk|Se Minha Vida
+389|3JfsZZoCK-I|Minha Cruz
+390|6r_JxU0owC8|Pegadas
+391|4CfXjMoe2fA|Queremos Dar Louvor
+392|WZ0HCgbQ01Y|Ser Igual a Cristo
+393|rzb8Y3fZ7Uw|Vem Comigo Habitar
+394|k6Am9NI-3q0|De Hoje Em Diante
+395|8N1zAktFoA0|Vem Brilhar
+396|DNfjGf8qDWo|Vem Brilhar Em Mim
+397|AFnJNK48Iv0|Eu Só Quero Estar Onde Estás
+398|VHhO_p0Gzyo|Pai, Vive Em Mim
+399|9tzUlynVPgA|O Céu e Jesus
+400|Pl6dhdohExc|Mais semelhante A Jesus
+401|Dg2XiFULn3Q|Quero Ter Jesus
+402|dwzZKr4SKHY|Perto de Jesus
+403|4ol-obmlzBU|Renova-me
+404|Av4LvfAjdXg|Sempre de Jesus
+405|SmRxjG7xW58|Vem, ó Senhor
+406|fLiSJdTA5Vk|Pés na Terra, Olhos no Céu
+407|mekkPPhTwUc|O Poder do Amor
+408|UiDXm0Y1CfI|Abençoa Este Lar
+409|qUFlef2oVRM|Amor no Lar
+410|rR3jNanhKwk|Vem Entre Nós Morar
+411|rioiyg_5IMs|Bem de Manhã
+412|GU587FZB_gk|Bem Cedinho Sempre Busco
+413|7ApmhZKVsXM|Vigiar e Orar
+414|L-F7Sp7UcOk|Desponta o Sol
+415|HkgZhA4sbic|Luzes da Aurora
+416|BRdz-QVlbKI|Surge a Alvorada
+417|RGeooJu7TUw|Perto do Lar
+418|iB5SSn4k-WM|Finda o Dia
+419|dHXwemIP94U|Prece Vespertina
+420|Ty7iOct_PI8|Hora Feliz do Pôr do Sol
+421|5EQpR-6uEcU|Oração Para Uma Criança
+422|W54JbWI39UQ|Presente de Valor
+423|kyG5DTHJRn4|Não os Impeçais
+424|a0liyVeKGDg|Canção Para Meu Bebê
+425|9xNmt3L6D5U|Ouço o Clamor do Bom Pastor
+426|70R4mbhB-y4|Cristo Ama as Criancinhas
+427|LCkv535v4Ok|Venham, Crianças
+428|pJtick2YMPs|Joias Preciosas
+429|xXaDj2PGEDs|Quando o Livro Aberto For
+430|37DO5uB7IOQ|O Juízo
+431|DmKmlupo91M|Vem o Grande Dia
+432|SFDn0TVl730|Sangue Precioso de Cristo
+433|yuVlG81PVDo|Sumo Sacerdote
+434|M7kip2r_8Tk|Santuário
+435|wJQ3LvUaMds|Acima do Céu
+436|DHokCgyDV-0|E Me Fareis Um Santuário
+437|cmb52hp8Ud4|Chegou a Hora
+438|AQMm1y35sXM|Quando For Chamado
+439|aMEZCGynCn0|Quando Deus Fizer Chamada
+440|VuxpSoj5eGA|Breve Jesus Voltará
+441|U4ym16En8xc|Vencendo Vem Jesus
+442|CuF-oo0p7Es|Jesus Voltará
+443|qg-7IQvW8Lg|Cristo Virá Outra Vez
+444|VjksTL6-lQs|Oh! Que Esperança!
+445|OMtRXZcDzbo|O Rei Já Perto Está
+446|lEvc-Vmcyyc|Cristo Vem
+447|3_kr1ba7voQ|Vigiai, Cristãos
+448|wHq55SJU4ZE|Nós o Veremos
+449|9g089j2I4Fs|Quando o Rei Vier
+450|mMZfaASuBbI|Guarda, Vê Se Muito Falta
+451|SRcgXW3fg7I|Grande Alegria
+452|e4FoHTZzNrQ|Cristo Não Tarda Voltar
+453|EOn959r8A4k|Anunciai Pelas Montanhas
+454|16KaC4dDaeE|A Manhã Gloriosa
+455|F6QAsBXj284|Verei Jesus
+456|PE-O2EmOUkk|Bela Manhã
+457|mODTk_0iNWE|Jesus Vem Logo
+458|wH6SLP6wEMY|Não Tardará
+459|00FyQOvinS4|Cada Dia Mais Perto
+460|v4FahDb_EuM|Decidi Olhar Para o Amanhã
+461|BkwPPB2tjOI|Jesus Precisa Voltar
+462|7GMgx-h-vCw|Será de Manhã
+463|2Ms2z4tj1EU|Espero a Manhã Radiosa
+464|c9JfsHZ5Ark|Não Desistir
+465|uZ2pD2W0DXM|O Dia Não Sei
+466|2wem-qNP3yg|Um Pouco Mais
+467|PHRLFJoaIXQ|Até Quando
+468|pmHkUUEsbPM|Quase no Lar
+469|3AFtQj-ZbXU|Enquanto Ele Não Vem
+470|GAEJzMMk2WQ|Rocha Eterna
+471|0doKHQReQH4|Porque Ele Vive
+472|TmkQmQ04aQk|Ó Alegrai-vos, Filhos de Sião
+473|3eJVVZc_Dss|Morte e Ressurreição
+474|JgMloBodNr0|Eu Espero
+475|7Kszrnmsozg|Se Não Houver Amanhã
+476|varJ50douf4|Hei de Ver
+477|4zeJehRh790|Face a Face
+478|49eMmsTDmgQ|Sim, Glória Haverá no Final
+479|1p34cF7xJo0|Herdeiro do Reino
+480|COAEdwOHpn0|O Eterno Lar
+481|x7wEQ7q-_xM|No Celeste Lar Glorioso
+482|kn0zFi5orMU|Junto ao Rio Jordão
+483|US64k5we5s0|Vamos Ver Jesus Ali
+484|e6n44rxIuME|Além do Céu Azul
+485|_o3lA-GuZdI|Estrelas Terei
+486|EmNa2mC1REU|Até Então
+487|szamXjWAEso|Primeiro Quero Ver Meu Salvador
+488|_xNrYww0OBY|Eu Vou Para o Céu
+489|jAxb3hDo4x8|Cristo Foi Preparar Um Lugar
+490|8A0dsuOgLyg|Tão Grato Me é Lembrar
+491|Co7KPOxg-5k|Há Um Rio Cristalino
+492|V4Ve-KPG6mQ|Lar Feliz
+493|ddjCguUcCU4|Almejo o Lar
+494|ILf6xg2sqhQ|Doce Lar
+495|yqvOpAcE_EE|Glória Perene
+496|iAAbWePVmEo|Além do Rio
+497|0d0q6B-BuUA|Inda é Longe Canaã
+498|OV4K75Rb-OI|Lindo País
+499|FZPXeVnQqYs|Mansão Sobre o Monte
+500|Ua3zsO9-2X8|Oh! Nunca Separar
+501|FlHMYuWZK0g|Para Além das Montanhas
+502|RduBykShWsE|Saudade
+503|uGY2V-go_x4|Vale do Éden, Formoso
+504|JKzMvlzTQIs|Mais Perto Deste Lar
+505|D_tT_5jcnU0|Muito Além do Sol
+506|6X1wkIN-Cis|Eu Não Preciso Mais Sonhar
+507|kaM0Z4YIuTo|Jamais Se Diz Adeus Ali
+508|19pEqRVMq-I|Cristo Fez Tudo Muito Bom
+509|MVST2oE5nBE|A Criação
+510|X8hHMFhz2Pc|Aquarela do Senhor
+511|-3419VrV8Vk|Eu Sou Uma Obra de Arte
+512|geb2ugQWBis|Cada Dia
+513|elh4QZ-Fij4|Ver Jesus Em Você
+514|2w8AGdqCM0s|Fruto da Criação
+515|wXIENxBI5mA|Sabe Quantas Estrelinhas
+516|HjTn64jPYYQ|Grande Artista
+517|mg2bP7sg-QM|Meu Deus é Tão Grande
+518|444SonCfdPE|O Dia Em Que Deus Criou O Mundo
+519|ojukNBX0xRs|O Amigo Do Coração
+520|GqqgbpjsANo|Cristo é o Número 1
+521|97vtuS9WXZc|O Espírito Santo
+522|cjw0Xd-BcIg|Eu Quero Esse Poder
+523|7lR9ngghlhs|Sim, Cristo Me Ama
+524|qQz-1FXuAmk|Jesus Me Quer Bem
+525|fm8Jh_12bGs|Deus Sempre Me Ama
+526|yFMFvbRS0Mw|Quem Orou Três Vezes
+527|h2_xAmV7XqA|Aonde Quer Que Eu Vá
+528|vh79qX7CK0c|Quando Estou Com Medo
+529|Kzc35-5a-W0|Se Deus é Por Nós
+530|z_ULuJComU8|Lâmpada Para Os Meus Pés
+531|Rb5zqe-xg7s|A Bíblia
+532|hWX79JHd_Sk|Louvem A Jesus
+533|g9Y0GTrC8Yk|Louvai-o
+534|be6uoFLAuCE|Eu Digo Não
+535|wSoey4BKe1Y|Santa Lei De Deus
+536|YHfVrIMkgYg|São Dez Os Mandamentos
+537|QSFP2EvOtk8|Sábado, O Dia Mais Feliz
+538|kRjHUS_Ix4s|Dia Especial
+539|r3pH5zs7aeY|Deus Mandou O Sol Brilhar
+540|EfwQIFIdlWQ|Quero Bem Alegre Obedecer
+541|OTYzVyXbdKw|Cria Em Mim, ó Deus
+542|_6a8tqjCZ3w|Vem, Ó Jesus
+543|_9TmgYS-BsU|É Bom Ter Jesus no Coração
+544|NLwqMcTD8lU|Entrega Teu Caminho ao Senhor
+545|I1D2ayYAKL0|Sou Feliz
+546|u9tMVmwsn2w|Quero Servir A Jesus
+547|iTfgnKEIbXM|Eu Sei Porque Nasci
+548|A6KuXacY6MU|O Milagre da Vida
+549|rQQEt6UslBI|Eu Sou Importante
+550|Qt4e8OzK9k0|Deus Tem Um Plano Pra Mim
+551|Wn5nj616hNI|Minha Pequenina Luz
+552|uMw9alCBJGg|Meus Talentos Vou Usar
+553|SjB4E02wpRM|Minha Vida é Uma Viagem
+554|Xlva_BqXBgk|Sou Aventureiro
+555|OesQovAZ38Y|Um Lugar Feliz é o Céu
+556|TqM_jI_P2pI|Lá No Céu
+557|G2fo6bPBLxU|O Céu
+558|9w4e6ncQG6U|O Senhor Esta Em Seu Templo
+559|pzA0pwlEP_s|Sinto a Presença do Senhor
+560|tDUVFIYYClg|A Glória da Tua Presença
+561|7PCyZUfniNI|Santo Somente é o Senhor
+562|RIcHuu1eM00|Santo És, Senhor
+563|KstVYG1eZLo|Sua Glória
+564|WcbKoNxbg6E|Vamos Adorar
+565|5fH_OdoULJ8|Adoração
+566|gHgPE5cBZsk|Oh! Adorai
+567|-O3V4eXegCA|Intróito
+568|c5rmDJAwbmo|Invocação
+569|h3Pn338Jbkc|Nosso Maravilhoso Deus
+570|DU-gqqyFXhQ|Maravilhoso Deus
+571|9MI2kh8VZFM|Tu És Digno
+572|6XKBBbizSwU|Ofertório
+573|IBj_6ya7xas|Venho Te Adorar
+574|M4e58v4OYAk|Teu é Nosso Coração
+575|Pl5UNPjWuQc|Entrego a Ti
+576|Mo9jmUk1geA|Humildade e Gratidão
+577|qNSke7mqfpU|Quero Me Entregar
+578|x7PXEUXWd_c|Humilde Oração
+579|ruwejYHFrso|Ao Orarmos, Senhor
+580|DM6XV-Xa-Q8|Oração de Súplica
+581|XlKHkTRrxdY|Ouve Nos, Senhor
+582|DdIqNGYts1M|Pai, Venho a Ti
+583|mCDRltoQyRU|Entregamos em Tuas Mãos
+584|x21h3AlUjTk|Prece de Gratidão
+585|lBRMAtNr-F8|Vem, Espírito Santo
+586|nw9MZZ4yXhg|Venham Todos
+587|0Lps7KHmebA|Chegou a Hora de Adorar ao Senhor - A
+587b|GP8qu83lWls|Chegou a Hora de Adorar ao Senhor - B
+588|YfhkVkDCUzA|Deixai Vir a Mim os Pequeninos
+589|KC11ybPhXuk|Fala, Senhor
+590|TwLx_8N9Rh8|Queremos Te Pedir
+591|aJ39JaQeOa4|Estejas Conosco
+592|fiUau4pkV9Q|Graça, Amor e Comunhão
+593|qz4_paWtw8g|Amigo, Não Saia Sem Cristo
+594|fluE6tBTu6M|Bênção Final
+595|sRZHnhpdE10|A Benção
+596|e9GVzfcn-n8|Vem, Senhor
+597|HNp73M6vd5o|Santo Lugar
+598|jsAz9HOKXjU|Que Deus Te Abençoe
+599|hbDJN08OQ6I|Que o Senhor Nos Abençoe!
+600|hER6dGJKpqY|Em Paz eu Vou`;
+const NHA_HYMNS = NHA_RAW.trim().split('\n').map(l => { const a = l.split('|'); return { n: a[0], num: parseInt(a[0], 10), videoId: a[1], t: a[2] }; });
 
 const SECTION_LABELS = { escola_sabatina: 'Escola Sabatina', culto_divino: 'Culto Divino', culto: 'Programação' };
 const SABADO_SECTION_LABELS = { escola_sabatina: 'Escola Sabatina', culto_divino: 'Culto Divino' };
@@ -5191,6 +5803,7 @@ function MusicasView({ churchId, church, onUpdateChurch }) {
     { key:'louvor', label:'🎤 Momentos de Louvor' },
     { key:'mensagens', label:'🎙️ Mensagens Musicais' },
     { key:'ensaios', label:'🎼 Ensaios' },
+    { key:'hinario', label:'📖 Novo Hinário Adventista' },
     { key:'catalogo', label:'📚 Catálogo de Músicas' },
     { key:'col:CDs Oficiais/Ano', label:'📀 CDs Oficiais/Ano' },
     { key:'col:Adoradores', label:'🙌 Adoradores' },
@@ -5208,6 +5821,7 @@ function MusicasView({ churchId, church, onUpdateChurch }) {
       ${selected === 'louvor' && html`<${MomentosLouvorTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} shareUrl=${louvorShareUrl} />`}
       ${selected === 'mensagens' && html`<${MensagensMusicaisTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} shareUrl=${mensagemShareUrl} />`}
       ${selected === 'ensaios' && html`<${EnsaiosTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} />`}
+      ${selected === 'hinario' && html`<${HinarioAdventistaTool} churchId=${churchId} />`}
       ${selected === 'catalogo' && html`<${CatalogoMusicasTool} churchId=${churchId} />`}
       ${selected && selected.startsWith('col:') && html`<${ColetaneasCategoryGrid} churchId=${churchId} category=${selected.slice(4)} />`}
     </div>
@@ -8828,6 +9442,76 @@ function HymnDetail({ h, onClose }) {
         <div style=${{fontSize:'13px', lineHeight:1.7, whiteSpace:'pre-line', margin:'14px 0'}}>${(h.full || [h.s]).join('\\n\\n')}</div>
         <button onClick=${copy} style=${btnPrimary}>${copied ? '✓ Copiado!' : '📋 Copiar letra'}</button>
       </div>
+    </div>
+  `;
+}
+
+// ===== Novo Hinário Adventista: todos os hinos com o vídeo (letra) pra tocar aqui e projetar =====
+function hinoLinksKey(churchId) { return 'gc_hinario_links_' + churchId; }
+function loadHinoLinks(churchId) { try { const raw = localStorage.getItem(hinoLinksKey(churchId)); if (raw) return JSON.parse(raw); } catch(e) {} return {}; }
+function saveHinoLinks(churchId, map) { try { localStorage.setItem(hinoLinksKey(churchId), JSON.stringify(map)); } catch(e) {} }
+function hinoNormalize(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+
+function HinarioAdventistaTool({ churchId }) {
+  const [q, setQ] = useState('');
+  const [range, setRange] = useState(0); // 0 = todos; 1..6 = faixas de 100
+  const [limit, setLimit] = useState(40);
+  const [open, setOpen] = useState(null);      // número do hino com o vídeo aberto
+  const [linking, setLinking] = useState(null); // número do hino que está trocando o link
+  const [links, setLinks] = useState(() => loadHinoLinks(churchId));
+  const setLinkFor = (n, vid) => setLinks(m => { const next = { ...m }; if (vid) next[n] = vid; else delete next[n]; saveHinoLinks(churchId, next); return next; });
+  const filtered = useMemo(() => {
+    const s = hinoNormalize(q).trim();
+    return NHA_HYMNS.filter(h => {
+      if (range && Math.ceil(h.num / 100) !== range) return false;
+      if (!s) return true;
+      return String(h.num) === s || hinoNormalize(h.t).includes(s);
+    });
+  }, [q, range]);
+  useEffect(() => { setLimit(40); }, [q, range]);
+  const shown = filtered.slice(0, limit);
+  const ranges = [{ k:0, l:'Todos' }, { k:1, l:'1–100' }, { k:2, l:'101–200' }, { k:3, l:'201–300' }, { k:4, l:'301–400' }, { k:5, l:'401–500' }, { k:6, l:'501–600' }];
+  const label = (h) => 'Hino ' + h.num + (h.n === '587' ? ' (A)' : (/b$/.test(h.n) ? ' (B)' : ''));
+  return html`
+    <div class="glass fade-up" style=${{borderRadius:'16px', padding:'14px', display:'grid', gap:'10px', minWidth:0}}>
+      <div style=${{fontWeight:800, fontSize:'13px'}}>📖 Novo Hinário Adventista — hinos 1 a 600, com vídeo e letra</div>
+      <input placeholder="Buscar por número ou título..." value=${q} onChange=${e=>setQ(e.target.value)} style=${inputStyle} />
+      <div style=${{display:'flex', gap:'6px', overflowX:'auto', paddingBottom:'2px'}}>
+        ${ranges.map(r => html`<button key=${r.k} type="button" onClick=${()=>setRange(r.k)} style=${{padding:'6px 12px', borderRadius:'999px', fontSize:'11px', fontWeight:700, whiteSpace:'nowrap', border:'1px solid var(--border-soft)', background: range===r.k ? 'var(--accent-1)' : 'transparent', color: range===r.k ? '#fff' : 'var(--text-mid)', cursor:'pointer'}}>${r.l}</button>`)}
+      </div>
+      <div style=${{fontSize:'11px', color:'var(--text-dim)'}}>${filtered.length} hinos encontrados</div>
+      <div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'8px'}}>
+        ${shown.map(h => {
+          const vid = links[h.n] || h.videoId;
+          const media = { title: label(h) + ' — ' + h.t, url: 'https://www.youtube.com/watch?v=' + vid, videoId: vid };
+          const isOpen = open === h.n;
+          return html`
+            <div key=${h.n} style=${{padding:'10px 12px', borderRadius:'12px', border:'1px solid var(--border-soft)', display:'grid', gap:'8px', minWidth:0}}>
+              <div style=${{display:'flex', gap:'8px', alignItems:'baseline', minWidth:0}}>
+                <span style=${{fontSize:'11px', fontWeight:800, color:'var(--highlight)', whiteSpace:'nowrap'}}>${label(h)}</span>
+                <span style=${{fontWeight:700, fontSize:'13px', minWidth:0, overflowWrap:'anywhere'}}>${h.t}</span>
+                ${links[h.n] && html`<span style=${{fontSize:'10px', color:'var(--text-dim)'}}>(link trocado)</span>`}
+              </div>
+              <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+                <button type="button" onClick=${()=>setOpen(isOpen ? null : h.n)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>${isOpen ? '⏹ Fechar vídeo' : '▶ Ver vídeo'}</button>
+                <${ProjectButton} churchId=${churchId} media=${media} itemKey=${'hino-'+h.n} />
+                <a href=${media.url} target="_blank" rel="noopener" style=${{...btnGhost, textDecoration:'none', padding:'5px 9px', fontSize:'10.5px'}}>↗ YouTube</a>
+                <button type="button" onClick=${()=>setLinking(linking === h.n ? null : h.n)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>🔗 Trocar link</button>
+              </div>
+              ${linking === h.n && html`
+                <div style=${{display:'grid', gap:'6px'}}>
+                  <${ColetaneaLinkForm} onLink=${(id)=>{ setLinkFor(h.n, id); setLinking(null); }} onCancel=${()=>setLinking(null)} />
+                  ${links[h.n] && html`<button type="button" onClick=${()=>{ setLinkFor(h.n, null); setLinking(null); }} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px', justifySelf:'start'}}>↩ Voltar ao vídeo oficial</button>`}
+                </div>`}
+              ${isOpen && html`
+                <div style=${{position:'relative', width:'100%', aspectRatio:'16/9', borderRadius:'10px', overflow:'hidden', background:'#000'}}>
+                  <iframe key=${vid} src=${'https://www.youtube-nocookie.com/embed/'+vid+'?autoplay=1&rel=0&playsinline=1&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR'} title=${media.title} allow="autoplay; encrypted-media; fullscreen" allowfullscreen style=${{position:'absolute', inset:0, width:'100%', height:'100%', border:0}}></iframe>
+                </div>`}
+            </div>`;
+        })}
+      </div>
+      ${filtered.length > limit && html`<button type="button" onClick=${()=>setLimit(l=>l+40)} style=${{...btnGhost, justifySelf:'center', padding:'8px 16px', fontSize:'12px', fontWeight:700}}>Mostrar mais (${filtered.length - limit} restantes)</button>`}
+      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Vídeos oficiais com letra da Casa Publicadora Brasileira no YouTube. Se algum não for o que você quer, use "🔗 Trocar link" — fica salvo só nesta igreja.</div>
     </div>
   `;
 }
