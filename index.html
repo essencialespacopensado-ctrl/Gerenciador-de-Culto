@@ -93,7 +93,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<!-- leve (05/11): a biblioteca do PowerPoint (pptxgenjs, ~470 KB) só carrega quando for gerar um PowerPoint (Ferramentas) -->
 <script>
   // Configuração do banco de dados compartilhado (Firebase). Preencha com as chaves do seu
   // projeto Firebase (console.firebase.google.com) para que igrejas cadastradas e sugestões
@@ -138,11 +138,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-02.130';
+const APP_VERSION = '2026-11-05.131';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-05.131',
+    date: '05/11/2026',
+    items: [
+      "App abre mais rápido: a biblioteca de gerar PowerPoint (~470 KB) não é mais baixada toda vez que o app abre — só quando você usa \"Gerar PowerPoint\" em Ferramentas. Nada mudou no funcionamento.",
+    ]
+  },
   {
     version: '2026-11-02.130',
     date: '02/11/2026',
@@ -4704,6 +4711,12 @@ function PowerpointTool({ churchName }) {
     if (!title.trim()) { alert('Dê um título pra apresentação.'); return; }
     setStatus('Gerando...');
     try {
+      if (!window.PptxGenJS) await new Promise((resolve, reject) => {
+        const sc = document.createElement('script');
+        sc.src = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js';
+        sc.onload = () => resolve(); sc.onerror = () => reject(new Error('Falha ao carregar a biblioteca do PowerPoint (sem internet?)'));
+        document.head.appendChild(sc);
+      });
       const pptx = new window.PptxGenJS();
       const capa = pptx.addSlide();
       capa.background = { color: '1e293b' };
