@@ -140,17 +140,24 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.140';
+const APP_VERSION = '2026-11-06.141';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
   {
+    version: '2026-11-06.141',
+    date: '06/11/2026',
+    items: [
+      "Atenuador: agora você escolhe quantos dB ele abaixa (barra e campo \"Atenuar em … dB\", de 3 a 40; padrão −14 dB). Fica salvo neste aparelho e vale também quando acionado pelo celular.",
+    ]
+  },
+  {
     version: '2026-11-06.140',
     date: '06/11/2026',
     items: [
       "Busca rápida: ao digitar número ou nome de hino, aparece SÓ o hinário (nada de vídeos aleatórios). Cada hino tem botões Playback, Cifra e Partitura, buscando como \"novo hinário adventista <número> <nome>\" e mostrando só o que é daquele hino. A busca geral do YouTube só aparece quando o texto não é um hino. Ao achar o hino, Playback, Cifra e Partitura já vêm sozinhos, cada um com Operador / Projetor / Liturgia. A busca virou só um campo compacto (os resultados aparecem embaixo só quando você digita).",
-      "Novo botão 🎙️ Atenuador (embaixo dos faders, e no controle remoto do celular): segure na hora de falar e o som baixa; solte e volta suave (🔒 trava ligado; ⌨️ cadastra uma tecla de atalho: segurar = atenua, soltar = volta). Console de projeção: o botão Tela cheia foi trocado por Fade out — baixa o som aos poucos até zero e pausa (também no controle remoto do celular).",
+      "Novo botão 🎙️ Atenuador (embaixo dos faders, e no controle remoto do celular): segure na hora de falar e o som baixa — você escolhe quantos dB (padrão −14 dB); solte e volta suave (🔒 trava ligado; ⌨️ cadastra uma tecla de atalho: segurar = atenua, soltar = volta). Console de projeção: o botão Tela cheia foi trocado por Fade out — baixa o som aos poucos até zero e pausa (também no controle remoto do celular).",
     ]
   },
   {
@@ -7996,6 +8003,10 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
   const trkRef = useRef(tracks); trkRef.current = tracks;
   const [att, setAtt] = useState(false);
   const attRef = useRef({ k: 1, iv: null, on: false });
+  // Quantos dB o atenuador abaixa (escolhido pelo operador; fica salvo neste aparelho). Padrão: 14 dB (~20%).
+  const [attDb, setAttDb] = useState(() => { try { const v = Number(localStorage.getItem('gc_atten_db')); return v >= 1 && v <= 60 ? v : 14; } catch(e) { return 14; } });
+  const attDbRef = useRef(attDb); attDbRef.current = attDb;
+  const changeAttDb = (v) => { const n = Math.max(1, Math.min(60, Math.round(Number(v) || 14))); setAttDb(n); try { localStorage.setItem('gc_atten_db', String(n)); } catch(e) {} const s = attRef.current; if (s.on) { s.k = Math.pow(10, -n / 20); attLevel(s.k); } };
   const attLevel = (k) => {
     try { (trkRef.current || []).forEach((t, i) => { if (t && t.playing && alRef.current) alRef.current(i, t.volume * k); }); } catch(e) {}
     try { postToProjectionWindows({ gcType:'media_volume', value: Math.round(projectionAudio.volume * k) }); } catch(e) {}
@@ -8003,7 +8014,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
   const attSet = (on) => {
     const s = attRef.current; if (s.on === on) return; s.on = on; setAtt(on);
     if (s.iv) clearInterval(s.iv);
-    const target = on ? 0.2 : 1, step = on ? 0.16 : 0.08;
+    const target = on ? Math.pow(10, -(attDbRef.current || 14) / 20) : 1, step = on ? 0.16 : 0.08;
     s.iv = setInterval(() => {
       s.k = on ? Math.max(target, s.k - step) : Math.min(target, s.k + step);
       attLevel(s.k);
@@ -8042,6 +8053,11 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
       <button type="button" onClick=${()=>{ const n = !attLock; setAttLock(n); attSet(n); }} title="Travar o atenuador ligado / desligar" style=${{...btnGhost, padding:'0 14px', fontSize:'16px', borderRadius:'12px', borderColor: attLock ? '#ff5252' : undefined}}>${attLock ? '🔒' : '🔓'}</button>
       <button type="button" onClick=${()=>setAttRec(r=>!r)} title="Cadastrar uma tecla de atalho: segure para atenuar, solte para voltar" style=${{...btnGhost, padding:'0 12px', fontSize:'11px', fontWeight:800, borderRadius:'12px', borderColor: attRec ? 'var(--highlight)' : undefined}}>${attRec ? '⌨️ Aperte a tecla… (Esc cancela)' : '⌨️ Atalho: ' + keyLabel(attKey)}</button>
       ${attKey && !attRec && html`<button type="button" onClick=${()=>{ setAttKey(''); try { localStorage.removeItem('gc_atten_key'); } catch(_) {} }} title="Remover o atalho" style=${{...btnGhost, padding:'0 10px', fontSize:'12px', borderRadius:'12px'}}>✕</button>`}
+    </div>
+    <div style=${{display:'flex', alignItems:'center', gap:'10px', marginTop:'8px', fontSize:'12px', fontWeight:800}}>
+      <span style=${{whiteSpace:'nowrap'}}>Atenuar em</span>
+      <input type="range" aria-label="Quantos dB atenuar" min="3" max="40" step="1" value=${Math.min(40, attDb)} onInput=${e=>changeAttDb(e.target.value)} style=${{flex:1, minWidth:0}} />
+      <span style=${{display:'flex', alignItems:'center', gap:'4px'}}>−<input type="number" aria-label="dB do atenuador" min="1" max="60" value=${attDb} onChange=${e=>changeAttDb(e.target.value)} style=${{...inputStyle, width:'58px', padding:'5px 6px', fontSize:'12px', textAlign:'center'}} /> dB</span>
     </div>
     <button type="button" onClick=${()=>setShowDetails(v=>!v)} style=${{...btnGhost, width:'100%', marginTop:'10px', padding:'8px', fontSize:'11px', fontWeight:700}}>${showDetails ? '▲ Esconder' : '⚙️ Detalhes dos fundos'} (arquivo, busca no YouTube, link, nuvem)</button>
     <div style=${{display: showDetails ? 'block' : 'none', marginTop:'10px'}}>
