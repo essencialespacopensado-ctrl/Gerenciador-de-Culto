@@ -45,6 +45,7 @@
       radial-gradient(700px 400px at 0% 115%, var(--glow-4), transparent 60%);
     background-color: var(--bg-page); background-size: 42px 42px, 42px 42px, 200% 200%, 200% 200%, 200% 200%, 200% 200%; 
   }
+  @keyframes gcSearchGlow { 0%,100% { box-shadow: 0 0 22px -6px rgba(56,189,248,0.8), inset 0 0 16px -8px rgba(56,189,248,0.8); } 50% { box-shadow: 0 0 34px -2px rgba(139,92,246,0.95), inset 0 0 22px -6px rgba(139,92,246,0.9); } }
   @keyframes aurora { 0%,100%{background-position:0% 0%;} 50%{background-position:100% 60%;} }
   /* v.128: barra de rolagem bem visível (larga, com trilho e sempre aparente — também no celular). */
   @supports not selector(::-webkit-scrollbar) { * { scrollbar-width: auto; scrollbar-color: var(--accent-1) rgba(148,163,184,.25); } }
@@ -138,11 +139,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.137';
+const APP_VERSION = '2026-11-06.138';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.138',
+    date: '06/11/2026',
+    items: [
+      "Busca rápida agora fica no cabeçalho (sempre visível no topo, em todas as telas), grande e brilhando — não cobre mais nenhum botão.",
+    ]
+  },
   {
     version: '2026-11-06.137',
     date: '06/11/2026',
@@ -3372,6 +3380,7 @@ function ChurchHeader({ church, tab, setTab, onLogout, badges }) {
             ${!isMobile && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>${church.city}${church.state ? ' - '+church.state : ''} • ${clock}</div>`}
           </div>
         </div>
+        <button type="button" onClick=${()=>{ try { window.dispatchEvent(new Event('gc-open-search')); } catch(e) {} }} title="Busca rápida: hinário, músicas, cantores, playbacks e letras" aria-label="Busca rápida" style=${{order: isMobile ? 3 : 0, flex: isMobile ? '1 1 100%' : '1 1 280px', maxWidth: isMobile ? 'none' : '420px', height: isMobile ? '44px' : '46px', padding:'0 18px', borderRadius:'999px', border:'1.5px solid rgba(56,189,248,0.85)', cursor:'pointer', display:'flex', alignItems:'center', gap:'12px', fontSize:'14px', fontWeight:800, color:'#fff', background:'linear-gradient(90deg, rgba(14,165,233,0.35), rgba(139,92,246,0.35))', boxShadow:'0 0 26px -4px rgba(56,189,248,0.95), inset 0 0 18px -6px rgba(56,189,248,0.9)', animation:'gcSearchGlow 2.4s ease-in-out infinite'}}><span style=${{fontSize:'20px'}}>🔎</span><span style=${{flex:1, textAlign:'left', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>Busca rápida — hino, música, cantor…</span><span style=${{fontSize:'10.5px', fontWeight:800, padding:'3px 9px', borderRadius:'999px', background:'rgba(2,6,23,0.55)'}}>1–600</span></button>
         <div style=${{display:'flex', alignItems:'center', gap:'8px'}}>
           ${isMobile && html`
             <button onClick=${()=>setNavOpen(o=>!o)} style=${{...btnGhost, display:'flex', alignItems:'center', gap:'6px', fontSize:'11px'}}>
@@ -9643,6 +9652,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     return () => { window.removeEventListener('keydown', onKey); clearTimeout(tm); };
   }, [open]);
   useEffect(() => { setLimit(8); }, [q]);
+  useEffect(() => { const on = () => setOpen(true); window.addEventListener('gc-open-search', on); return () => window.removeEventListener('gc-open-search', on); }, []);
 
   const nq = hinoNormalize(q).trim();
   const hymns = useMemo(() => nq ? NHA_HYMNS.filter(h => String(h.num) === nq || h.n === nq || hinoNormalize(h.t).includes(nq)) : [], [nq]);
@@ -9725,7 +9735,6 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   const secTitle = (txt) => html`<div style=${{fontSize:'10.5px', fontWeight:900, letterSpacing:'1.4px', textTransform:'uppercase', color:'var(--highlight)', padding:'4px 2px 0'}}>${txt}</div>`;
 
   return html`
-    <button type="button" onClick=${()=>setOpen(true)} title="Busca rápida: hinário, músicas, cantores, playbacks e letras" aria-label="Busca rápida" style=${{position:'fixed', ...(isMobile ? { bottom:'calc(14px + env(safe-area-inset-bottom,0px))', left:'50%', transform:'translateX(-50%)' } : { top:'10px', right:'72px' }), zIndex:152, height:'40px', width: isMobile ? '150px' : '210px', padding:'0 16px', borderRadius:'999px', border:'1px solid rgba(56,189,248,0.55)', cursor:'pointer', display:'flex', alignItems:'center', gap:'10px', fontSize:'13px', fontWeight:700, color:'var(--text-mid)', background:'rgba(2,6,23,0.78)', backdropFilter:'blur(10px)', WebkitBackdropFilter:'blur(10px)', boxShadow:'0 0 22px -6px rgba(56,189,248,0.8), inset 0 0 14px -8px rgba(56,189,248,0.9)'}}><span style=${{fontSize:'16px'}}>🔎</span><span style=${{whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${isMobile ? 'Busca rápida' : 'Buscar hino, música…'}</span></button>
     ${open && html`
       <div style=${{position:'fixed', inset:0, zIndex:230, background:'rgba(2,6,23,0.80)', backdropFilter:'blur(6px)', WebkitBackdropFilter:'blur(6px)', display:'flex', alignItems:'flex-start', justifyContent:'center', padding: isMobile ? '8px' : '14px 24px'}} onClick=${(e)=>{ if (e.target === e.currentTarget) setOpen(false); }}>
         <div style=${{width:'100%', maxWidth:'780px', maxHeight:'100%', display:'flex', flexDirection:'column', gap:'12px', background:'linear-gradient(160deg, rgba(8,18,40,0.97), rgba(10,8,32,0.97))', border:'1px solid rgba(56,189,248,0.45)', borderRadius:'22px', padding:'14px', boxShadow:'0 0 60px -12px rgba(56,189,248,0.55), 0 30px 70px -20px rgba(0,0,0,0.9)'}}>
