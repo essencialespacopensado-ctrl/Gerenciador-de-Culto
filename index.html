@@ -140,11 +140,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.139';
+const APP_VERSION = '2026-11-06.140';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.140',
+    date: '06/11/2026',
+    items: [
+      "Busca rápida: ao digitar número ou nome de hino, aparece SÓ o hinário (nada de vídeos aleatórios). Cada hino tem botões Playback, Cifra e Partitura, buscando como \"novo hinário adventista <número> <nome>\" e mostrando só o que é daquele hino. A busca geral do YouTube só aparece quando o texto não é um hino. Ao achar o hino, Playback, Cifra e Partitura já vêm sozinhos, cada um com Operador / Projetor / Liturgia. A busca virou só um campo compacto (os resultados aparecem embaixo só quando você digita).",
+      "Novo botão 🎙️ Atenuador (embaixo dos faders, e no controle remoto do celular): segure na hora de falar e o som baixa; solte e volta suave (🔒 trava ligado; ⌨️ cadastra uma tecla de atalho: segurar = atenua, soltar = volta). Console de projeção: o botão Tela cheia foi trocado por Fade out — baixa o som aos poucos até zero e pausa (também no controle remoto do celular).",
+    ]
+  },
   {
     version: '2026-11-06.139',
     date: '06/11/2026',
@@ -4881,6 +4889,18 @@ function projectionShellHtml(openerActive) {
         + 'if(ytPlayer){try{ytPlayer.playVideo();}catch(e){}}'
         + 'gcYtCmd("playVideo");'
       + '}'
+      + 'function fadeOutNow(){'
+        + 'if(fading)return;fading=true;gcUserPaused=true;'
+        + 'var isLocal=!!localVideoEl;var v0=100;'
+        + 'if(isLocal){try{v0=Math.round(localVideoEl.volume*100);}catch(e){}}else if(ytPlayer){try{v0=ytPlayer.getVolume();}catch(e){}}else{v0=projVol;}'
+        + 'var steps=20,n=0;var iv=setInterval(function(){'
+          + 'n++;var v=Math.max(0,Math.round(v0*(1-n/steps)));'
+          + 'if(isLocal){try{localVideoEl.volume=v/100;}catch(e){}}else if(ytPlayer){try{ytPlayer.setVolume(v);}catch(e){}}else{gcYtCmd("setVolume",[v]);}'
+          + 'if(n>=steps){clearInterval(iv);'
+            + 'if(isLocal){try{localVideoEl.pause();localVideoEl.volume=v0/100;}catch(e){}}else{if(ytPlayer){try{ytPlayer.pauseVideo();ytPlayer.setVolume(v0);}catch(e){}}gcYtCmd("pauseVideo");gcYtCmd("setVolume",[v0]);}'
+            + 'fading=false;}'
+        + '},100);'
+      + '}'
       + 'function pauseMedia(){'
         + 'gcUserPaused=true;'
         + 'if(localVideoEl){localVideoEl.pause();return;}'
@@ -4994,6 +5014,7 @@ function projectionShellHtml(openerActive) {
         + 'else if(d.gcType==="overlay_limpar")clearOverlayText();'
         + 'else if(d.gcType==="media_play")playMedia();'
         + 'else if(d.gcType==="media_pause")pauseMedia();'
+        + 'else if(d.gcType==="media_fadeout")fadeOutNow();'
         + 'else if(d.gcType==="prep"){gcPrepHint();}'
         + 'else if(d.gcType==="blank"){renderBlank();gcNotify({gcEvt:"state",s:-1});}'
         + 'else if(d.gcType==="close_self"){try{window.close();}catch(e){}}'
@@ -5150,6 +5171,12 @@ function playAllScreens(churchId) {
   Object.keys(projectionWindows).forEach(sig => {
     const win = projectionWindows[sig];
     try { if (win && !win.closed) win.postMessage({ gcType:'media_play' }, '*'); } catch(e) {}
+  });
+}
+function fadeOutAllScreens(churchId) {
+  Object.keys(projectionWindows).forEach(sig => {
+    const win = projectionWindows[sig];
+    try { if (win && !win.closed) win.postMessage({ gcType:'media_fadeout' }, '*'); } catch(e) {}
   });
 }
 function pauseAllScreens(churchId) {
@@ -7963,11 +7990,58 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
     <button type="button" onClick=${()=>togglePlay(i)} title="Tocar / pausar este fundo" style=${{width:'30px', height:'24px', borderRadius:'5px', border:'1px solid var(--border-soft)', background:'rgba(0,0,0,0.4)', color:'var(--text-hi)', fontSize:'11px', cursor:'pointer', padding:0}}>${tracks[i].playing ? '⏸' : '▶'}</button>
   `;
 
+  // Atenuador (como o botão do Zara Radio): segura na hora de falar → música/vídeo baixam pra ~20%; solta → voltam suaves.
+  // Não mexe nos volumes salvos: só abaixa "ao vivo" e devolve o valor configurado.
+  const alRef = useRef(null); alRef.current = applyLiveVolume;
+  const trkRef = useRef(tracks); trkRef.current = tracks;
+  const [att, setAtt] = useState(false);
+  const attRef = useRef({ k: 1, iv: null, on: false });
+  const attLevel = (k) => {
+    try { (trkRef.current || []).forEach((t, i) => { if (t && t.playing && alRef.current) alRef.current(i, t.volume * k); }); } catch(e) {}
+    try { postToProjectionWindows({ gcType:'media_volume', value: Math.round(projectionAudio.volume * k) }); } catch(e) {}
+  };
+  const attSet = (on) => {
+    const s = attRef.current; if (s.on === on) return; s.on = on; setAtt(on);
+    if (s.iv) clearInterval(s.iv);
+    const target = on ? 0.2 : 1, step = on ? 0.16 : 0.08;
+    s.iv = setInterval(() => {
+      s.k = on ? Math.max(target, s.k - step) : Math.min(target, s.k + step);
+      attLevel(s.k);
+      if (s.k === target) { clearInterval(s.iv); s.iv = null; }
+    }, 40);
+  };
+  useEffect(() => { window.__gcAtten = attSet; return () => { try { delete window.__gcAtten; } catch(e) {} }; }, []);
+  const [attLock, setAttLock] = useState(false);
+  const attHold = (on) => { if (attLock) return; attSet(on); };
+  // Atalho de teclado (cadastrável): segurar a tecla = atenuar; soltar = volta. Fica salvo neste aparelho.
+  const [attKey, setAttKey] = useState(() => { try { return localStorage.getItem('gc_atten_key') || ''; } catch(e) { return ''; } });
+  const [attRec, setAttRec] = useState(false);
+  const attKeyRef = useRef(attKey); attKeyRef.current = attKey;
+  const attLockRef = useRef(false); attLockRef.current = attLock;
+  const keyLabel = (c) => !c ? 'nenhum' : c.replace(/^Key/, '').replace(/^Digit/, '').replace('Space', 'Espaço').replace('Control', 'Ctrl').replace('ArrowUp','↑').replace('ArrowDown','↓').replace('ArrowLeft','←').replace('ArrowRight','→');
+  useEffect(() => {
+    const typing = (e) => { const el = e.target; return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable); };
+    const dn = (e) => {
+      if (attRec) { e.preventDefault(); if (e.code === 'Escape') { setAttRec(false); return; } try { localStorage.setItem('gc_atten_key', e.code); } catch(_) {} setAttKey(e.code); setAttRec(false); return; }
+      if (!attKeyRef.current || e.code !== attKeyRef.current || typing(e) || attLockRef.current) return;
+      e.preventDefault(); if (!e.repeat) attSet(true);
+    };
+    const up = (e) => { if (attRec || !attKeyRef.current || e.code !== attKeyRef.current || attLockRef.current) return; attSet(false); };
+    window.addEventListener('keydown', dn, true); window.addEventListener('keyup', up, true);
+    return () => { window.removeEventListener('keydown', dn, true); window.removeEventListener('keyup', up, true); };
+  }, [attRec]);
+
   return html`
     ${topSlot}
     <div style=${{display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:'6px', marginTop:'10px'}}>
       ${tracks.map((t,i) => stripCol('f'+i, t.name, levels[i] || 0, t.volume, (v)=>setVolume(i, v), !!t.muted, ()=>updateTrack(i,{muted:!t.muted}), playBtn(i), 'var(--highlight)'))}
       ${stripCol('proj', 'Projetor', levels[3] || 0, projectionAudio.volume, (v)=>setProjectionVolume(v), projectionAudio.muted, ()=>setProjectionMuted(!projectionAudio.muted), '', '#00b3ff')}
+    </div>
+    <div style=${{display:'flex', gap:'6px', marginTop:'10px'}}>
+      <button type="button" aria-label="Atenuador" title="Segure na hora de falar: o som baixa; solte e ele volta" onPointerDown=${(e)=>{ try { e.currentTarget.setPointerCapture(e.pointerId); } catch(_) {} attHold(true); }} onPointerUp=${()=>attHold(false)} onPointerCancel=${()=>attHold(false)} onContextMenu=${(e)=>e.preventDefault()} style=${{flex:1, padding:'14px 10px', borderRadius:'12px', border:'1.5px solid ' + (att ? '#ff5252' : 'rgba(255,171,64,0.8)'), background: att ? 'linear-gradient(90deg,#ff5252,#ff9100)' : 'linear-gradient(90deg, rgba(255,145,0,0.25), rgba(255,82,82,0.25))', color:'#fff', fontWeight:900, fontSize:'13px', letterSpacing:'0.08em', textTransform:'uppercase', cursor:'pointer', touchAction:'none', userSelect:'none', boxShadow: att ? '0 0 22px -2px rgba(255,82,82,0.9)' : 'none'}}>🎙️ ${att ? 'Atenuando… (solte p/ voltar)' : 'Atenuador — segure p/ falar'}</button>
+      <button type="button" onClick=${()=>{ const n = !attLock; setAttLock(n); attSet(n); }} title="Travar o atenuador ligado / desligar" style=${{...btnGhost, padding:'0 14px', fontSize:'16px', borderRadius:'12px', borderColor: attLock ? '#ff5252' : undefined}}>${attLock ? '🔒' : '🔓'}</button>
+      <button type="button" onClick=${()=>setAttRec(r=>!r)} title="Cadastrar uma tecla de atalho: segure para atenuar, solte para voltar" style=${{...btnGhost, padding:'0 12px', fontSize:'11px', fontWeight:800, borderRadius:'12px', borderColor: attRec ? 'var(--highlight)' : undefined}}>${attRec ? '⌨️ Aperte a tecla… (Esc cancela)' : '⌨️ Atalho: ' + keyLabel(attKey)}</button>
+      ${attKey && !attRec && html`<button type="button" onClick=${()=>{ setAttKey(''); try { localStorage.removeItem('gc_atten_key'); } catch(_) {} }} title="Remover o atalho" style=${{...btnGhost, padding:'0 10px', fontSize:'12px', borderRadius:'12px'}}>✕</button>`}
     </div>
     <button type="button" onClick=${()=>setShowDetails(v=>!v)} style=${{...btnGhost, width:'100%', marginTop:'10px', padding:'8px', fontSize:'11px', fontWeight:700}}>${showDetails ? '▲ Esconder' : '⚙️ Detalhes dos fundos'} (arquivo, busca no YouTube, link, nuvem)</button>
     <div style=${{display: showDetails ? 'block' : 'none', marginTop:'10px'}}>
@@ -8090,7 +8164,7 @@ function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCur
   };
   const play = () => playAllScreens(churchId);
   const pause = () => pauseAllScreens(churchId);
-  const telaCheia = () => retryFullscreenAllScreens(churchId);
+  const fadeOut = () => fadeOutAllScreens(churchId);
   const fechar = () => { setProjectionFrozen(false); closeAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); };
   const fundo = () => sendBackgroundToAllScreens(churchId, church);
   const congelar = () => setProjectionFrozen(!isProjectionFrozen());
@@ -8105,7 +8179,7 @@ function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCur
       <div style=${{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'6px'}}>
         ${btn('▶️', 'Play', 'Retomar o vídeo/música nas telas de projeção', play)}
         ${btn('⏸️', 'Pause', 'Pausar o vídeo/música nas telas de projeção', pause)}
-        ${btn('⛶', 'Tela cheia', 'Pedir tela cheia nas telas de projeção', telaCheia)}
+        ${btn('🔉', 'Fade out', 'Baixar o som aos poucos até zero e pausar (nas telas de projeção)', fadeOut)}
         ${btn('🖼️', 'Fundo', 'Projetar a imagem de plano de fundo cadastrada em Configurações', fundo)}
         ${btn('❄️', frozen ? 'Descongelar' : 'Congelar', frozen ? 'Descongelar — a tela volta a mostrar o que está passando' : 'Congelar — a tela segura a imagem atual até descongelar', congelar, frozen ? {background:'#00e5ff', color:'#001418', borderColor:'#00e5ff'} : {})}
         ${btn('✖️', 'Fechar', 'Fechar de vez as janelas de projeção', fechar, {color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 45%, transparent)'})}
@@ -8199,6 +8273,8 @@ function remoteExecute(churchId, church, cmd, onErr) {
     case 'play': playAllScreens(churchId); return '';
     case 'pause': pauseAllScreens(churchId); return '';
     case 'fullscreen': retryFullscreenAllScreens(churchId); return '';
+    case 'fadeout': fadeOutAllScreens(churchId); return '';
+    case 'atten': try { window.__gcAtten && window.__gcAtten(!!a.on); } catch(e) {} return '';
     case 'background': return sendBackgroundToAllScreens(churchId, church, true, onErr) || '';
     case 'freeze': setProjectionFrozen(!isProjectionFrozen()); return '';
     case 'reload': setTimeout(() => { try { gcForceUpdateApp(); } catch (e) { window.location.reload(); } }, 400); return '';
@@ -8562,9 +8638,10 @@ function RemoteControl({ churchId, church }) {
                 </div>`}
                 ${st && st.err && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>⚠️ ${st.err}</div>`}
                 <div style=${{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'6px'}}>
-                  ${rbtn('▶️','Play','play')}${rbtn('⏸️','Pause','pause')}${rbtn('⛶','Tela cheia','fullscreen')}
+                  ${rbtn('▶️','Play','play')}${rbtn('⏸️','Pause','pause')}${rbtn('🔉','Fade out','fadeout')}
                   ${rbtn('🖼️','Fundo','background')}${rbtn('❄️', st && st.frozen ? 'Descongelar' : 'Congelar','freeze')}${rbtn('✖️','Fechar','close',{color:'var(--danger)'})}
                 </div>
+                <button type="button" onPointerDown=${(e)=>{ try { e.currentTarget.setPointerCapture(e.pointerId); } catch(_) {} send('atten', { on:true }); }} onPointerUp=${()=>send('atten', { on:false })} onPointerCancel=${()=>send('atten', { on:false })} onContextMenu=${(e)=>e.preventDefault()} style=${{padding:'16px 10px', borderRadius:'12px', border:'1.5px solid rgba(255,171,64,0.8)', background:'linear-gradient(90deg, rgba(255,145,0,0.25), rgba(255,82,82,0.25))', color:'#fff', fontWeight:900, fontSize:'13px', letterSpacing:'0.08em', textTransform:'uppercase', touchAction:'none', userSelect:'none'}}>🎙️ Atenuador — segure p/ falar</button>
                 <${PhoneTools} send=${send} />
                 ${st ? html`
                   ${fader('pvol','PROJETOR (vídeo na tela)', st.pvol, v=>slide('pvol','pvol',{},v), v=>slideEnd('pvol','pvol',{},v), st.pmuted, ()=>send('pmute'))}
@@ -9669,8 +9746,42 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   const hymns = useMemo(() => nq ? NHA_HYMNS.filter(h => String(h.num) === nq || h.n === nq || hinoNormalize(h.t).includes(nq)) : [], [nq]);
   const libHits = nq ? lib.filter(x => hinoNormalize(x.title + ' ' + (x.singer || '') + ' ' + x.cat).includes(nq)) : [];
   const inLib = (vid) => lib.some(x => x.videoId === vid);
+  // v.140: se o texto bate com um hino do hinário, NUNCA faz busca geral (só o hinário: vídeo, playback, cifra, partitura).
+  const [hv, setHv] = useState({});   // { 'n|kind': { loading, list, err } }
+  const HKINDS = [
+    { k:'hino', l:'📖 Hino', suf:'', need:[] },
+    { k:'playback', l:'🎹 Playback', suf:' playback instrumental', need:['playback','instrumental','karaok','base'] },
+    { k:'cifra', l:'🎸 Cifra', suf:' cifra', need:['cifra','acordes','violao','cavaco','tablatura'] },
+    { k:'partitura', l:'📄 Partitura', suf:' partitura', need:['partitura','sheet','score','pdf','pauta'] },
+  ];
+  const hvRef = useRef({}); hvRef.current = hv;
+  const loadHymnKind = async (h, kind, auto) => {
+    const key = h.n + '|' + kind.k;
+    const cur = hvRef.current[key];
+    if (cur && (cur.list || cur.loading)) { if (!auto) setHv(m => ({ ...m, [key]: undefined })); return; } // 2º toque fecha
+    setHv(m => ({ ...m, [key]: { loading: true } }));
+    const list = await searchYoutubeServer('novo hinário adventista ' + h.num + ' ' + h.t + kind.suf);
+    if (!list) { setHv(m => ({ ...m, [key]: { err: 'Não consegui buscar agora. Tente de novo.' } })); return; }
+    const tn = hinoNormalize(h.t);
+    const good = list.filter(v => {
+      const n = hinoNormalize(v.title + ' ' + (v.channel || ''));
+      const isHymnal = /hinari|hino|iasd|adventista|nha\b/.test(n);
+      const isThis = n.includes(tn) || new RegExp('(^|[^0-9])' + h.num + '([^0-9]|$)').test(n);
+      const isKind = kind.need.length === 0 || kind.need.some(w => n.includes(w));
+      return isHymnal && isThis && isKind;
+    }).slice(0, 6);
+    setHv(m => ({ ...m, [key]: { list: good } }));
+  };
+  useEffect(() => { setYt(null); setErr(''); }, [q]);
+  // Digitou um hino (até 3 resultados): já traz Playback, Cifra e Partitura, cada um com Operador / Projetor / Liturgia.
+  useEffect(() => {
+    if (!nq || hymns.length === 0 || hymns.length > 3) return;
+    const tm = setTimeout(() => { hymns.forEach(h => HKINDS.filter(k => k.k !== 'hino').forEach(k => loadHymnKind(h, k, true))); }, 600);
+    return () => clearTimeout(tm);
+  }, [nq]);
   const doYoutube = async () => {
     const s = q.trim(); if (!s) return;
+    if (hymns.length > 0) return;
     setLoading(true); setErr(''); setYt(null); setYtQ(s);
     const list = await searchYoutubeServer(s);
     setLoading(false);
@@ -9713,6 +9824,19 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
             ? html`<button type="button" onClick=${()=>{ if (confirm('Tirar da sua biblioteca?')) commitLib(l => l.filter(x => x.id !== o.libId)); }} style=${btn}>🗑</button>`
             : (o.yt && !inLib(o.vid) ? html`<button type="button" onClick=${()=>saveToLib(o.yt)} title="Salvar na minha biblioteca" style=${btn}>⭐</button>` : (o.yt ? html`<span style=${{fontSize:'11px', color:'var(--text-dim)'}}>⭐ salva</span>` : ''))}
         </div>
+        ${o.hymnN && (() => { const hh = NHA_HYMNS.find(x => x.n === o.hymnN); return hh && html`
+          <div style=${{display:'grid', gap:'8px'}}>
+            <div style=${{display:'flex', gap:'6px', flexWrap:'wrap'}}>
+              ${HKINDS.filter(kd => kd.k !== 'hino').map(kd => { const st = hv[hh.n + '|' + kd.k]; return html`<button key=${kd.k} type="button" onClick=${()=>loadHymnKind(hh, kd)} style=${{...btn, borderColor: st && st.list ? 'var(--accent-1)' : undefined}}>${st && st.loading ? '⏳ ' : ''}${kd.l}</button>`; })}
+            </div>
+            ${HKINDS.filter(kd => kd.k !== 'hino').map(kd => { const st = hv[hh.n + '|' + kd.k]; if (!st) return null; return html`
+              <div key=${kd.k} style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'8px'}}>
+                ${st.loading && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Buscando ${kd.l.slice(3).toLowerCase()} do hino ${hh.num}…</div>`}
+                ${st.err && html`<div style=${{fontSize:'11.5px', color:'var(--danger)'}}>${st.err}</div>`}
+                ${st.list && st.list.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Não achei ${kd.l.slice(3).toLowerCase()} deste hino no YouTube (só mostro o que é do hinário).</div>`}
+                ${st.list && st.list.map(v => row({ key:'hv-' + hh.n + kd.k + v.videoId, vid:v.videoId, title:v.title, sub:kd.l.slice(3) + ' • ' + [v.channel, v.duration].filter(Boolean).join(' • '), thumb:v.thumbnail, remoteKey:'hino-' + hh.n + '-' + kd.k + '-' + v.videoId }))}
+              </div>`; })}
+          </div>`; })()}
         ${isLit && html`
           <div style=${{display:'grid', gap:'8px', padding:'10px', borderRadius:'12px', background:'rgba(2,6,23,0.45)', border:'1px solid var(--border-soft)'}}>
             ${lit.done
@@ -9748,23 +9872,23 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   return html`
     ${open && slot && ReactDOM.createPortal(html`
       <div style=${{width:'100%', minWidth:0}}>
-        <div style=${{width:'100%', maxWidth:'none', maxHeight:'min(68vh, 640px)', display:'flex', flexDirection:'column', gap:'12px', background:'linear-gradient(160deg, rgba(8,18,40,0.97), rgba(10,8,32,0.97))', border:'1px solid rgba(56,189,248,0.45)', borderRadius:'22px', padding:'14px', boxShadow:'0 0 60px -12px rgba(56,189,248,0.55), 0 30px 70px -20px rgba(0,0,0,0.9)'}}>
+        <div style=${{width:'100%', maxWidth:'none', display:'flex', flexDirection:'column', gap:'8px', ...(nq ? {maxHeight:'min(56vh, 520px)', background:'rgba(8,18,40,0.97)', border:'1px solid rgba(56,189,248,0.4)', borderRadius:'16px', padding:'10px'} : {})}}>
           <form onSubmit=${(e)=>{ e.preventDefault(); doYoutube(); }} style=${{display:'flex', gap:'8px', alignItems:'center'}}>
             <input ref=${inputRef} value=${q} onChange=${e=>setQ(e.target.value)} placeholder="Digite o nº do hino, música, cantor, playback ou letra…" style=${{...inputStyle, flex:1, minWidth:0, fontSize:'15px', padding:'13px 16px', borderRadius:'14px', border:'1px solid rgba(56,189,248,0.6)', boxShadow:'0 0 20px -8px rgba(56,189,248,0.9)'}} />
             <button type="button" onClick=${()=>setOpen(false)} title="Fechar (Esc)" style=${{...btnGhost, padding:'12px 14px', fontSize:'14px'}}>✕</button>
           </form>
-          <div style=${{overflowY:'auto', minHeight:0, display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'10px', alignContent:'start', paddingRight:'2px'}}>
-            ${!nq && html`<div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.6, padding:'8px 4px'}}>Comece a digitar: os <b>hinos 1–600</b> aparecem na hora. Para músicas, cantores, playbacks e letras, digite e toque <b>Enter</b> (busca no YouTube). Cada resultado tem <b>Operador / Projetor / telas</b>, e <b>Enviar para a Liturgia</b> (antes ou depois de uma atividade).</div>`}
+          ${nq && html`<div style=${{overflowY:'auto', minHeight:0, display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'10px', alignContent:'start', paddingRight:'2px'}}>
+            
             ${nq && hymns.length > 0 && secTitle('📖 Hinário Adventista · ' + hymns.length)}
             ${hymns.slice(0, limit).map(h => { const vid = links[h.n] || h.videoId; return row({ key:'h-'+h.n, vid, title: label(h) + ' — ' + h.t, sub: links[h.n] ? 'link trocado' : 'Vídeo oficial com letra', badge: String(h.num), hymnN: h.n, remoteKey: 'hino-' + h.n }); })}
             ${hymns.length > limit && html`<button type="button" onClick=${()=>setLimit(l=>l+12)} style=${{...btnGhost, justifySelf:'center', padding:'8px 16px', fontSize:'12px'}}>Mostrar mais (${hymns.length - limit})</button>`}
             ${libHits.length > 0 && secTitle('⭐ Minha biblioteca · ' + libHits.length)}
             ${libHits.map(x => row({ key:'l-'+x.id, vid:x.videoId, title:x.title, sub:'👤 ' + (x.singer || x.channel || '—') + ' • ' + x.cat, libId:x.id, remoteKey:'busca-' + x.videoId }))}
-            ${nq && html`<button type="button" onClick=${doYoutube} style=${{...btnPrimary, width:'100%', padding:'11px', fontSize:'13px'}}>${loading ? 'Buscando…' : '🔎 Buscar “' + q.trim() + '” no YouTube (músicas, cantores, playbacks, letras)'}</button>`}
+            ${nq && hymns.length === 0 && html`<button type="button" onClick=${doYoutube} style=${{...btnPrimary, width:'100%', padding:'11px', fontSize:'13px'}}>${loading ? 'Buscando…' : '🔎 Buscar “' + q.trim() + '” no YouTube (músicas, cantores, playbacks, letras)'}</button>`}
             ${err && html`<div style=${{fontSize:'12px', color:'var(--danger)'}}>${err}</div>`}
             ${yt && secTitle('▶ YouTube · ' + yt.length + ' resultado(s) para “' + ytQ + '”')}
             ${yt && yt.map(r => row({ key:'y-'+r.videoId, vid:r.videoId, title:r.title, sub:[r.channel, r.duration, r.published].filter(Boolean).join(' • '), thumb:r.thumbnail, yt:r, remoteKey:'busca-' + r.videoId }))}
-          </div>
+          </div>`}
         </div>
       </div>`, slot)}
   `;
