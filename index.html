@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.142';
+const APP_VERSION = '2026-11-06.143';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.143',
+    date: '06/11/2026',
+    items: [
+      "O ✖ Fechar do console (e do celular) agora só para e tira o vídeo/imagem — a janela de projeção continua aberta, pra o som não travar de novo. Pra fechar a janela de verdade, use \"Encerrar em Todas as Telas\".",
+    ]
+  },
   {
     version: '2026-11-06.142',
     date: '06/11/2026',
@@ -5160,6 +5167,16 @@ async function sendToScreenObj(scr, kind, payload, opts) {
 // apertar "Fechar", tem que fechar a aba completamente, não só apagar o conteúdo. Manda um aviso pra
 // janela se fechar sozinha (isso NUNCA é bloqueado pelo navegador, mesmo que a referência aqui do
 // lado do operador esteja "velha") e, por garantia, também tenta fechar direto pela referência.
+// v.143: o ✖ "Fechar" do console só tira o vídeo/imagem (deixa a tela preta) e NÃO fecha a janela de projeção —
+// assim o som não trava de novo quando a janela precisa ser reaberta. Pra fechar mesmo: "Encerrar em Todas as Telas".
+function stopAllProjectionScreens() {
+  Object.keys(projectionWindows).forEach(sig => {
+    const win = projectionWindows[sig];
+    try { if (win && !win.closed) { win.postMessage({ gcType:'overlay_limpar' }, '*'); win.postMessage({ gcType:'blank' }, '*'); } } catch(e) {}
+  });
+  projectionFrozen = false;
+  frozenPendingBySig = {};
+}
 function closeAllProjectionScreens() {
   Object.keys(projectionWindows).forEach(sig => {
     const win = projectionWindows[sig];
@@ -8194,7 +8211,7 @@ function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCur
   const play = () => playAllScreens(churchId);
   const pause = () => pauseAllScreens(churchId);
   const fadeOut = () => fadeOutAllScreens(churchId);
-  const fechar = () => { setProjectionFrozen(false); closeAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); };
+  const fechar = () => { setProjectionFrozen(false); stopAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); };
   const fundo = () => sendBackgroundToAllScreens(churchId, church);
   const congelar = () => setProjectionFrozen(!isProjectionFrozen());
   const btn = (icon, label, title, onClick, extra) => html`
@@ -8211,7 +8228,7 @@ function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCur
         ${btn('🔉', 'Fade out', 'Baixar o som aos poucos até zero e pausar (nas telas de projeção)', fadeOut)}
         ${btn('🖼️', 'Fundo', 'Projetar a imagem de plano de fundo cadastrada em Configurações', fundo)}
         ${btn('❄️', frozen ? 'Descongelar' : 'Congelar', frozen ? 'Descongelar — a tela volta a mostrar o que está passando' : 'Congelar — a tela segura a imagem atual até descongelar', congelar, frozen ? {background:'#00e5ff', color:'#001418', borderColor:'#00e5ff'} : {})}
-        ${btn('✖️', 'Fechar', 'Fechar de vez as janelas de projeção', fechar, {color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 45%, transparent)'})}
+        ${btn('✖️', 'Fechar', 'Parar e tirar o vídeo/imagem das telas (a janela de projeção continua aberta)', fechar, {color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 45%, transparent)'})}
       </div>
       ${items.length > 0 && html`
         <button type="button" onClick=${proximo} disabled=${!hasNext} class="gc-console-btn" style=${{flexDirection:'row', opacity: hasNext ? 1 : 0.4}}>⏭️ <span style=${{fontSize:'10.5px', fontWeight:800}}>Próximo item da Mensagem (${Math.min(mensagemCurrent, items.length-1)+1}/${items.length})</span></button>
@@ -8307,7 +8324,7 @@ function remoteExecute(churchId, church, cmd, onErr) {
     case 'background': return sendBackgroundToAllScreens(churchId, church, true, onErr) || '';
     case 'freeze': setProjectionFrozen(!isProjectionFrozen()); return '';
     case 'reload': setTimeout(() => { try { gcForceUpdateApp(); } catch (e) { window.location.reload(); } }, 400); return '';
-    case 'close': Object.keys(gcBlockedQueue).forEach(k => delete gcBlockedQueue[k]); setProjectionFrozen(false); closeAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); return '';
+    case 'close': Object.keys(gcBlockedQueue).forEach(k => delete gcBlockedQueue[k]); setProjectionFrozen(false); stopAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); return '';
     case 'pvol': setProjectionVolume(a.value); return '';
     case 'pmute': setProjectionMuted(!projectionAudio.muted); return '';
     case 'bg': window.dispatchEvent(new CustomEvent('gc-remote-bg', { detail: a })); return '';
