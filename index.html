@@ -45,6 +45,7 @@
       radial-gradient(700px 400px at 0% 115%, var(--glow-4), transparent 60%);
     background-color: var(--bg-page); background-size: 42px 42px, 42px 42px, 200% 200%, 200% 200%, 200% 200%, 200% 200%; 
   }
+  .gc-search-slot:empty { display:none; }
   @keyframes gcSearchGlow { 0%,100% { box-shadow: 0 0 22px -6px rgba(56,189,248,0.8), inset 0 0 16px -8px rgba(56,189,248,0.8); } 50% { box-shadow: 0 0 34px -2px rgba(139,92,246,0.95), inset 0 0 22px -6px rgba(139,92,246,0.9); } }
   @keyframes aurora { 0%,100%{background-position:0% 0%;} 50%{background-position:100% 60%;} }
   /* v.128: barra de rolagem bem visível (larga, com trilho e sempre aparente — também no celular). */
@@ -139,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.138';
+const APP_VERSION = '2026-11-06.139';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.139',
+    date: '06/11/2026',
+    items: [
+      "Busca rápida abre aqui mesmo, dentro do cabeçalho, sem tela escurecida por cima e sem trocar de aba.",
+    ]
+  },
   {
     version: '2026-11-06.138',
     date: '06/11/2026',
@@ -3395,6 +3403,7 @@ function ChurchHeader({ church, tab, setTab, onLogout, badges }) {
           <button onClick=${onLogout} style=${{...btnGhost, padding: isMobile ? '7px 10px' : undefined, fontSize: isMobile ? '11px' : undefined}}>Sair</button>
         </div>
       </div>
+      <div id="gc-search-slot" class="gc-search-slot"></div>
       ${showNav && html`
       <div style=${{display:'flex', flexWrap:'wrap', gap:'16px 22px'}}>
         ${NAV_GROUPS.map(g => html`
@@ -9652,7 +9661,9 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     return () => { window.removeEventListener('keydown', onKey); clearTimeout(tm); };
   }, [open]);
   useEffect(() => { setLimit(8); }, [q]);
-  useEffect(() => { const on = () => setOpen(true); window.addEventListener('gc-open-search', on); return () => window.removeEventListener('gc-open-search', on); }, []);
+  const [slot, setSlot] = useState(null);
+  useEffect(() => { setSlot(document.getElementById('gc-search-slot')); }, [open]);
+  useEffect(() => { const on = () => setOpen(o => !o); window.addEventListener('gc-open-search', on); return () => window.removeEventListener('gc-open-search', on); }, []);
 
   const nq = hinoNormalize(q).trim();
   const hymns = useMemo(() => nq ? NHA_HYMNS.filter(h => String(h.num) === nq || h.n === nq || hinoNormalize(h.t).includes(nq)) : [], [nq]);
@@ -9735,9 +9746,9 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   const secTitle = (txt) => html`<div style=${{fontSize:'10.5px', fontWeight:900, letterSpacing:'1.4px', textTransform:'uppercase', color:'var(--highlight)', padding:'4px 2px 0'}}>${txt}</div>`;
 
   return html`
-    ${open && html`
-      <div style=${{position:'fixed', inset:0, zIndex:230, background:'rgba(2,6,23,0.80)', backdropFilter:'blur(6px)', WebkitBackdropFilter:'blur(6px)', display:'flex', alignItems:'flex-start', justifyContent:'center', padding: isMobile ? '8px' : '14px 24px'}} onClick=${(e)=>{ if (e.target === e.currentTarget) setOpen(false); }}>
-        <div style=${{width:'100%', maxWidth:'780px', maxHeight:'100%', display:'flex', flexDirection:'column', gap:'12px', background:'linear-gradient(160deg, rgba(8,18,40,0.97), rgba(10,8,32,0.97))', border:'1px solid rgba(56,189,248,0.45)', borderRadius:'22px', padding:'14px', boxShadow:'0 0 60px -12px rgba(56,189,248,0.55), 0 30px 70px -20px rgba(0,0,0,0.9)'}}>
+    ${open && slot && ReactDOM.createPortal(html`
+      <div style=${{width:'100%', minWidth:0}}>
+        <div style=${{width:'100%', maxWidth:'none', maxHeight:'min(68vh, 640px)', display:'flex', flexDirection:'column', gap:'12px', background:'linear-gradient(160deg, rgba(8,18,40,0.97), rgba(10,8,32,0.97))', border:'1px solid rgba(56,189,248,0.45)', borderRadius:'22px', padding:'14px', boxShadow:'0 0 60px -12px rgba(56,189,248,0.55), 0 30px 70px -20px rgba(0,0,0,0.9)'}}>
           <form onSubmit=${(e)=>{ e.preventDefault(); doYoutube(); }} style=${{display:'flex', gap:'8px', alignItems:'center'}}>
             <input ref=${inputRef} value=${q} onChange=${e=>setQ(e.target.value)} placeholder="Digite o nº do hino, música, cantor, playback ou letra…" style=${{...inputStyle, flex:1, minWidth:0, fontSize:'15px', padding:'13px 16px', borderRadius:'14px', border:'1px solid rgba(56,189,248,0.6)', boxShadow:'0 0 20px -8px rgba(56,189,248,0.9)'}} />
             <button type="button" onClick=${()=>setOpen(false)} title="Fechar (Esc)" style=${{...btnGhost, padding:'12px 14px', fontSize:'14px'}}>✕</button>
@@ -9755,7 +9766,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
             ${yt && yt.map(r => row({ key:'y-'+r.videoId, vid:r.videoId, title:r.title, sub:[r.channel, r.duration, r.published].filter(Boolean).join(' • '), thumb:r.thumbnail, yt:r, remoteKey:'busca-' + r.videoId }))}
           </div>
         </div>
-      </div>`}
+      </div>`, slot)}
   `;
 }
 
