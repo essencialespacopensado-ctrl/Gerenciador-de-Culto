@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.144';
+const APP_VERSION = '2026-11-06.145';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.145',
+    date: '06/11/2026',
+    items: [
+      "Busca rápida: agora são 3 campos lado a lado (📖 Novo Hinário, 📜 Hinário antigo, 💿 Coletâneas e CD Jovem) — sem botão pra escolher, é só digitar no campo certo. Cada campo mostra só o que bate com o que você digitou (tolera erro de português) e, em Novo Hinário e Coletâneas, só canais oficiais (Casa Publicadora Brasileira, Igreja Adventista, Ministério Jovem, Gravadora Novo Tempo).",
+    ]
+  },
   {
     version: '2026-11-06.144',
     date: '06/11/2026',
@@ -9791,6 +9798,16 @@ function saveSongLib(churchId, list) { try { localStorage.setItem(songLibKey(chu
 // v.144: canais OFICIAIS (conferidos no YouTube: verificados / selo da gravadora). Fora disso = não oficial.
 const OFFICIAL_CH_RE = /casa publicadora|^cpb\b|cpb - topic|igreja adventista do s[eé]timo dia - topic|minist[eé]rio jovem|feliz ?7 ?play|gravadora ?nt|novo tom|r[aá]dio novo tempo|adoradores novo tempo|bel7 ?play|novo tempo/i;
 const isOfficialCh = (ch) => OFFICIAL_CH_RE.test(String(ch || ''));
+// v.145: relevância estrita — todas as palavras digitadas precisam aparecer no título (tolera 1 letra errada em palavras de 5+ letras e acentos).
+function gcEdit1(a, b) { if (a === b) return true; if (Math.abs(a.length - b.length) > 1) return false; let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1) || (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2)); return a.length > b.length ? a.slice(i + 1) === b.slice(i) : b.slice(i + 1) === a.slice(i); }
+function gcMatchAll(typed, text) {
+  const stop = new Set(['de','do','da','dos','das','o','a','os','as','e','no','na','em','um','uma']);
+  const toks = hinoNormalize(typed).split(/\s+/).filter(w => w && !stop.has(w));
+  if (!toks.length) return true;
+  const words = hinoNormalize(text).split(/[^a-z0-9]+/).filter(Boolean);
+  const joined = ' ' + words.join(' ') + ' ';
+  return toks.every(w => /^\d+$/.test(w) ? words.includes(w) : (joined.includes(w) || (w.length >= 5 && words.some(x => gcEdit1(w, x)))));
+}
 function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   const isMobile = useIsMobile();
   const docId = church && (church.fbDocId || church.docId);
@@ -9800,8 +9817,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   // v.144: 3 buscas — Novo Hinário (2022), Hinário antigo, Coletâneas & CD Jovem. "Só oficiais" ligado por padrão.
   const [mode, setModeRaw] = useState('novo');
   const modeTexts = useRef({ novo: '', antigo: '', colet: '' });
-  const [onlyOff, setOnlyOff] = useState(() => { try { return localStorage.getItem('gc_busca_so_oficial') !== '0'; } catch(e) { return true; } });
-  const setMode = (m) => { modeTexts.current[mode] = q; setModeRaw(m); setQ(modeTexts.current[m] || ''); setYt(null); setErr(''); try { inputRef.current && inputRef.current.focus(); } catch(e) {} };
+  const typeIn = (m, v) => { if (m !== mode) { setModeRaw(m); setYt(null); setErr(''); } setQ(v); };
   const [yt, setYt] = useState(null);          // resultados do YouTube da última busca
   const [ytQ, setYtQ] = useState('');
   const [loading, setLoading] = useState(false);
@@ -9867,7 +9883,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   useEffect(() => { const on = () => setOpen(o => !o); window.addEventListener('gc-open-search', on); return () => window.removeEventListener('gc-open-search', on); }, []);
 
   const nq = hinoNormalize(q).trim();
-  const hymns = useMemo(() => (nq && mode === 'novo') ? NHA_HYMNS.filter(h => String(h.num) === nq || h.n === nq || hinoNormalize(h.t).includes(nq)) : [], [nq, mode]);
+  const hymns = useMemo(() => (nq && mode === 'novo') ? NHA_HYMNS.filter(h => String(h.num) === nq || h.n === nq || hinoNormalize(h.t).includes(nq) || (!/^\d+$/.test(nq) && gcMatchAll(nq, h.t))) : [], [nq, mode]);
   const libHits = nq ? lib.filter(x => hinoNormalize(x.title + ' ' + (x.singer || '') + ' ' + x.cat).includes(nq)) : [];
   const inLib = (vid) => lib.some(x => x.videoId === vid);
   // v.140: se o texto bate com um hino do hinário, NUNCA faz busca geral (só o hinário: vídeo, playback, cifra, partitura).
@@ -9892,7 +9908,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
       const isHymnal = /hinari|hino|iasd|adventista|nha\b/.test(n);
       const isThis = n.includes(tn) || new RegExp('(^|[^0-9])' + h.num + '([^0-9]|$)').test(n);
       const isKind = kind.need.length === 0 || kind.need.some(w => n.includes(w));
-      return isHymnal && isThis && isKind && !/\bhin[aá]rio adventista\s*\d/i.test(v.title) && (!onlyOff || isOfficialCh(v.channel));
+      return isHymnal && isThis && isKind && !/\bhin[aá]rio adventista\s*\d/i.test(v.title) && isOfficialCh(v.channel);
     }).slice(0, 6);
     setHv(m => ({ ...m, [key]: { list: good } }));
   };
@@ -9919,9 +9935,11 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     lists.forEach(l => (l || []).forEach(v => { if (!seen.has(v.videoId)) { seen.add(v.videoId); all.push(v); } }));
     all = all.filter(v => {
       const n = hinoNormalize(v.title);
-      if (mode === 'antigo') { if (/novo hin/.test(n)) return false; if (!/hinario|hino/.test(n)) return false; }
-      if (mode === 'novo') { if (!/(hinario|hino)/.test(n)) return false; if (/\bhinario adventista\s*\d/.test(n) && !/novo/.test(n)) return false; }
-      return !onlyOff || isOfficialCh(v.channel);
+      if (!gcMatchAll(s, v.title + (mode === 'colet' ? ' ' + (v.channel || '') : ''))) return false;
+      if (mode === 'antigo') return !/novo hin/.test(n) && /hinario|hino/.test(n);
+      if (mode === 'colet' && /hinario adventista|\bhino \d/.test(n)) return false; // coletâneas/CD Jovem não misturam com hinário
+      if (mode === 'novo' && !/(hinario|hino)/.test(n)) return false;
+      return isOfficialCh(v.channel);
     });
     setYt(all);
   };
@@ -9930,7 +9948,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     if (mode === 'novo' || nq.length < 2) return;
     const tm = setTimeout(() => { doYoutube(); }, 700);
     return () => clearTimeout(tm);
-  }, [nq, mode, onlyOff]);
+  }, [nq, mode]);
   const saveToLib = (r) => {
     const singer = (window.prompt('Cantor / grupo (opcional):', r.channel || '') || '').trim();
     const cat = (window.prompt('Tipo: Solo, Dueto, Trio, Quarteto, Grupo, Playback, Letra ou Outros', 'Solo') || 'Outros').trim();
@@ -10017,13 +10035,11 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
       <div style=${{width:'100%', minWidth:0}}>
         <div style=${{width:'100%', maxWidth:'none', display:'flex', flexDirection:'column', gap:'8px', ...(nq ? {maxHeight:'min(56vh, 520px)', background:'rgba(8,18,40,0.97)', border:'1px solid rgba(56,189,248,0.4)', borderRadius:'16px', padding:'10px'} : {})}}>
           <form onSubmit=${(e)=>{ e.preventDefault(); doYoutube(); }} style=${{display:'flex', gap:'8px', alignItems:'center'}}>
-            <input ref=${inputRef} value=${q} onChange=${e=>setQ(e.target.value)} placeholder=${mode === 'novo' ? 'Novo Hinário (1–600): digite o nº ou o nome do hino…' : mode === 'antigo' ? 'Hinário antigo: digite o nº ou o nome do hino…' : 'Coletâneas e CD Jovem: digite música, cantor ou álbum…'} style=${{...inputStyle, flex:1, minWidth:0, fontSize:'15px', padding:'13px 16px', borderRadius:'14px', border:'1px solid rgba(56,189,248,0.6)', boxShadow:'0 0 20px -8px rgba(56,189,248,0.9)'}} />
+            <div style=${{flex:1, minWidth:0, display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(210px, 1fr))', gap:'8px'}}>
+              ${[['novo','📖 Novo Hinário — nº ou nome'],['antigo','📜 Hinário antigo — nº ou nome'],['colet','💿 Coletâneas e CD Jovem']].map(([k, ph], i) => html`<input key=${k} ref=${i === 0 ? inputRef : null} aria-label=${ph} value=${mode === k ? q : ''} onChange=${e=>typeIn(k, e.target.value)} onFocus=${()=>{ if (mode !== k) { setModeRaw(k); setQ(''); setYt(null); setErr(''); } }} placeholder=${ph} style=${{...inputStyle, minWidth:0, fontSize:'14px', padding:'12px 14px', borderRadius:'14px', border:'1px solid ' + (mode === k && q ? 'var(--highlight)' : 'rgba(56,189,248,0.5)'), boxShadow: mode === k && q ? '0 0 20px -8px rgba(56,189,248,0.9)' : 'none'}} />`)}
+            </div>
             <button type="button" onClick=${()=>setOpen(false)} title="Fechar (Esc)" style=${{...btnGhost, padding:'12px 14px', fontSize:'14px'}}>✕</button>
           </form>
-          <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
-            ${[['novo','📖 Novo Hinário'],['antigo','📜 Hinário antigo'],['colet','💿 Coletâneas e CD Jovem']].map(([k, l]) => html`<button key=${k} type="button" onClick=${()=>setMode(k)} style=${{padding:'6px 12px', borderRadius:'999px', fontSize:'11.5px', fontWeight:800, cursor:'pointer', border:'1px solid ' + (mode === k ? 'var(--highlight)' : 'var(--border-soft)'), background: mode === k ? 'linear-gradient(90deg, rgba(14,165,233,0.35), rgba(139,92,246,0.35))' : 'transparent', color:'var(--text-hi)'}}>${l}</button>`)}
-            <label style=${{display:'flex', alignItems:'center', gap:'5px', fontSize:'11px', fontWeight:700, marginLeft:'auto', cursor:'pointer'}} title="Mostra só vídeos de canais oficiais (Casa Publicadora Brasileira, Igreja Adventista, Ministério Jovem, Novo Tempo…)"><input type="checkbox" checked=${onlyOff} onChange=${e=>{ setOnlyOff(e.target.checked); try { localStorage.setItem('gc_busca_so_oficial', e.target.checked ? '1' : '0'); } catch(_) {} }} /> Só oficiais</label>
-          </div>
           ${nq && html`<div style=${{overflowY:'auto', minHeight:0, display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'10px', alignContent:'start', paddingRight:'2px'}}>
             
             ${nq && hymns.length > 0 && secTitle('📖 Hinário Adventista · ' + hymns.length)}
@@ -10034,7 +10050,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
             ${nq && mode === 'novo' && hymns.length === 0 && html`<button type="button" onClick=${doYoutube} style=${{...btnPrimary, width:'100%', padding:'11px', fontSize:'13px'}}>${loading ? 'Buscando…' : '🔎 Buscar “' + q.trim() + '” no YouTube (músicas, cantores, playbacks, letras)'}</button>`}
             ${err && html`<div style=${{fontSize:'12px', color:'var(--danger)'}}>${err}</div>`}
             ${loading && mode !== 'novo' && html`<div style=${{fontSize:'12px', color:'var(--text-dim)'}}>Buscando…</div>`}
-            ${yt && yt.length === 0 && html`<div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.5}}>Não achei nada ${onlyOff ? 'de canal oficial ' : ''}para “${ytQ}”.${onlyOff ? ' Se quiser ver também os não oficiais, desmarque “Só oficiais”.' : ''}</div>`}
+            ${yt && yt.length === 0 && html`<div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.5}}>Não achei nada ${mode === 'antigo' ? '' : 'oficial '}para “${ytQ}”.</div>`}
             ${yt && yt.length > 0 && secTitle('▶ ' + (mode === 'antigo' ? 'Hinário antigo' : mode === 'colet' ? 'Coletâneas e CD Jovem' : 'YouTube') + ' · ' + yt.length + ' resultado(s) para “' + ytQ + '”')}
             ${yt && yt.map(r => row({ key:'y-'+r.videoId, vid:r.videoId, title:r.title, sub:[r.channel, r.duration, r.published].filter(Boolean).join(' • '), thumb:r.thumbnail, yt:r, remoteKey:'busca-' + r.videoId }))}
           </div>`}
