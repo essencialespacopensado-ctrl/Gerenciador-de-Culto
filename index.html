@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.141';
+const APP_VERSION = '2026-11-06.142';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.142',
+    date: '06/11/2026',
+    items: [
+      "O plano de fundo agora aparece só no PROJETOR — as outras telas (operador, retorno) não recebem mais o fundo. Se você definir uma rota para \"fundo\" em Telas, ela continua valendo.",
+    ]
+  },
   {
     version: '2026-11-06.141',
     date: '06/11/2026',
@@ -4678,6 +4685,12 @@ function applyRoute(churchId, routeKey, targets) {
   if (ok.length === 0 && targets.length > 0) routeBlockedNotice(churchId, routeKey, targets[0]);
   return ok;
 }
+// v.142: o plano de fundo aparece só no PROJETOR (a menos que haja uma rota de conteúdo "fundo" definida em Telas).
+function fundoScreens(churchId, enabled) {
+  if (Array.isArray(loadRoutes(churchId)['fundo'])) return applyRoute(churchId, 'fundo', enabled);
+  const pj = enabled.filter(s => s.isProjector);
+  return pj.length > 0 ? pj : enabled;
+}
 function pickTargetScreens(churchId, itemKey, enabled, routeKey) {
   const rk = routeKey || routeKeyOfItem(itemKey);
   const routed = routeScreens(churchId, rk, enabled);
@@ -5167,7 +5180,7 @@ function sendBackgroundToAllScreens(churchId, church, quiet, onErr) {
   if (!url) return fail('Nenhuma imagem de plano de fundo cadastrada ainda. Cadastre em Configurações > Dados da Igreja.');
   const enabled = loadEnabledScreens(churchId);
   if (!enabled.length) return fail('Nenhuma tela de projeção habilitada. Habilite em Telas.');
-  applyRoute(churchId, 'fundo', enabled).forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet }).then(err => { if (err && onErr) onErr(err); }); } catch(e) {} });
+  fundoScreens(churchId, enabled).forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet }).then(err => { if (err && onErr) onErr(err); }); } catch(e) {} });
   return '';
 }
 
@@ -8438,7 +8451,7 @@ function StartupProjection({ churchId, church }) {
         const enabled = loadEnabledScreens(churchId);
         if (!enabled.length) return;
         const url = gcGetBackground(church) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-        applyRoute(churchId, 'fundo', enabled).forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet: true, prep: true }); } catch (e) {} });
+        fundoScreens(churchId, enabled).forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet: true, prep: true }); } catch (e) {} });
       } catch (e) {}
     }, 2500);
     return () => clearTimeout(t);
@@ -8503,7 +8516,7 @@ function RemoteControl({ churchId, church }) {
     if (!enabled.length) { alert('Nenhuma tela habilitada. Habilite na aba Telas.'); return; }
     const url = gcGetBackground(churchRef.current) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
     window.__gcSoundBlocked = false;
-    applyRoute(churchId, 'fundo', enabled).forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }); } catch (e) {} });
+    fundoScreens(churchId, enabled).forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }); } catch (e) {} });
   };
   const releaseMain = () => { setLocal(false); if (docId && isMain) w({ remoteMain: null }); };
   const switchTo = (id) => { const c = computers[id]; if (c) w({ remoteMain: { id, name: c.name, ts: Date.now() } }); };
