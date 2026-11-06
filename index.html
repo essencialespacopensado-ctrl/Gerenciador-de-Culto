@@ -138,11 +138,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.135';
+const APP_VERSION = '2026-11-06.136';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.136',
+    date: '06/11/2026',
+    items: [
+      "Assistente de Liturgia, Acrescentar Atividade, Restaurar Padrão e Tornar Padrão saíram da aba Liturgia e ficam só em Gestão › Programação da Liturgia (com o seletor de dia). Liturgia de Sábado agora mostra Escola Sabatina de um lado e Culto Divino do outro, em colunas coloridas e mais compactas.",
+    ]
+  },
   {
     version: '2026-11-06.135',
     date: '06/11/2026',
@@ -3834,7 +3841,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
   }
 
   return html`
-    <div class="glass fade-up" style=${{padding:'14px 16px', borderRadius:'16px', display:'grid', gap:'8px', animationDelay:(idx*0.04)+'s', opacity: act.done ? 0.55 : 1, border: act.fixed ? '1px solid var(--highlight)' : '1px solid transparent'}}>
+    <div class="glass fade-up" style=${{padding:'10px 12px', borderRadius:'14px', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'6px', animationDelay:(idx*0.04)+'s', opacity: act.done ? 0.55 : 1, border: act.fixed ? '1px solid var(--highlight)' : '1px solid transparent'}}>
       <div style=${{display:'flex', alignItems:'center', gap:'12px'}}>
         <button onClick=${()=>onToggle(act.id)} style=${{width:'26px',height:'26px',borderRadius:'50%',border:'2px solid '+(act.done?'var(--success-1)':'var(--text-dim)'),background: act.done ? 'var(--success-1)' : 'transparent', flexShrink:0, display:'flex',alignItems:'center',justifyContent:'center',color:'#022c22',fontSize:'13px',fontWeight:900}}>${act.done ? '✓' : ''}</button>
         <div style=${{width:'34px',height:'34px',borderRadius:'10px',background:'rgba(99,102,241,0.14)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'16px',flexShrink:0}}>${CATEGORY_ICON[act.category] || '📌'}</div>
@@ -3848,8 +3855,8 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
         <button onClick=${()=>!act.fixed && onDelete(act.id)} disabled=${act.fixed} style=${{background:'transparent', border:'none', color: act.fixed ? 'var(--border-soft)' : 'var(--text-dim)', fontSize:'16px', padding:'4px 8px', borderRadius:'8px', cursor: act.fixed ? 'not-allowed' : 'pointer'}} title=${act.fixed ? 'Trancada — destranque (🔒) pra remover' : 'Remover'}>✕</button>
       </div>
       ${(needsMedia || (media && media.title)) && html`
-        <div style=${{marginLeft: isMobile ? '0' : '46px', display:'flex', flexDirection: isMobile ? 'column' : 'row', gap:'8px', alignItems: isMobile ? 'stretch' : 'flex-start'}}>
-          <div style=${{flex:1, minWidth:0}}>
+        <div style=${{marginLeft: isMobile ? '0' : '46px', display:'flex', flexDirection: isMobile ? 'column' : 'row', flexWrap: isMobile ? 'nowrap' : 'wrap', gap:'8px', alignItems: isMobile ? 'stretch' : 'flex-start'}}>
+          <div style=${{flex: isMobile ? 1 : '1 1 240px', minWidth:0}}>
             ${act.fixed
               ? html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>${media && media.title ? '🎬 '+media.title : '🔒 trancado'}</div>`
               : act.weeklyFixed
@@ -8952,7 +8959,7 @@ function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch,
   `;
 }
 
-function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemItems, mensagemCurrent, setMensagemCurrent }) {
+function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemItems, mensagemCurrent, setMensagemCurrent, toolsOnly }) {
   // Liturgia (programação do sábado) — antes só ficava salva no armazenamento local do navegador,
   // então "sumia" pra quem abria em outro computador/celular ou depois de limpar os dados do
   // navegador (esse era o bug relatado: "estou cadastrando... mas não estão ficando salvas").
@@ -9376,8 +9383,30 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
 
   const totalDone = activities.filter(a=>a.done).length;
 
+  // v.135: Assistente, Acrescentar Atividade, Restaurar Padrão e Tornar Padrão saíram da aba Liturgia e ficam só em Gestão › Programação da Liturgia.
+  if (toolsOnly) {
+    return html`
+      <div style=${{display:'grid', gap:'4px'}}>
+        <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'10px'}}>
+          ${LITURGIA_DAYS.map((d,i) => html`<${TabTile} key=${d.key} text=${d.label} idx=${i} delay=${i} active=${day===d.key} onClick=${()=>setDay(d.key)} />`)}
+        </div>
+        <div style=${{fontSize:'11.5px', color:'var(--text-dim)', marginBottom:'8px'}}>Programação de ${dayDef.label} — ${activities.length} atividade(s). O que você fizer aqui aparece na aba Liturgia.</div>
+      <button onClick=${()=>setAssistantOpen(true)} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1.5px dashed var(--accent-1)', color:'var(--accent-1)', fontWeight:700}}>🤖 Assistente de Liturgia (colar texto)</button>
+      <button onClick=${()=>setAdding(v=>!v)} style=${{...btnGhost, width:'100%', border:'1.5px dashed var(--border-soft)', padding:'12px', marginBottom:'8px'}}>➕ Acrescentar Atividade</button>
+      <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'8px'}}>
+        <button onClick=${resetToDefault} style=${{...btnGhost, padding:'12px'}}>🔄 Restaurar Padrão</button>
+        <button onClick=${doMakeDefault} style=${{...btnGhost, padding:'12px'}}>💾${savedDefault && savedDefault.password ? '🔒' : ''} Tornar Padrão</button>
+      </div>
+      <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginBottom:'8px'}}>"Tornar Padrão" salva a liturgia de agora como o novo modelo. "Restaurar Padrão" volta tudo (menos o trancado 🔒) pro último modelo salvo. Pra apagar a senha ou ver versões antigas, vá em Gestão > 🔒 Liturgia Padrão.</div>
+      ${makeDefaultGate && html`<${DefaultLiturgyPasswordGate} hasPassword=${!!(savedDefault && savedDefault.password)} onUnlock=${makeCurrentDefault} onClose=${()=>setMakeDefaultGate(false)} />`}
+      ${adding && html`<${AddActivityForm} defaultSection=${sections[0]} activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracks} sectionLabels=${sectionLabels} />`}
+      ${assistantOpen && html`<${LiturgyAssistantModal} onImportAll=${importFromAssistant} onClose=${()=>setAssistantOpen(false)} defaultSection=${sections[0]} sectionLabels=${sectionLabels} />`}
+      </div>
+    `;
+  }
+
   return html`
-    <div style=${{maxWidth:'760px', margin:'0 auto', padding:'20px 16px 60px'}}>
+    <div style=${{maxWidth: isSabado ? '1240px' : '760px', margin:'0 auto', padding:'20px 16px 60px'}}>
       <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'14px'}}>
         ${LITURGIA_DAYS.map((d,i) => html`<${TabTile} key=${d.key} text=${d.label} idx=${i} delay=${i} active=${day===d.key} onClick=${()=>setDay(d.key)} />`)}
       </div>
@@ -9398,33 +9427,30 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       </button>
       ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
 
-      <button onClick=${()=>setAssistantOpen(true)} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1.5px dashed var(--accent-1)', color:'var(--accent-1)', fontWeight:700}}>🤖 Assistente de Liturgia (colar texto)</button>
-      <button onClick=${()=>setAdding(v=>!v)} style=${{...btnGhost, width:'100%', border:'1.5px dashed var(--border-soft)', padding:'12px', marginBottom:'8px'}}>➕ Acrescentar Atividade</button>
-      <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'8px'}}>
-        <button onClick=${resetToDefault} style=${{...btnGhost, padding:'12px'}}>🔄 Restaurar Padrão</button>
-        <button onClick=${doMakeDefault} style=${{...btnGhost, padding:'12px'}}>💾${savedDefault && savedDefault.password ? '🔒' : ''} Tornar Padrão</button>
-      </div>
-      <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginBottom:'8px'}}>"Tornar Padrão" salva a liturgia de agora como o novo modelo. "Restaurar Padrão" volta tudo (menos o trancado 🔒) pro último modelo salvo. Pra apagar a senha ou ver versões antigas, vá em Gestão > 🔒 Liturgia Padrão.</div>
-      ${makeDefaultGate && html`<${DefaultLiturgyPasswordGate} hasPassword=${!!(savedDefault && savedDefault.password)} onUnlock=${makeCurrentDefault} onClose=${()=>setMakeDefaultGate(false)} />`}
       <button onClick=${openFinalize} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1px solid var(--success-1)', color:'var(--success-1)'}}>✅ Finalizar Culto</button>
       <button onClick=${zerarProgramacao} style=${{...btnGhost, width:'100%', marginBottom:'16px', padding:'12px', border:'1px solid var(--danger)', color:'var(--danger)'}}>🧹 Zerar Programação (volta exatamente pro Padrão)</button>
 
       ${finalizeOpen && finalizeSummary && html`<${FinalizeCultoModal} summary=${finalizeSummary} onConfirm=${confirmFinalize} onClose=${()=>setFinalizeOpen(false)} />`}
-      ${adding && html`<${AddActivityForm} defaultSection=${sections[0]} activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracks} sectionLabels=${sectionLabels} />`}
-      ${assistantOpen && html`<${LiturgyAssistantModal} onImportAll=${importFromAssistant} onClose=${()=>setAssistantOpen(false)} defaultSection=${sections[0]} sectionLabels=${sectionLabels} />`}
 
-      ${sections.map(sec => {
+      <div style=${{display:'grid', gridTemplateColumns: isSabado ? 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))' : 'minmax(0,1fr)', gap:'14px', alignItems:'start'}}>
+      ${sections.map((sec, si) => {
         const items = activities.filter(a => a.section === sec);
+        const doneN = items.filter(a => a.done).length;
+        const accent = si === 0 ? ['#0ea5e9', '#2563eb'] : ['#a855f7', '#7c3aed'];
         return html`
-          <div key=${sec} style=${{marginBottom:'26px'}}>
-            <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 10px 4px'}}>${sectionLabels[sec]}</h3>
-            <div style=${{display:'grid', gap:'8px'}}>
+          <div key=${sec} style=${{minWidth:0, borderRadius:'18px', border:'1px solid ' + accent[0] + '55', background:'linear-gradient(180deg, ' + accent[0] + '12, transparent 140px)', padding:'10px'}}>
+            <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px', padding:'8px 12px', borderRadius:'12px', marginBottom:'10px', background:'linear-gradient(90deg,' + accent[0] + ',' + accent[1] + ')', color:'#fff', boxShadow:'0 6px 18px -8px ' + accent[0]}}>
+              <h3 style=${{fontSize:'13px', fontWeight:900, textTransform:'uppercase', letterSpacing:'0.06em', margin:0}}>${sec === 'escola_sabatina' ? '📖 ' : (sec === 'culto_divino' ? '⛪ ' : '📋 ')}${sectionLabels[sec]}</h3>
+              <span style=${{fontSize:'11px', fontWeight:800, background:'rgba(0,0,0,0.25)', borderRadius:'999px', padding:'2px 10px'}}>${doneN}/${items.length}</span>
+            </div>
+            <div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'6px'}}>
               ${items.length === 0 && html`<div style=${{color:'var(--text-dim)', fontSize:'12.5px', padding:'8px 4px'}}>Nenhuma atividade cadastrada ainda.</div>`}
               ${items.map((a,i) => html`<${ActivityCard} key=${a.id} act=${a} idx=${i} onToggle=${toggle} onDelete=${remove} onEdit=${edit} onToggleFix=${toggleFix} onToggleWeekly=${toggleWeekly} onReorder=${moveActivity} siblings=${items} fixedTracks=${fixedTracks} churchId=${churchId} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />`)}
             </div>
           </div>
         `;
       })}
+      </div>
     </div>
   `;
 }
@@ -10568,7 +10594,7 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
     resetQuickAdd();
   };
 
-  const SECTIONS = [['sonoplastia','🎚️ Sonoplastia'],['louvor','🎤 Louvor'],['midia','🎬 Mídia'],['anuncios','📣 Anúncios'],['editar','✏️ Editar Equipes'],['config','⚙️ Equipes & Funções'],['padrao','🔒 Liturgia Padrão'],['trilhas','🎬 Trilhas Fixas'],['lembretes','🔔 Lembretes Automáticos']];
+  const SECTIONS = [['sonoplastia','🎚️ Sonoplastia'],['louvor','🎤 Louvor'],['midia','🎬 Mídia'],['anuncios','📣 Anúncios'],['editar','✏️ Editar Equipes'],['config','⚙️ Equipes & Funções'],['programacao','📋 Programação da Liturgia'],['padrao','🔒 Liturgia Padrão'],['trilhas','🎬 Trilhas Fixas'],['lembretes','🔔 Lembretes Automáticos']];
   const [editTeamKey, setEditTeamKey] = useState(null);
   const activeLouvorIdx = teams.louvorTeams.findIndex(lt => lt.id === activeLouvorId);
   const activeLouvorTeam = activeLouvorIdx >= 0 ? teams.louvorTeams[activeLouvorIdx] : null;
@@ -10729,6 +10755,8 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
           </div>
         </div>
       `}
+
+      ${section === 'programacao' && html`<${LiturgiaView} key="lit-tools" toolsOnly=${true} churchId=${churchId} churchName=${churchName} church=${church} onUpdateChurch=${onUpdateChurch} />`}
 
       ${section === 'padrao' && html`
         <div style=${{display:'grid', gap:'12px'}}>
