@@ -140,11 +140,20 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.143';
+const APP_VERSION = '2026-11-06.144';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.144',
+    date: '06/11/2026',
+    items: [
+      "Programação protegida: se a gravação na nuvem falhar (sem internet, instabilidade), o app passa a valer a versão deste aparelho (a nuvem velha não sobrescreve mais) e reenvia sozinho. Também guarda as últimas 15 versões de cada dia, com botão ↩ Recuperar em Gestão › Programação da Liturgia.",
+      "Busca rápida agora tem 3 buscas: 📖 Novo Hinário (1–600), 📜 Hinário antigo e 💿 Coletâneas e CD Jovem. Vem marcado \"Só oficiais\" (canais como Casa Publicadora Brasileira, Igreja Adventista, Ministério Jovem, Gravadora Novo Tempo); dá pra desmarcar.",
+      "Fade out: ao terminar de baixar o som, o vídeo fecha sozinho (tela preta), sem fechar a janela de projeção. Agora você define o tempo do fade (1 a 15 s, padrão 2 s) embaixo dos faders; vale também pelo celular.",
+    ]
+  },
   {
     version: '2026-11-06.143',
     date: '06/11/2026',
@@ -3200,6 +3209,27 @@ function saveActivities(churchId, list, day) {
   try { localStorage.setItem(activitiesKey(churchId, day), JSON.stringify(list)); } catch(e) {}
 }
 
+// v.144: proteção da programação. (1) Se a gravação na nuvem falhar (sem internet, instabilidade), o dia fica marcado como
+// "pendente" e a versão DESTE aparelho passa a valer — a nuvem velha nunca sobrescreve; o app reenvia sozinho. (2) Guarda as
+// últimas versões de cada dia neste aparelho, com botão pra recuperar (Gestão › Programação da Liturgia).
+function actDirtyKey(churchId, day) { return 'gc_actdirty_' + churchId + '_' + (day || 'sabado'); }
+function actIsDirty(churchId, day) { try { return !!localStorage.getItem(actDirtyKey(churchId, day)); } catch(e) { return false; } }
+function actSetDirty(churchId, day, on) { try { if (on) localStorage.setItem(actDirtyKey(churchId, day), String(Date.now())); else localStorage.removeItem(actDirtyKey(churchId, day)); } catch(e) {} }
+function actHistKey(churchId, day) { return 'gc_acthist_' + churchId + '_' + (day || 'sabado'); }
+function actHistLoad(churchId, day) { try { const v = JSON.parse(localStorage.getItem(actHistKey(churchId, day)) || '[]'); return Array.isArray(v) ? v : []; } catch(e) { return []; } }
+function actHistPush(churchId, day, list) {
+  try {
+    if (!Array.isArray(list) || list.length === 0) return;
+    const h = actHistLoad(churchId, day); const js = JSON.stringify(list);
+    if (h.length && JSON.stringify(h[0].list) === js) return;
+    const now = Date.now();
+    if (h.length && now - new Date(h[0].at).getTime() < 90000) h[0] = { at: new Date().toISOString(), list }; // edições seguidas viram uma versão só
+    else h.unshift({ at: new Date().toISOString(), list });
+    let keep = h.slice(0, 15);
+    try { localStorage.setItem(actHistKey(churchId, day), JSON.stringify(keep)); }
+    catch(e) { keep = keep.slice(0, 4); try { localStorage.setItem(actHistKey(churchId, day), JSON.stringify(keep)); } catch(e2) {} }
+  } catch(e) {}
+}
 function ensaiosKey(churchId) { return 'gc_ensaios_' + churchId; }
 function loadEnsaios(churchId) {
   try { const raw = localStorage.getItem(ensaiosKey(churchId)); if (raw) { const v = JSON.parse(raw); if (Array.isArray(v)) return v; } } catch(e) {}
@@ -4916,7 +4946,7 @@ function projectionShellHtml(openerActive) {
         + 'if(ytPlayer){try{ytPlayer.playVideo();}catch(e){}}'
         + 'gcYtCmd("playVideo");'
       + '}'
-      + 'function fadeOutNow(){'
+      + 'function fadeOutNow(ms){'
         + 'if(fading)return;fading=true;gcUserPaused=true;'
         + 'var isLocal=!!localVideoEl;var v0=100;'
         + 'if(isLocal){try{v0=Math.round(localVideoEl.volume*100);}catch(e){}}else if(ytPlayer){try{v0=ytPlayer.getVolume();}catch(e){}}else{v0=projVol;}'
@@ -4925,8 +4955,8 @@ function projectionShellHtml(openerActive) {
           + 'if(isLocal){try{localVideoEl.volume=v/100;}catch(e){}}else if(ytPlayer){try{ytPlayer.setVolume(v);}catch(e){}}else{gcYtCmd("setVolume",[v]);}'
           + 'if(n>=steps){clearInterval(iv);'
             + 'if(isLocal){try{localVideoEl.pause();localVideoEl.volume=v0/100;}catch(e){}}else{if(ytPlayer){try{ytPlayer.pauseVideo();ytPlayer.setVolume(v0);}catch(e){}}gcYtCmd("pauseVideo");gcYtCmd("setVolume",[v0]);}'
-            + 'fading=false;}'
-        + '},100);'
+            + 'fading=false;renderBlank();gcNotify({gcEvt:"state",s:-1});}'
+        + '},Math.max(20,Math.round((ms>0?ms:2000)/20)));'
       + '}'
       + 'function pauseMedia(){'
         + 'gcUserPaused=true;'
@@ -5041,7 +5071,7 @@ function projectionShellHtml(openerActive) {
         + 'else if(d.gcType==="overlay_limpar")clearOverlayText();'
         + 'else if(d.gcType==="media_play")playMedia();'
         + 'else if(d.gcType==="media_pause")pauseMedia();'
-        + 'else if(d.gcType==="media_fadeout")fadeOutNow();'
+        + 'else if(d.gcType==="media_fadeout")fadeOutNow(d.ms);'
         + 'else if(d.gcType==="prep"){gcPrepHint();}'
         + 'else if(d.gcType==="blank"){renderBlank();gcNotify({gcEvt:"state",s:-1});}'
         + 'else if(d.gcType==="close_self"){try{window.close();}catch(e){}}'
@@ -5210,10 +5240,11 @@ function playAllScreens(churchId) {
     try { if (win && !win.closed) win.postMessage({ gcType:'media_play' }, '*'); } catch(e) {}
   });
 }
+function gcFadeMs() { try { const v = Number(localStorage.getItem('gc_fade_secs')); return (v >= 0.5 && v <= 30 ? v : 2) * 1000; } catch(e) { return 2000; } }
 function fadeOutAllScreens(churchId) {
   Object.keys(projectionWindows).forEach(sig => {
     const win = projectionWindows[sig];
-    try { if (win && !win.closed) win.postMessage({ gcType:'media_fadeout' }, '*'); } catch(e) {}
+    try { if (win && !win.closed) win.postMessage({ gcType:'media_fadeout', ms: gcFadeMs() }, '*'); } catch(e) {}
   });
 }
 function pauseAllScreens(churchId) {
@@ -8036,6 +8067,8 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
   // Quantos dB o atenuador abaixa (escolhido pelo operador; fica salvo neste aparelho). Padrão: 14 dB (~20%).
   const [attDb, setAttDb] = useState(() => { try { const v = Number(localStorage.getItem('gc_atten_db')); return v >= 1 && v <= 60 ? v : 14; } catch(e) { return 14; } });
   const attDbRef = useRef(attDb); attDbRef.current = attDb;
+  const [fadeSecs, setFadeSecs] = useState(() => gcFadeMs() / 1000);
+  const changeFadeSecs = (v) => { const n = Math.max(0.5, Math.min(30, Math.round((Number(v) || 2) * 2) / 2)); setFadeSecs(n); try { localStorage.setItem('gc_fade_secs', String(n)); } catch(e) {} };
   const changeAttDb = (v) => { const n = Math.max(1, Math.min(60, Math.round(Number(v) || 14))); setAttDb(n); try { localStorage.setItem('gc_atten_db', String(n)); } catch(e) {} const s = attRef.current; if (s.on) { s.k = Math.pow(10, -n / 20); attLevel(s.k); } };
   const attLevel = (k) => {
     try { (trkRef.current || []).forEach((t, i) => { if (t && t.playing && alRef.current) alRef.current(i, t.volume * k); }); } catch(e) {}
@@ -8088,6 +8121,11 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
       <span style=${{whiteSpace:'nowrap'}}>Atenuar em</span>
       <input type="range" aria-label="Quantos dB atenuar" min="3" max="40" step="1" value=${Math.min(40, attDb)} onInput=${e=>changeAttDb(e.target.value)} style=${{flex:1, minWidth:0}} />
       <span style=${{display:'flex', alignItems:'center', gap:'4px'}}>−<input type="number" aria-label="dB do atenuador" min="1" max="60" value=${attDb} onChange=${e=>changeAttDb(e.target.value)} style=${{...inputStyle, width:'58px', padding:'5px 6px', fontSize:'12px', textAlign:'center'}} /> dB</span>
+    </div>
+    <div style=${{display:'flex', alignItems:'center', gap:'10px', marginTop:'8px', fontSize:'12px', fontWeight:800}}>
+      <span style=${{whiteSpace:'nowrap'}}>Tempo do Fade out</span>
+      <input type="range" aria-label="Segundos do fade out" min="1" max="15" step="0.5" value=${Math.min(15, fadeSecs)} onInput=${e=>changeFadeSecs(e.target.value)} style=${{flex:1, minWidth:0}} />
+      <span style=${{display:'flex', alignItems:'center', gap:'4px'}}><input type="number" aria-label="Segundos do fade out (campo)" min="0.5" max="30" step="0.5" value=${fadeSecs} onChange=${e=>changeFadeSecs(e.target.value)} style=${{...inputStyle, width:'58px', padding:'5px 6px', fontSize:'12px', textAlign:'center'}} /> s</span>
     </div>
     <button type="button" onClick=${()=>setShowDetails(v=>!v)} style=${{...btnGhost, width:'100%', marginTop:'10px', padding:'8px', fontSize:'11px', fontWeight:700}}>${showDetails ? '▲ Esconder' : '⚙️ Detalhes dos fundos'} (arquivo, busca no YouTube, link, nuvem)</button>
     <div style=${{display: showDetails ? 'block' : 'none', marginTop:'10px'}}>
@@ -9122,11 +9160,12 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   const [day, setDay] = useState('sabado');
   const isSabado = day === 'sabado';
   const readActivitiesFor = (d, churchObj) => {
+    if (actIsDirty(churchId, d)) return loadActivities(churchId, d); // alteração local ainda não confirmada na nuvem: vale a deste aparelho
     if (d === 'sabado') return (churchObj && churchObj.activities) ? churchObj.activities : loadActivities(churchId);
     const stored = churchObj && churchObj.otherActivities && churchObj.otherActivities[d];
     return stored !== undefined ? stored : loadActivities(churchId, d);
   };
-  const hasCloudValueFor = (d, churchObj) => d === 'sabado'
+  const hasCloudValueFor = (d, churchObj) => actIsDirty(churchId, d) ? false : d === 'sabado'
     ? !!(churchObj && churchObj.activities !== undefined)
     : !!(churchObj && churchObj.otherActivities && churchObj.otherActivities[d] !== undefined);
 
@@ -9152,20 +9191,40 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     setActivities(readActivitiesFor(day, church));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [day]);
+  const cloudPushAct = (d, fields) => {
+    if (!docId) return;
+    actSetDirty(churchId, d, true);
+    fbUpdateChurchFields(docId, fields).then(ok => { if (ok) actSetDirty(churchId, d, false); });
+  };
   useEffect(() => {
     saveActivities(churchId, activities, day);
+    actHistPush(churchId, day, activities);
     if (skipFirstSync.current) { skipFirstSync.current = false; return; }
     if (isSabado) {
-      if (docId) fbUpdateChurchFields(docId, { activities });
+      cloudPushAct('sabado', { activities });
       if (onUpdateChurch) onUpdateChurch({ activities });
     } else {
       const merged = { ...((church && church.otherActivities) || {}), [day]: activities };
-      if (docId) fbUpdateChurchFields(docId, { otherActivities: merged });
+      cloudPushAct(day, { ['otherActivities.' + day]: activities });
       if (onUpdateChurch) onUpdateChurch({ otherActivities: merged });
     }
   }, [activities, churchId, day]);
+  // Reenvia sozinho o que ficou pendente (sem internet na hora de salvar): ao abrir, a cada 30 s e quando a internet volta.
+  useEffect(() => {
+    const retry = () => {
+      if (!docId) return;
+      LITURGIA_DAYS.forEach(dd => {
+        if (!actIsDirty(churchId, dd.key)) return;
+        const list = loadActivities(churchId, dd.key);
+        const fields = dd.key === 'sabado' ? { activities: list } : { ['otherActivities.' + dd.key]: list };
+        fbUpdateChurchFields(docId, fields).then(ok => { if (ok) actSetDirty(churchId, dd.key, false); });
+      });
+    };
+    retry(); const iv = setInterval(retry, 30000); window.addEventListener('online', retry);
+    return () => { clearInterval(iv); window.removeEventListener('online', retry); };
+  }, [docId, churchId]);
   // v.99: programação editada em OUTRO aparelho aparece aqui na hora (e nunca é sobrescrita por esta tela).
-  useCloudAdopt(isSabado ? (church && church.activities) : (church && church.otherActivities ? church.otherActivities[day] : undefined), activities, setActivities, skipFirstSync);
+  useCloudAdopt(actIsDirty(churchId, day) ? undefined : (isSabado ? (church && church.activities) : (church && church.otherActivities ? church.otherActivities[day] : undefined)), activities, setActivities, skipFirstSync);
 
   // Atualiza sozinho o link de itens dinâmicos (Provai e Vede / Informativo) e completa quem ainda não tem
   useEffect(() => {
@@ -9550,6 +9609,17 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       ${adding && html`<${AddActivityForm} defaultSection=${sections[0]} activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracks} sectionLabels=${sectionLabels} />`}
       <button onClick=${openFinalize} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1px solid var(--success-1)', color:'var(--success-1)'}}>✅ Finalizar Culto</button>
       <button onClick=${zerarProgramacao} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1px solid var(--danger)', color:'var(--danger)'}}>🧹 Zerar Programação (volta exatamente pro Padrão)</button>
+      ${actIsDirty(churchId, day) && html`<div style=${{fontSize:'11.5px', color:'var(--highlight)', marginBottom:'8px'}}>⚠️ A última alteração ainda não chegou na nuvem. Está salva neste aparelho e o app tenta enviar de novo sozinho.</div>`}
+      <details style=${{marginBottom:'8px'}}>
+        <summary style=${{cursor:'pointer', fontSize:'12px', fontWeight:800, padding:'8px 2px'}}>🕘 Versões anteriores da programação de ${dayDef.label} (neste aparelho)</summary>
+        <div style=${{display:'grid', gap:'6px', marginTop:'6px'}}>
+          ${actHistLoad(churchId, day).length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Ainda não há versões guardadas deste dia.</div>`}
+          ${actHistLoad(churchId, day).map((v, i) => html`<div key=${v.at} style=${{display:'flex', alignItems:'center', gap:'8px', fontSize:'12px'}}>
+            <span style=${{flex:1}}>${new Date(v.at).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })} — ${v.list.length} atividade(s)${i === 0 ? ' (a atual)' : ''}</span>
+            ${i > 0 && html`<button type="button" onClick=${()=>{ if (confirm('Trocar a programação de ' + dayDef.label + ' por esta versão? A atual continua guardada na lista.')) setActivities(v.list); }} style=${{...btnGhost, padding:'6px 12px', fontSize:'11px'}}>↩ Recuperar</button>`}
+          </div>`)}
+        </div>
+      </details>
       ${finalizeOpen && finalizeSummary && html`<${FinalizeCultoModal} summary=${finalizeSummary} onConfirm=${confirmFinalize} onClose=${()=>setFinalizeOpen(false)} />`}
       ${assistantOpen && html`<${LiturgyAssistantModal} onImportAll=${importFromAssistant} onClose=${()=>setAssistantOpen(false)} defaultSection=${sections[0]} sectionLabels=${sectionLabels} />`}
       </div>
@@ -9718,12 +9788,20 @@ function songLibKey(churchId) { return 'gc_biblioteca_' + churchId; }
 function loadSongLib(churchId) { try { const raw = localStorage.getItem(songLibKey(churchId)); if (raw) { const v = JSON.parse(raw); if (Array.isArray(v)) return v; } } catch(e) {} return []; }
 function saveSongLib(churchId, list) { try { localStorage.setItem(songLibKey(churchId), JSON.stringify(list)); } catch(e) {} }
 
+// v.144: canais OFICIAIS (conferidos no YouTube: verificados / selo da gravadora). Fora disso = não oficial.
+const OFFICIAL_CH_RE = /casa publicadora|^cpb\b|cpb - topic|igreja adventista do s[eé]timo dia - topic|minist[eé]rio jovem|feliz ?7 ?play|gravadora ?nt|novo tom|r[aá]dio novo tempo|adoradores novo tempo|bel7 ?play|novo tempo/i;
+const isOfficialCh = (ch) => OFFICIAL_CH_RE.test(String(ch || ''));
 function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   const isMobile = useIsMobile();
   const docId = church && (church.fbDocId || church.docId);
   const [open, setOpen] = useState(false);
   const inputRef = useRef(null);
   const [q, setQ] = useState('');
+  // v.144: 3 buscas — Novo Hinário (2022), Hinário antigo, Coletâneas & CD Jovem. "Só oficiais" ligado por padrão.
+  const [mode, setModeRaw] = useState('novo');
+  const modeTexts = useRef({ novo: '', antigo: '', colet: '' });
+  const [onlyOff, setOnlyOff] = useState(() => { try { return localStorage.getItem('gc_busca_so_oficial') !== '0'; } catch(e) { return true; } });
+  const setMode = (m) => { modeTexts.current[mode] = q; setModeRaw(m); setQ(modeTexts.current[m] || ''); setYt(null); setErr(''); try { inputRef.current && inputRef.current.focus(); } catch(e) {} };
   const [yt, setYt] = useState(null);          // resultados do YouTube da última busca
   const [ytQ, setYtQ] = useState('');
   const [loading, setLoading] = useState(false);
@@ -9765,10 +9843,10 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     if (idx === -1) next = [...list, act]; else { next = [...list]; next.splice(lit.position === 'antes' ? idx : idx + 1, 0, act); }
     saveActivities(churchId, next, d);
     if (d === 'sabado') {
-      if (docId) fbUpdateChurchFields(docId, { activities: next });
+      if (docId) { actSetDirty(churchId, 'sabado', true); fbUpdateChurchFields(docId, { activities: next }).then(ok => { if (ok) actSetDirty(churchId, 'sabado', false); }); }
       if (onUpdateChurch) onUpdateChurch({ activities: next });
     } else {
-      if (docId) fbUpdateChurchFields(docId, { ['otherActivities.' + d]: next });
+      if (docId) { actSetDirty(churchId, d, true); fbUpdateChurchFields(docId, { ['otherActivities.' + d]: next }).then(ok => { if (ok) actSetDirty(churchId, d, false); }); }
       if (onUpdateChurch) onUpdateChurch({ otherActivities: { ...((church && church.otherActivities) || {}), [d]: next } });
     }
     try { pushLog(loadLog(), { type:'atualizacao', churchName: church && church.name, churchId, detail: 'Nova atividade (busca rápida): ' + act.name }); } catch(e) {}
@@ -9789,7 +9867,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   useEffect(() => { const on = () => setOpen(o => !o); window.addEventListener('gc-open-search', on); return () => window.removeEventListener('gc-open-search', on); }, []);
 
   const nq = hinoNormalize(q).trim();
-  const hymns = useMemo(() => nq ? NHA_HYMNS.filter(h => String(h.num) === nq || h.n === nq || hinoNormalize(h.t).includes(nq)) : [], [nq]);
+  const hymns = useMemo(() => (nq && mode === 'novo') ? NHA_HYMNS.filter(h => String(h.num) === nq || h.n === nq || hinoNormalize(h.t).includes(nq)) : [], [nq, mode]);
   const libHits = nq ? lib.filter(x => hinoNormalize(x.title + ' ' + (x.singer || '') + ' ' + x.cat).includes(nq)) : [];
   const inLib = (vid) => lib.some(x => x.videoId === vid);
   // v.140: se o texto bate com um hino do hinário, NUNCA faz busca geral (só o hinário: vídeo, playback, cifra, partitura).
@@ -9814,7 +9892,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
       const isHymnal = /hinari|hino|iasd|adventista|nha\b/.test(n);
       const isThis = n.includes(tn) || new RegExp('(^|[^0-9])' + h.num + '([^0-9]|$)').test(n);
       const isKind = kind.need.length === 0 || kind.need.some(w => n.includes(w));
-      return isHymnal && isThis && isKind;
+      return isHymnal && isThis && isKind && !/\bhin[aá]rio adventista\s*\d/i.test(v.title) && (!onlyOff || isOfficialCh(v.channel));
     }).slice(0, 6);
     setHv(m => ({ ...m, [key]: { list: good } }));
   };
@@ -9827,13 +9905,32 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   }, [nq]);
   const doYoutube = async () => {
     const s = q.trim(); if (!s) return;
-    if (hymns.length > 0) return;
+    if (mode === 'novo' && hymns.length > 0) return;
     setLoading(true); setErr(''); setYt(null); setYtQ(s);
-    const list = await searchYoutubeServer(s);
+    const isNum = /^\d{1,3}$/.test(s);
+    let queries;
+    if (mode === 'antigo') queries = ['hinário adventista ' + s + (isNum ? ' antigo' : '')];
+    else if (mode === 'colet') queries = [s + ' CD Jovem adventista', s + ' coletânea adventista álbum oficial'];
+    else queries = ['novo hinário adventista ' + s];
+    const lists = await Promise.all(queries.map(x => searchYoutubeServer(x)));
     setLoading(false);
-    if (!list) { setErr('Não consegui buscar no YouTube agora. Tente de novo em instantes.'); return; }
-    setYt(list);
+    if (lists.every(l => !l)) { setErr('Não consegui buscar no YouTube agora. Tente de novo em instantes.'); return; }
+    const seen = new Set(); let all = [];
+    lists.forEach(l => (l || []).forEach(v => { if (!seen.has(v.videoId)) { seen.add(v.videoId); all.push(v); } }));
+    all = all.filter(v => {
+      const n = hinoNormalize(v.title);
+      if (mode === 'antigo') { if (/novo hin/.test(n)) return false; if (!/hinario|hino/.test(n)) return false; }
+      if (mode === 'novo') { if (!/(hinario|hino)/.test(n)) return false; if (/\bhinario adventista\s*\d/.test(n) && !/novo/.test(n)) return false; }
+      return !onlyOff || isOfficialCh(v.channel);
+    });
+    setYt(all);
   };
+  // Hinário antigo e Coletâneas/CD Jovem: busca sozinha ao parar de digitar (uma consulta por vez).
+  useEffect(() => {
+    if (mode === 'novo' || nq.length < 2) return;
+    const tm = setTimeout(() => { doYoutube(); }, 700);
+    return () => clearTimeout(tm);
+  }, [nq, mode, onlyOff]);
   const saveToLib = (r) => {
     const singer = (window.prompt('Cantor / grupo (opcional):', r.channel || '') || '').trim();
     const cat = (window.prompt('Tipo: Solo, Dueto, Trio, Quarteto, Grupo, Playback, Letra ou Outros', 'Solo') || 'Outros').trim();
@@ -9920,9 +10017,13 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
       <div style=${{width:'100%', minWidth:0}}>
         <div style=${{width:'100%', maxWidth:'none', display:'flex', flexDirection:'column', gap:'8px', ...(nq ? {maxHeight:'min(56vh, 520px)', background:'rgba(8,18,40,0.97)', border:'1px solid rgba(56,189,248,0.4)', borderRadius:'16px', padding:'10px'} : {})}}>
           <form onSubmit=${(e)=>{ e.preventDefault(); doYoutube(); }} style=${{display:'flex', gap:'8px', alignItems:'center'}}>
-            <input ref=${inputRef} value=${q} onChange=${e=>setQ(e.target.value)} placeholder="Digite o nº do hino, música, cantor, playback ou letra…" style=${{...inputStyle, flex:1, minWidth:0, fontSize:'15px', padding:'13px 16px', borderRadius:'14px', border:'1px solid rgba(56,189,248,0.6)', boxShadow:'0 0 20px -8px rgba(56,189,248,0.9)'}} />
+            <input ref=${inputRef} value=${q} onChange=${e=>setQ(e.target.value)} placeholder=${mode === 'novo' ? 'Novo Hinário (1–600): digite o nº ou o nome do hino…' : mode === 'antigo' ? 'Hinário antigo: digite o nº ou o nome do hino…' : 'Coletâneas e CD Jovem: digite música, cantor ou álbum…'} style=${{...inputStyle, flex:1, minWidth:0, fontSize:'15px', padding:'13px 16px', borderRadius:'14px', border:'1px solid rgba(56,189,248,0.6)', boxShadow:'0 0 20px -8px rgba(56,189,248,0.9)'}} />
             <button type="button" onClick=${()=>setOpen(false)} title="Fechar (Esc)" style=${{...btnGhost, padding:'12px 14px', fontSize:'14px'}}>✕</button>
           </form>
+          <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+            ${[['novo','📖 Novo Hinário'],['antigo','📜 Hinário antigo'],['colet','💿 Coletâneas e CD Jovem']].map(([k, l]) => html`<button key=${k} type="button" onClick=${()=>setMode(k)} style=${{padding:'6px 12px', borderRadius:'999px', fontSize:'11.5px', fontWeight:800, cursor:'pointer', border:'1px solid ' + (mode === k ? 'var(--highlight)' : 'var(--border-soft)'), background: mode === k ? 'linear-gradient(90deg, rgba(14,165,233,0.35), rgba(139,92,246,0.35))' : 'transparent', color:'var(--text-hi)'}}>${l}</button>`)}
+            <label style=${{display:'flex', alignItems:'center', gap:'5px', fontSize:'11px', fontWeight:700, marginLeft:'auto', cursor:'pointer'}} title="Mostra só vídeos de canais oficiais (Casa Publicadora Brasileira, Igreja Adventista, Ministério Jovem, Novo Tempo…)"><input type="checkbox" checked=${onlyOff} onChange=${e=>{ setOnlyOff(e.target.checked); try { localStorage.setItem('gc_busca_so_oficial', e.target.checked ? '1' : '0'); } catch(_) {} }} /> Só oficiais</label>
+          </div>
           ${nq && html`<div style=${{overflowY:'auto', minHeight:0, display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'10px', alignContent:'start', paddingRight:'2px'}}>
             
             ${nq && hymns.length > 0 && secTitle('📖 Hinário Adventista · ' + hymns.length)}
@@ -9930,9 +10031,11 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
             ${hymns.length > limit && html`<button type="button" onClick=${()=>setLimit(l=>l+12)} style=${{...btnGhost, justifySelf:'center', padding:'8px 16px', fontSize:'12px'}}>Mostrar mais (${hymns.length - limit})</button>`}
             ${libHits.length > 0 && secTitle('⭐ Minha biblioteca · ' + libHits.length)}
             ${libHits.map(x => row({ key:'l-'+x.id, vid:x.videoId, title:x.title, sub:'👤 ' + (x.singer || x.channel || '—') + ' • ' + x.cat, libId:x.id, remoteKey:'busca-' + x.videoId }))}
-            ${nq && hymns.length === 0 && html`<button type="button" onClick=${doYoutube} style=${{...btnPrimary, width:'100%', padding:'11px', fontSize:'13px'}}>${loading ? 'Buscando…' : '🔎 Buscar “' + q.trim() + '” no YouTube (músicas, cantores, playbacks, letras)'}</button>`}
+            ${nq && mode === 'novo' && hymns.length === 0 && html`<button type="button" onClick=${doYoutube} style=${{...btnPrimary, width:'100%', padding:'11px', fontSize:'13px'}}>${loading ? 'Buscando…' : '🔎 Buscar “' + q.trim() + '” no YouTube (músicas, cantores, playbacks, letras)'}</button>`}
             ${err && html`<div style=${{fontSize:'12px', color:'var(--danger)'}}>${err}</div>`}
-            ${yt && secTitle('▶ YouTube · ' + yt.length + ' resultado(s) para “' + ytQ + '”')}
+            ${loading && mode !== 'novo' && html`<div style=${{fontSize:'12px', color:'var(--text-dim)'}}>Buscando…</div>`}
+            ${yt && yt.length === 0 && html`<div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.5}}>Não achei nada ${onlyOff ? 'de canal oficial ' : ''}para “${ytQ}”.${onlyOff ? ' Se quiser ver também os não oficiais, desmarque “Só oficiais”.' : ''}</div>`}
+            ${yt && yt.length > 0 && secTitle('▶ ' + (mode === 'antigo' ? 'Hinário antigo' : mode === 'colet' ? 'Coletâneas e CD Jovem' : 'YouTube') + ' · ' + yt.length + ' resultado(s) para “' + ytQ + '”')}
             ${yt && yt.map(r => row({ key:'y-'+r.videoId, vid:r.videoId, title:r.title, sub:[r.channel, r.duration, r.published].filter(Boolean).join(' • '), thumb:r.thumbnail, yt:r, remoteKey:'busca-' + r.videoId }))}
           </div>`}
         </div>
@@ -11528,12 +11631,14 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
           // salvo, arquivo de cultos finalizados), presença e localização da igreja (24/09) —
           // todas essas configurações também sincronizam com a nuvem e ficam disponíveis em
           // qualquer aparelho, sem precisar deslogar/logar de novo.
-          if (data.activities) { patch.activities = data.activities; saveActivities(church.id, data.activities); }
+          if (data.activities && !actIsDirty(church.id, 'sabado')) { patch.activities = data.activities; saveActivities(church.id, data.activities); }
           if (data.defaultLiturgy) { patch.defaultLiturgy = data.defaultLiturgy; try { localStorage.setItem(defaultLiturgyKey(church.id), JSON.stringify(data.defaultLiturgy)); } catch(e) {} }
           // Liturgias de outros dias da semana (29/09) — um dicionário por dia, mesmo padrão do resto.
           if (data.otherActivities) {
-            patch.otherActivities = data.otherActivities;
-            Object.keys(data.otherActivities).forEach(d => saveActivities(church.id, data.otherActivities[d], d));
+            const oa = { ...data.otherActivities };
+            Object.keys(oa).forEach(d => { if (actIsDirty(church.id, d)) delete oa[d]; });
+            patch.otherActivities = { ...(church.otherActivities || {}), ...oa };
+            Object.keys(oa).forEach(d => saveActivities(church.id, oa[d], d));
           }
           if (data.otherDefaultLiturgy) {
             patch.otherDefaultLiturgy = data.otherDefaultLiturgy;
