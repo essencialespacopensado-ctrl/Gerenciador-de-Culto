@@ -138,11 +138,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-05.132';
+const APP_VERSION = '2026-11-06.133';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.133',
+    date: '06/11/2026',
+    items: [
+      "Botão fixo \"🔎 Busca rápida\" (canto de baixo, em todas as telas): Hinário 1–600 e busca de músicas, cantores, playbacks e letras, com os mesmos botões de projeção da Liturgia e controle pelo celular. Dá para salvar solos, duetos, trios e playbacks na sua biblioteca (sincroniza entre os aparelhos). O Hinário saiu da aba Músicas.",
+    ]
+  },
   {
     version: '2026-11-05.132',
     date: '05/11/2026',
@@ -5803,7 +5810,6 @@ function MusicasView({ churchId, church, onUpdateChurch }) {
     { key:'louvor', label:'🎤 Momentos de Louvor' },
     { key:'mensagens', label:'🎙️ Mensagens Musicais' },
     { key:'ensaios', label:'🎼 Ensaios' },
-    { key:'hinario', label:'📖 Novo Hinário Adventista' },
     { key:'catalogo', label:'📚 Catálogo de Músicas' },
     { key:'col:CDs Oficiais/Ano', label:'📀 CDs Oficiais/Ano' },
     { key:'col:Adoradores', label:'🙌 Adoradores' },
@@ -5821,7 +5827,6 @@ function MusicasView({ churchId, church, onUpdateChurch }) {
       ${selected === 'louvor' && html`<${MomentosLouvorTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} shareUrl=${louvorShareUrl} />`}
       ${selected === 'mensagens' && html`<${MensagensMusicaisTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} shareUrl=${mensagemShareUrl} />`}
       ${selected === 'ensaios' && html`<${EnsaiosTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} />`}
-      ${selected === 'hinario' && html`<${HinarioAdventistaTool} churchId=${churchId} />`}
       ${selected === 'catalogo' && html`<${CatalogoMusicasTool} churchId=${churchId} />`}
       ${selected && selected.startsWith('col:') && html`<${ColetaneasCategoryGrid} churchId=${churchId} category=${selected.slice(4)} />`}
     </div>
@@ -8191,6 +8196,13 @@ function remoteExecute(churchId, church, cmd, onErr) {
       if (!act || !act.media || !act.media.title) return 'Essa atividade não tem vídeo/música.';
       return remoteProjectMedia(churchId, act.media, act.id, a.which === 'operador' ? 'operador' : (a.which === 'retorno' ? 'retorno' : 'projetor'), onErr);
     }
+    case 'project_media': {
+      // v.133: busca rápida (Hinário / músicas) — o celular manda só o id do vídeo + título; o computador principal projeta.
+      const vid = String(a.videoId || '');
+      if (!/^[\w-]{11}$/.test(vid)) return 'Vídeo inválido.';
+      const media = { title: String(a.title || 'Vídeo').slice(0, 200), url: 'https://www.youtube.com/watch?v=' + vid, kind: 'youtube', videoId: vid };
+      return remoteProjectMedia(churchId, media, a.key ? String(a.key).slice(0, 60) : 'rapida-' + vid, a.which === 'operador' ? 'operador' : (a.which === 'retorno' ? 'retorno' : 'projetor'), onErr);
+    }
     case 'project_ens': {
       const g = loadEnsaios(churchId).find(x => x.id === a.gid);
       const sg = g && (g.songs || []).find(x => x.id === a.sid);
@@ -9494,7 +9506,7 @@ function HinarioAdventistaTool({ churchId }) {
               </div>
               <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
                 <button type="button" onClick=${()=>setOpen(isOpen ? null : h.n)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>${isOpen ? '⏹ Fechar vídeo' : '▶ Ver vídeo'}</button>
-                <${ProjectButton} churchId=${churchId} media=${media} itemKey=${'hino-'+h.n} />
+                <${ProjectButton} churchId=${churchId} media=${media} itemKey=${'hino-'+h.n} remote=${{ type:'project_media', arg:{ videoId: vid, title: media.title, key: 'hino-'+h.n } }} />
                 <a href=${media.url} target="_blank" rel="noopener" style=${{...btnGhost, textDecoration:'none', padding:'5px 9px', fontSize:'10.5px'}}>↗ YouTube</a>
                 <button type="button" onClick=${()=>setLinking(linking === h.n ? null : h.n)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>🔗 Trocar link</button>
               </div>
@@ -9513,6 +9525,158 @@ function HinarioAdventistaTool({ churchId }) {
       ${filtered.length > limit && html`<button type="button" onClick=${()=>setLimit(l=>l+40)} style=${{...btnGhost, justifySelf:'center', padding:'8px 16px', fontSize:'12px', fontWeight:700}}>Mostrar mais (${filtered.length - limit} restantes)</button>`}
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Vídeos oficiais com letra da Casa Publicadora Brasileira no YouTube. Se algum não for o que você quer, use "🔗 Trocar link" — fica salvo só nesta igreja.</div>
     </div>
+  `;
+}
+
+// ===== v.133: Busca rápida fixa (botão em todas as telas): Hinário + músicas, cantores, playbacks e letras =====
+const SONGLIB_CATS = ['Solo', 'Dueto', 'Trio', 'Quarteto', 'Grupo', 'Playback', 'Letra', 'Outros'];
+function songLibKey(churchId) { return 'gc_biblioteca_' + churchId; }
+function loadSongLib(churchId) { try { const raw = localStorage.getItem(songLibKey(churchId)); if (raw) { const v = JSON.parse(raw); if (Array.isArray(v)) return v; } } catch(e) {} return []; }
+function saveSongLib(churchId, list) { try { localStorage.setItem(songLibKey(churchId), JSON.stringify(list)); } catch(e) {} }
+
+function BuscaMusicasTool({ churchId, church, onUpdateChurch }) {
+  const docId = church && (church.fbDocId || church.docId);
+  const [lib, setLib] = useState(() => (church && Array.isArray(church.songLibrary) && church.songLibrary.length) ? church.songLibrary : loadSongLib(churchId));
+  const lref = useRef(lib);
+  useEffect(() => { if (church && Array.isArray(church.songLibrary) && church.songLibrary.length) { lref.current = church.songLibrary; setLib(church.songLibrary); } }, [church && church.songLibrary]);
+  const commitLib = (fn) => {
+    const next = fn(lref.current);
+    lref.current = next; setLib(next); saveSongLib(churchId, next);
+    if (docId) fbUpdateChurchFields(docId, { songLibrary: next });
+    if (onUpdateChurch) onUpdateChurch({ songLibrary: next });
+  };
+  const [q, setQ] = useState('');
+  const [mode, setMode] = useState('tudo');   // tudo | cantor | musica | playback | letra
+  const [adv, setAdv] = useState(true);       // acrescenta "adventista" na busca
+  const [view, setView] = useState('buscar'); // buscar | biblioteca
+  const [libCat, setLibCat] = useState('Todas');
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  const [open, setOpen] = useState(null);
+  const [saving, setSaving] = useState(null); // resultado sendo salvo
+  const [cat, setCat] = useState('Solo');
+  const [singer, setSinger] = useState('');
+  const modes = [{ k:'tudo', l:'Tudo' }, { k:'cantor', l:'🎤 Cantor' }, { k:'musica', l:'🎵 Música' }, { k:'playback', l:'🎹 Playback' }, { k:'letra', l:'📝 Letra' }];
+  const doSearch = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const s = q.trim(); if (!s) return;
+    setLoading(true); setErr(''); setResults(null);
+    const suffix = mode === 'playback' ? ' playback instrumental' : (mode === 'letra' ? ' letra lyrics' : '');
+    const list = await searchYoutubeServer(s + (adv ? ' adventista' : '') + suffix);
+    setLoading(false);
+    if (!list) { setErr('Não consegui buscar agora (sem conexão com o servidor de busca). Tente de novo em instantes.'); return; }
+    setResults(list);
+  };
+  const inLib = (vid) => lib.some(x => x.videoId === vid);
+  const normQ = hinoNormalize(q).trim();
+  const libShown = lib.filter(x => (libCat === 'Todas' || x.cat === libCat) && (!normQ || hinoNormalize(x.title + ' ' + (x.singer || '') + ' ' + x.cat).includes(normQ)));
+  const confirmSave = (r) => {
+    commitLib(l => l.some(x => x.videoId === r.videoId) ? l : [...l, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), videoId: r.videoId, title: r.title, channel: r.channel || '', singer: (singer || r.channel || '').trim(), cat, added: Date.now() }]);
+    setSaving(null); setSinger('');
+  };
+  const row = (r, saved, key) => {
+    const vid = r.videoId;
+    const media = { title: r.title, url: 'https://www.youtube.com/watch?v=' + vid, kind: 'youtube', videoId: vid };
+    const isOpen = open === key;
+    return html`
+      <div key=${key} style=${{padding:'10px 12px', borderRadius:'12px', border:'1px solid var(--border-soft)', display:'grid', gap:'8px', minWidth:0}}>
+        <div style=${{display:'flex', gap:'10px', minWidth:0}}>
+          <img src=${r.thumbnail || ('https://i.ytimg.com/vi/' + vid + '/mqdefault.jpg')} loading="lazy" alt="" style=${{width:'88px', height:'50px', objectFit:'cover', borderRadius:'8px', flex:'0 0 auto', background:'#000'}} />
+          <div style=${{minWidth:0, display:'grid', gap:'2px', alignContent:'start'}}>
+            <div style=${{fontWeight:700, fontSize:'12.5px', overflowWrap:'anywhere'}}>${r.title}</div>
+            <div style=${{fontSize:'10.5px', color:'var(--text-dim)', overflowWrap:'anywhere'}}>${saved ? ('👤 ' + (r.singer || r.channel || '—') + ' • ' + r.cat) : [r.channel, r.duration, r.published].filter(Boolean).join(' • ')}</div>
+          </div>
+        </div>
+        <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+          <button type="button" onClick=${()=>setOpen(isOpen ? null : key)} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>${isOpen ? '⏹ Fechar vídeo' : '▶ Ver vídeo'}</button>
+          <${ProjectButton} churchId=${churchId} media=${media} itemKey=${'busca-' + vid} remote=${{ type:'project_media', arg:{ videoId: vid, title: r.title, key: 'busca-' + vid } }} />
+          <a href=${media.url} target="_blank" rel="noopener" style=${{...btnGhost, textDecoration:'none', padding:'5px 9px', fontSize:'10.5px'}}>↗ YouTube</a>
+          ${saved
+            ? html`<button type="button" onClick=${()=>{ if (confirm('Tirar "' + r.title + '" da sua biblioteca?')) commitLib(l => l.filter(x => x.id !== r.id)); }} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>🗑 Tirar</button>`
+            : (inLib(vid)
+              ? html`<span style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>⭐ na biblioteca</span>`
+              : html`<button type="button" onClick=${()=>{ setSaving(saving === key ? null : key); setSinger(r.channel || ''); }} style=${{...btnGhost, padding:'5px 9px', fontSize:'10.5px'}}>⭐ Salvar na biblioteca</button>`)}
+        </div>
+        ${!saved && saving === key && html`
+          <div style=${{display:'grid', gap:'6px'}}>
+            <input placeholder="Cantor / grupo" value=${singer} onChange=${e=>setSinger(e.target.value)} style=${{...inputStyle, fontSize:'12px'}} />
+            <div style=${{display:'flex', gap:'5px', flexWrap:'wrap'}}>
+              ${SONGLIB_CATS.map(c => html`<button key=${c} type="button" onClick=${()=>setCat(c)} style=${{padding:'5px 10px', borderRadius:'999px', fontSize:'10.5px', fontWeight:700, border:'1px solid var(--border-soft)', background: cat===c ? 'var(--accent-1)' : 'transparent', color: cat===c ? '#fff' : 'var(--text-mid)', cursor:'pointer'}}>${c}</button>`)}
+            </div>
+            <button type="button" onClick=${()=>confirmSave(r)} style=${{...btnPrimary, width:'auto', justifySelf:'start', padding:'7px 14px', fontSize:'11.5px'}}>✅ Salvar</button>
+          </div>`}
+        ${isOpen && html`
+          <div style=${{position:'relative', width:'100%', aspectRatio:'16/9', borderRadius:'10px', overflow:'hidden', background:'#000'}}>
+            <iframe key=${vid} src=${'https://www.youtube-nocookie.com/embed/' + vid + '?autoplay=1&rel=0&playsinline=1&modestbranding=1&hl=pt-BR'} title=${r.title} allow="autoplay; encrypted-media; fullscreen" allowfullscreen style=${{position:'absolute', inset:0, width:'100%', height:'100%', border:0}}></iframe>
+          </div>`}
+      </div>`;
+  };
+  const tabBtn = (k, l) => html`<button type="button" onClick=${()=>setView(k)} style=${{padding:'6px 12px', borderRadius:'999px', fontSize:'11px', fontWeight:700, border:'1px solid var(--border-soft)', background: view===k ? 'var(--accent-1)' : 'transparent', color: view===k ? '#fff' : 'var(--text-mid)', cursor:'pointer'}}>${l}</button>`;
+  return html`
+    <div class="glass fade-up" style=${{borderRadius:'16px', padding:'14px', display:'grid', gap:'10px', minWidth:0}}>
+      <div style=${{fontWeight:800, fontSize:'13px'}}>🎤 Músicas, cantores, playbacks e letras — tudo que não é álbum de coletânea</div>
+      <form onSubmit=${doSearch} style=${{display:'flex', gap:'6px'}}>
+        <input placeholder="Digite música, cantor, grupo..." value=${q} onChange=${e=>setQ(e.target.value)} style=${{...inputStyle, flex:1, minWidth:0}} />
+        <button type="submit" style=${{...btnPrimary, width:'auto', padding:'8px 14px', fontSize:'12px'}}>${loading ? '...' : '🔎 Buscar'}</button>
+      </form>
+      <div style=${{display:'flex', gap:'6px', overflowX:'auto', paddingBottom:'2px', alignItems:'center'}}>
+        ${modes.map(m => html`<button key=${m.k} type="button" onClick=${()=>setMode(m.k)} style=${{padding:'6px 12px', borderRadius:'999px', fontSize:'11px', fontWeight:700, whiteSpace:'nowrap', border:'1px solid var(--border-soft)', background: mode===m.k ? 'var(--accent-1)' : 'transparent', color: mode===m.k ? '#fff' : 'var(--text-mid)', cursor:'pointer'}}>${m.l}</button>`)}
+        <label style=${{display:'flex', gap:'4px', alignItems:'center', fontSize:'11px', whiteSpace:'nowrap', color:'var(--text-mid)'}}><input type="checkbox" checked=${adv} onChange=${e=>setAdv(e.target.checked)} /> só adventista</label>
+      </div>
+      <div style=${{display:'flex', gap:'6px'}}>${tabBtn('buscar', '🔎 Resultados')}${tabBtn('biblioteca', '⭐ Minha biblioteca (' + lib.length + ')')}</div>
+      ${view === 'buscar' && html`
+        <div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'8px'}}>
+          ${err && html`<div style=${{fontSize:'11.5px', color:'var(--danger)'}}>${err}</div>`}
+          ${loading && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Buscando no YouTube...</div>`}
+          ${normQ && libShown.length > 0 && html`<div style=${{fontSize:'11px', fontWeight:800, color:'var(--text-mid)'}}>⭐ Na sua biblioteca</div>`}
+          ${normQ && libShown.slice(0, 5).map(x => row(x, true, 'lib-' + x.id))}
+          ${results && html`<div style=${{fontSize:'11px', fontWeight:800, color:'var(--text-mid)'}}>${results.length} resultado(s) no YouTube</div>`}
+          ${results && results.map(r => row(r, false, 'yt-' + r.videoId))}
+          ${!results && !loading && !err && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Digite e toque em Buscar. Escolha "Playback" para achar a base instrumental e "Letra" para vídeos com a letra. O que você salvar com ⭐ fica na sua biblioteca, em todos os aparelhos.</div>`}
+        </div>`}
+      ${view === 'biblioteca' && html`
+        <div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'8px'}}>
+          <div style=${{display:'flex', gap:'5px', flexWrap:'wrap'}}>
+            ${['Todas', ...SONGLIB_CATS].map(c => html`<button key=${c} type="button" onClick=${()=>setLibCat(c)} style=${{padding:'5px 10px', borderRadius:'999px', fontSize:'10.5px', fontWeight:700, border:'1px solid var(--border-soft)', background: libCat===c ? 'var(--accent-1)' : 'transparent', color: libCat===c ? '#fff' : 'var(--text-mid)', cursor:'pointer'}}>${c}</button>`)}
+          </div>
+          <div style=${{fontSize:'11px', color:'var(--text-dim)'}}>${libShown.length} música(s)${normQ ? ' para "' + q.trim() + '"' : ''}</div>
+          ${lib.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Sua biblioteca está vazia. Busque uma música e toque em "⭐ Salvar na biblioteca" para guardar solos, duetos, trios, playbacks e letras.</div>`}
+          ${libShown.map(x => row(x, true, 'lib-' + x.id))}
+        </div>`}
+    </div>
+  `;
+}
+
+function QuickSearchFab({ churchId, church, onUpdateChurch }) {
+  const isMobile = useIsMobile();
+  const [open, setOpen] = useState(false);
+  const [seen, setSeen] = useState(false);
+  const [tab, setTab] = useState('hinario');
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+  const toggle = () => { setSeen(true); setOpen(o => !o); };
+  const tabStyle = (k) => ({ flex:1, padding:'9px 10px', borderRadius:'12px', border:'1px solid var(--border-soft)', fontWeight:800, fontSize:'12px', cursor:'pointer', background: tab===k ? 'linear-gradient(135deg,var(--accent-1),var(--accent-2))' : 'transparent', color: tab===k ? '#fff' : 'var(--text-mid)' });
+  return html`
+    <button type="button" onClick=${toggle} title="Busca rápida: Hinário, músicas, cantores, playbacks e letras" aria-label="Busca rápida" style=${{position:'fixed', left:'16px', bottom:'calc(16px + env(safe-area-inset-bottom,0px))', zIndex:152, height:'46px', minWidth:'46px', padding: isMobile ? '0' : '0 16px', borderRadius:'999px', border:'1px solid var(--border-soft)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:'7px', fontSize: isMobile ? '20px' : '13px', fontWeight:800, color:'#fff', background:'linear-gradient(135deg,var(--accent-1),var(--accent-2))', boxShadow:'0 10px 24px -10px rgba(0,0,0,0.6)'}}>🔎${!isMobile ? html`<span>Busca rápida</span>` : ''}</button>
+    ${seen && html`
+      <div style=${{display: open ? 'flex' : 'none', position:'fixed', inset:0, zIndex:230, background:'rgba(2,6,23,0.72)', alignItems:'flex-start', justifyContent:'center', padding: isMobile ? '8px' : '24px'}} onClick=${(e)=>{ if (e.target === e.currentTarget) setOpen(false); }}>
+        <div style=${{width:'100%', maxWidth:'760px', maxHeight:'100%', display:'flex', flexDirection:'column', gap:'10px', background:'var(--bg-page, #0b1120)', border:'1px solid var(--border-soft)', borderRadius:'18px', padding:'12px', boxShadow:'0 24px 60px -20px rgba(0,0,0,0.8)'}}>
+          <div style=${{display:'flex', gap:'8px', alignItems:'center'}}>
+            <button type="button" onClick=${()=>setTab('hinario')} style=${tabStyle('hinario')}>📖 Hinário</button>
+            <button type="button" onClick=${()=>setTab('musicas')} style=${tabStyle('musicas')}>🎤 Músicas e cantores</button>
+            <button type="button" onClick=${()=>setOpen(false)} title="Fechar" style=${{...btnGhost, padding:'8px 12px', fontSize:'14px'}}>✕</button>
+          </div>
+          <div style=${{overflowY:'auto', minHeight:0, display:'grid', gap:'10px'}}>
+            <div style=${{display: tab === 'hinario' ? 'block' : 'none'}}><${HinarioAdventistaTool} churchId=${churchId} /></div>
+            <div style=${{display: tab === 'musicas' ? 'block' : 'none'}}><${BuscaMusicasTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} /></div>
+          </div>
+        </div>
+      </div>`}
   `;
 }
 
@@ -11122,6 +11286,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
           // Preferência de lembretes automáticos e status reportado pelo programinha externo
           // (25/09) — sem cache local próprio, é só exibição, então basta refletir na sessão.
           if (Array.isArray(data.rehearsals) && data.rehearsals.length) { patch.rehearsals = data.rehearsals; saveEnsaios(church.id, data.rehearsals); }
+          if (Array.isArray(data.songLibrary) && data.songLibrary.length) { patch.songLibrary = data.songLibrary; saveSongLib(church.id, data.songLibrary); }
           if (data.backgroundImageDataUrl) { patch.backgroundImageDataUrl = data.backgroundImageDataUrl; gcSaveBackground(church.id, data.backgroundImageDataUrl); }
           if (data.lembretesAtivo !== undefined) patch.lembretesAtivo = data.lembretesAtivo;
           if (data.lembretesStatus) patch.lembretesStatus = data.lembretesStatus;
@@ -11166,6 +11331,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'config' ? html`<${ConfiguracoesView} key="config" church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       <${GlobalMixerWidget} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />
       <${RemoteControl} churchId=${church.id} church=${church} />
+      <${QuickSearchFab} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />
       <${StartupProjection} churchId=${church.id} church=${church} />
     </div>
   `;
