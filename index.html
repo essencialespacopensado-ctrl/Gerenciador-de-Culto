@@ -138,11 +138,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.134';
+const APP_VERSION = '2026-11-06.135';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.135',
+    date: '06/11/2026',
+    items: [
+      "Removido o aviso do mixer flutuante da tela da Liturgia.",
+    ]
+  },
   {
     version: '2026-11-06.134',
     date: '06/11/2026',
@@ -9390,11 +9397,6 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
         ▶️ Iniciar Modo Ao Vivo
       </button>
       ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
-
-      <div class="glass fade-up" style=${{padding:'12px 14px', borderRadius:'14px', marginBottom:'20px', display:'flex', alignItems:'center', gap:'10px', fontSize:'11.5px', color:'var(--text-mid)'}}>
-        <span style=${{fontSize:'18px'}}>🎚️</span>
-        <span>Os fundos musicais agora têm um mixer flutuante — aparece em qualquer aba, no botão do canto da tela. O áudio continua tocando mesmo trocando de aba.</span>
-      </div>
 
       <button onClick=${()=>setAssistantOpen(true)} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1.5px dashed var(--accent-1)', color:'var(--accent-1)', fontWeight:700}}>🤖 Assistente de Liturgia (colar texto)</button>
       <button onClick=${()=>setAdding(v=>!v)} style=${{...btnGhost, width:'100%', border:'1.5px dashed var(--border-soft)', padding:'12px', marginBottom:'8px'}}>➕ Acrescentar Atividade</button>
