@@ -140,11 +140,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.164';
+const APP_VERSION = '2026-11-07.165';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.165',
+    date: '07/11/2026',
+    items: [
+      "Padrões da Liturgia: sábado de manhã, domingo à noite e quarta à noite. Qualquer outro dia/turno é \"fora do padrão\": ao escolher \"Fazer uma liturgia diferente\", a Liturgia mostra um aviso com 💾 Tornar padrão ou 🗑️ Excluir (a excluída fica em Versões anteriores).",
+      "Modo Ao Vivo: em qualquer etapa com música/vídeo (Momento de Louvor, hino etc.) há o botão \"🔎 Buscar outra música / trocar\". Você busca ali mesmo, escolhe o resultado e ele vira a música da etapa, com o botão de projetar logo acima. Funciona também em etapas que ainda não têm música.",
+    ],
+  },
   {
     version: '2026-11-07.164',
     date: '07/11/2026',
@@ -9531,7 +9539,8 @@ function GlobalMixerWidget({ churchId, church, onUpdateChurch, mensagemItems, me
 
 // Modo Ao Vivo: uma tela em foco total pro operador seguir durante o culto de verdade — mostra só a
 // etapa atual (bem grande) e a próxima, com um botão único e óbvio pra avançar. Sem distração, sem menu.
-function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch, onAdvance, onClose, onOpenFinalize }) {
+function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch, onAdvance, onClose, onOpenFinalize, onEditAct }) {
+  const [swapOpen, setSwapOpen] = useState(false); // v.165: buscar/trocar a música da etapa durante o culto
   const ordered = useMemo(() => sections.flatMap(sec => activities.filter(a => a.section === sec)), [activities, sections]);
   const firstPending = ordered.findIndex(a => !a.done);
   const [idx, setIdx] = useState(firstPending === -1 ? 0 : firstPending);
@@ -9561,6 +9570,7 @@ function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch,
   const goNextRef = useRef(() => {});
 
   const current = ordered[idx];
+  useEffect(() => { setSwapOpen(false); }, [idx]);
   const next = ordered[idx+1];
   const isLast = idx >= ordered.length - 1;
   const currentHasMedia = !!(current && current.media && current.media.title);
@@ -9683,6 +9693,15 @@ function CultoLiveMode({ activities, sections, churchId, church, onUpdateChurch,
             <${ProjectButton} churchId=${churchId} media=${current.media} itemKey=${current.id} />
           </div>
         `}
+        ${onEditAct && current.category !== 'oracao' && current.category !== 'sermao' && !current.weeklyFixed && html`
+          <div style=${{width:'100%', maxWidth:'520px', textAlign:'center'}}>
+            <button type="button" onClick=${()=>setSwapOpen(v=>!v)} style=${{...btnGhost, padding:'8px 14px', fontSize:'12px', fontWeight:700}}>${swapOpen ? '▴ Fechar busca' : (current.media && current.media.title ? '🔎 Buscar outra música / trocar' : '🔎 Buscar música ou vídeo')}</button>
+            ${swapOpen && html`<div class="glass" style=${{marginTop:'8px', padding:'10px', borderRadius:'12px'}}>
+              <${MediaSearchField} key=${current.id} media=${null} searchKey=${'live-' + current.id} onChange=${(m)=>{ if (m) { onEditAct(current.id, { media: m }); setSwapOpen(false); } }} />
+              <div style=${{fontSize:'10.5px', color:'var(--text-dim)', marginTop:'6px'}}>Escolha um resultado: ele vira a música desta etapa (já aparece o botão de projetar acima).</div>
+            </div>`}
+          </div>
+        `}
 
         ${next && html`
           <div class="glass fade-up" style=${{marginTop:'28px', padding:'12px 20px', borderRadius:'14px', display:'flex', alignItems:'center', gap:'10px', maxWidth:'420px'}}>
@@ -9723,6 +9742,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   const gcTodayKey = (LITURGIA_DAYS.find(x => x.jsDay === gcNow.getDay()) || LITURGIA_DAYS[0]).key;
   const gcHr = gcNow.getHours();
   const gcTurno = gcHr < 12 ? 'manhã' : gcHr < 18 ? 'tarde' : 'noite';
+  const gcEhPadrao = (gcTodayKey === 'sabado' && gcTurno === 'manhã') || (gcTodayKey === 'domingo' && gcTurno === 'noite') || (gcTodayKey === 'quarta' && gcTurno === 'noite');
   const gcDateStr = gcNow.getFullYear() + '-' + (gcNow.getMonth()+1) + '-' + gcNow.getDate();
   const [day, setDay] = useState(toolsOnly ? 'sabado' : gcTodayKey);
   const isSabado = day === 'sabado';
@@ -9735,9 +9755,15 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     let seen = false; const k = 'gc_lit_auto_' + churchId + '_' + gcDateStr + '_' + gcTurno;
     try { seen = !!sessionStorage.getItem(k); sessionStorage.setItem(k, '1'); } catch (e) {}
     if (seen) return null;
-    if (gcTodayKey === 'sabado' && gcTurno === 'manhã') return loadHora('sabado') ? null : { step: 'hora' };
+    if (gcEhPadrao) return loadHora(gcTodayKey) ? null : { step: 'hora' };
     return { step: 'pergunta' };
   });
+  const foraKey = (d) => 'gc_lit_fora_' + churchId + '_' + d;
+  const loadFora = (d) => { try { return JSON.parse(localStorage.getItem(foraKey(d)) || 'null'); } catch (e) { return null; } };
+  const [foraInfo, setForaInfo] = useState(() => toolsOnly ? null : loadFora(gcTodayKey));
+  const setForaMark = (d, turno) => { const o = { turno, date: gcDateStr }; try { localStorage.setItem(foraKey(d), JSON.stringify(o)); } catch (e) {} setForaInfo(o); };
+  const clearFora = (d) => { try { localStorage.removeItem(foraKey(d)); } catch (e) {} setForaInfo(null); };
+  useEffect(() => { if (!toolsOnly) setForaInfo(loadFora(day)); }, [day]);
   const saveHora = (d, t) => { try { localStorage.setItem(horaKey(d), JSON.stringify({ date: gcDateStr, time: t })); } catch (e) {} setHoraIni(t); };
   useEffect(() => { if (!toolsOnly) setHoraIni(loadHora(day)); }, [day]);
   const readActivitiesFor = (d, churchObj) => {
@@ -10102,7 +10128,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       if (onUpdateChurch) onUpdateChurch({ otherDefaultLiturgy: merged });
     }
     pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Liturgia padrão ('+dayDef.label+') atualizada a partir da liturgia atual' });
-    setMakeDefaultGate(false);
+    setMakeDefaultGate(false); if (!toolsOnly) clearFora(day);
     alert('Pronto! A liturgia de agora foi salva como o novo padrão (já na nuvem). Toda vez que clicar em "Restaurar Padrão", tudo que não estiver trancado (🔒) volta pra esse ponto.');
   };
   // Botão "Tornar Padrão" (25/09, a pedido do Paulo): por enquanto sem exigir senha — se já existe uma
@@ -10229,6 +10255,16 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
         </div>
       </div>
 
+      ${foraInfo && html`<div class="glass" style=${{padding:'12px 16px', borderRadius:'14px', marginBottom:'16px', border:'1.5px solid var(--highlight)', display:'grid', gap:'8px'}}>
+        <div style=${{fontWeight:800, fontSize:'13px'}}>📌 Liturgia fora do padrão — ${dayDef.label}, de ${foraInfo.turno} (${foraInfo.date})</div>
+        <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Os padrões são sábado de manhã, domingo à noite e quarta à noite. Esta programação é diferente: você pode torná-la o padrão de ${dayDef.label} ou excluí-la (a versão excluída continua em "Versões anteriores").</div>
+        <div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px'}}>
+          <button onClick=${()=>doMakeDefault()} style=${{...btnGhost, padding:'10px', fontWeight:700, border:'1px solid var(--success-1)', color:'var(--success-1)'}}>💾 Tornar padrão</button>
+          <button onClick=${()=>{ if (confirm('Excluir esta liturgia fora do padrão de ' + dayDef.label + '? Ela continua guardada em "Versões anteriores".')) { setActivities([]); clearFora(day); } }} style=${{...btnGhost, padding:'10px', fontWeight:700, border:'1px solid var(--danger)', color:'var(--danger)'}}>🗑️ Excluir</button>
+        </div>
+        <button onClick=${()=>clearFora(day)} style=${{...btnGhost, padding:'6px', fontSize:'11px'}}>Manter como está (esconder este aviso)</button>
+      </div>`}
+      ${makeDefaultGate && html`<${DefaultLiturgyPasswordGate} hasPassword=${!!(savedDefault && savedDefault.password)} onUnlock=${makeCurrentDefault} onClose=${()=>setMakeDefaultGate(false)} />`}
       <button onClick=${()=>{ if (!horaIni) { setHoraDraft(''); setAutoAsk({ step: 'hora', thenLive: true }); } else setLiveMode(true); }} style=${{...btnPrimary, width:'100%', marginBottom:'20px', padding:'16px', fontSize:'15px', display:'flex', alignItems:'center', justifyContent:'center', gap:'8px'}}>
         ▶️ Iniciar Modo Ao Vivo
       </button>
@@ -10243,9 +10279,9 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
         <div class="glass" style=${{maxWidth:'460px', width:'100%', padding:'22px', borderRadius:'18px', display:'grid', gap:'12px'}}>
           ${autoAsk.step === 'pergunta' ? html`
             <div style=${{fontWeight:800, fontSize:'16px'}}>📅 Hoje é ${liturgiaDayLabel(gcTodayKey)}, de ${gcTurno}.</div>
-            <div style=${{fontSize:'13px', color:'var(--text-mid)'}}>${gcTodayKey === 'sabado' ? 'A liturgia padrão é a de sábado de manhã. Quer fazer uma liturgia diferente agora?' : 'Quer fazer uma liturgia diferente da que já está salva para ' + liturgiaDayLabel(gcTodayKey) + '?'}</div>
+            <div style=${{fontSize:'13px', color:'var(--text-mid)'}}>${gcTodayKey === 'sabado' ? 'Os horários padrão são sábado de manhã, domingo à noite e quarta à noite. Este está fora do padrão. Quer fazer uma liturgia diferente agora?' : 'Os horários padrão são sábado de manhã, domingo à noite e quarta à noite. Este está fora do padrão. Quer fazer uma liturgia diferente da que já está salva para ' + liturgiaDayLabel(gcTodayKey) + '?'}</div>
             <button onClick=${()=>{ setDay(gcTodayKey); setAutoAsk({ step: 'hora' }); setHoraDraft(loadHora(gcTodayKey)); }} style=${{...btnPrimary, padding:'12px'}}>Usar a liturgia de ${liturgiaDayLabel(gcTodayKey)} que já está salva</button>
-            <button onClick=${()=>{ setDay(gcTodayKey); setAutoAsk({ step: 'hora', diferente: true }); setHoraDraft(loadHora(gcTodayKey)); }} style=${{...btnGhost, padding:'12px', border:'1.5px dashed var(--accent-1)'}}>✏️ Fazer uma liturgia diferente</button>
+            <button onClick=${()=>{ setDay(gcTodayKey); setForaMark(gcTodayKey, gcTurno); setAutoAsk({ step: 'hora', diferente: true }); setHoraDraft(loadHora(gcTodayKey)); }} style=${{...btnGhost, padding:'12px', border:'1.5px dashed var(--accent-1)'}}>✏️ Fazer uma liturgia diferente</button>
           ` : html`
             <div style=${{fontWeight:800, fontSize:'16px'}}>🕐 Que horas começa a liturgia de ${dayDef.label}?</div>
             <input type="time" value=${horaDraft} onInput=${e=>setHoraDraft(e.target.value)} style=${{padding:'12px', fontSize:'18px', borderRadius:'10px', border:'1px solid var(--border-soft)', background:'transparent', color:'inherit'}} />
@@ -10255,7 +10291,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
         </div>
       </div>`}
       ${isSabado && assistantOpen && html`<${LiturgyAssistantModal} onImportAll=${importFromAssistant} onClose=${()=>setAssistantOpen(false)} defaultSection=${sections[0]} sectionLabels=${sectionLabels} />`}
-      ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
+      ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} onAdvance=${markDone} onEditAct=${(id, patch)=>setActivities(l=>l.map(a=>a.id===id?{...a,...patch}:a))} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
 
 
       ${finalizeOpen && finalizeSummary && html`<${FinalizeCultoModal} summary=${finalizeSummary} onConfirm=${confirmFinalize} onClose=${()=>setFinalizeOpen(false)} />`}
