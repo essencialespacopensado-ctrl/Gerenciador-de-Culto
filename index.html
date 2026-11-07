@@ -140,11 +140,21 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.152';
+const APP_VERSION = '2026-11-07.153';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.153',
+    date: '07/11/2026',
+    items: [
+      "Liturgia: o botão ✅ Finalizar Culto agora aparece logo abaixo do Modo Ao Vivo. Ao finalizar, o culto fica arquivado e a programação que acabou é LIMPA (volta exatamente pro Padrão). Sem Liturgia Padrão salva, nada é apagado.",
+      "Chat: a chamada de atenção agora tem duas opções — 🔔 com som (apito) e 🔕 sem som (só a tela tremendo e a vibração).",
+      "Controle remoto: o volume do Projetor movido no celular agora também move o volume geral no computador principal, e o do celular acompanha o do computador.",
+      "Ao abrir o app, a janela de projeção abre só na tela do projetor (não mais nas duas telas).",
+    ]
+  },
   {
     version: '2026-11-07.152',
     date: '07/11/2026',
@@ -4450,7 +4460,7 @@ function FinalizeCultoModal({ summary, onConfirm, onClose }) {
     <div style=${{position:'fixed', inset:0, background:'rgba(2,6,23,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:210, padding:'16px'}} onClick=${onClose}>
       <div class="glass fade-up" style=${{maxWidth:'440px', width:'100%', padding:'22px', borderRadius:'20px', display:'grid', gap:'12px', maxHeight:'82vh', overflowY:'auto'}} onClick=${e=>e.stopPropagation()}>
         <div style=${{fontWeight:800, fontSize:'15px'}}>✅ Finalizar Culto — ${summary.dayLabel ? summary.dayLabel+' ' : ''}${summary.dateLabel}</div>
-        <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Isso arquiva exatamente o que está sendo usado hoje: a programação, quem estava escalado e os dados de liderança.</div>
+        <div style=${{fontSize:'11.5px', color:'var(--text-mid)'}}>Isso arquiva exatamente o que está sendo usado hoje: a programação, quem estava escalado e os dados de liderança. Depois de arquivar, a programação que acabou é limpa (volta pro Padrão salvo; sem Padrão salvo, nada é apagado).</div>
         <div style=${{display:'grid', gap:'6px', fontSize:'12px'}}>
           <div><b>Atividades:</b> ${summary.activitiesCount}</div>
           <div><b>Pastor:</b> ${summary.pastorName || '—'} • <b>1º Ancião:</b> ${summary.elderName || '—'}</div>
@@ -4460,7 +4470,7 @@ function FinalizeCultoModal({ summary, onConfirm, onClose }) {
         </div>
         <div style=${{display:'flex', gap:'8px', justifyContent:'flex-end'}}>
           <button onClick=${onClose} style=${btnGhost}>Cancelar</button>
-          <button onClick=${onConfirm} style=${{...btnPrimary, width:'auto', padding:'9px 18px'}}>Arquivar Culto</button>
+          <button onClick=${onConfirm} style=${{...btnPrimary, width:'auto', padding:'9px 18px'}}>Arquivar e Limpar Programação</button>
         </div>
       </div>
     </div>
@@ -4533,7 +4543,7 @@ function gcViaPhone(type, arg) {
 }
 function setProjectionVolume(v) {
   projectionAudio.volume = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
-  if (gcPhoneRemote.on) { gcViaPhone('pvol', { value: projectionAudio.volume }); projectionAudioNotify(); return; }
+  if (gcPhoneRemote.on) { gcPhoneRemote.volAt = Date.now(); gcViaPhone('pvol', { value: projectionAudio.volume }); projectionAudioNotify(); return; }
   try { localStorage.setItem('gc_proj_audio_v1', JSON.stringify({ volume: projectionAudio.volume })); } catch(e) {}
   postToProjectionWindows({ gcType:'media_volume', value: projectionAudio.volume });
   if (projectionAudio.muted && projectionAudio.volume > 0) { setProjectionMuted(false); return; }
@@ -8766,7 +8776,11 @@ function StartupProjection({ churchId, church }) {
         const enabled = loadEnabledScreens(churchId);
         if (!enabled.length) return;
         const url = gcGetBackground(church) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-        fundoScreens(churchId, enabled).forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet: true, prep: true }); } catch (e) {} });
+        // v.153: ao abrir o app, a janela abre SÓ na tela do projetor (antes abria em todas as telas do Fundo). Sem tela marcada
+        // como projetor, abre só na primeira tela habilitada. As outras telas abrem quando você mandar algo pra elas.
+        const pj = enabled.filter(s => s.isProjector);
+        const startTargets = pj.length ? pj : enabled.slice(0, 1);
+        startTargets.forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet: true, prep: true }); } catch (e) {} });
       } catch (e) {}
     }, 2500);
     return () => clearTimeout(t);
@@ -8818,6 +8832,12 @@ function RemoteControl({ churchId, church }) {
   }, []);
   const blockedCount = isMain ? Object.keys(gcBlockedQueue).length : 0;
   gcPhoneRemote.on = !!(!isMain && meOk); gcPhoneRemote.docId = docId || ''; gcPhoneRemote.online = online;
+  // v.153: no celular, o volume do Projetor acompanha o do computador principal (que é quem manda).
+  useEffect(() => {
+    if (!gcPhoneRemote.on || !online || !st || typeof st.pvol !== 'number') return;
+    if (Date.now() - (gcPhoneRemote.volAt || 0) < 3000) return;
+    if (projectionAudio.volume !== st.pvol || !!projectionAudio.muted !== !!st.pmuted) { projectionAudio.volume = st.pvol; projectionAudio.muted = !!st.pmuted; projectionAudioNotify(); }
+  }, [st && st.pvol, st && st.pmuted, online, meOk, isMain]);
 
   const setLocal = (on) => { try { localStorage.setItem('gc_remote_main_' + churchId, on ? '1' : '0'); } catch (e) {} setLocalMain(on); };
   const claimMain = () => {
@@ -9063,7 +9083,7 @@ function gcChatTime(ts) {
   return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0') + ' ' + hm;
 }
 // v.114: "Chamar atenção" — treme a tela, apita e leva o operador direto pro Chat nos outros aparelhos.
-function gcShakeScreen() {
+function gcShakeScreen(silent) {
   try {
     if (!document.getElementById('gc-shake-style')) {
       const st = document.createElement('style'); st.id = 'gc-shake-style';
@@ -9074,7 +9094,7 @@ function gcShakeScreen() {
     if (root) { root.classList.remove('gc-shaking'); void root.offsetWidth; root.classList.add('gc-shaking'); setTimeout(() => root.classList.remove('gc-shaking'), 2700); }
     const fl = document.createElement('div'); fl.className = 'gc-attn-flash'; document.body.appendChild(fl); setTimeout(() => { try { fl.remove(); } catch (e) {} }, 2700);
     try { if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]); } catch (e) {}
-    try {
+    if (!silent) try {
       const AC = window.AudioContext || window.webkitAudioContext; const ac = new AC();
       [0, 0.35, 0.7].forEach(t0 => { const o = ac.createOscillator(), g = ac.createGain(); o.type = 'square'; o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(ac.destination); o.start(ac.currentTime + t0); o.stop(ac.currentTime + t0 + 0.22); });
       setTimeout(() => { try { ac.close(); } catch (e) {} }, 1600);
@@ -9102,8 +9122,8 @@ function ChatView({ churchId, church }) {
     try { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; } catch (e) {}
   }, [msgs.length]);
   const saveName = (v) => { nameTouched.current = true; setName(v); try { localStorage.setItem(chatNameKey(churchId), v); } catch (e) {} };
-  const send = async (attn) => {
-    const t = attn === true ? '🔔 CHAMANDO SUA ATENÇÃO! Veja o chat.' : text.trim().slice(0, 500);
+  const send = async (attn, silent) => {
+    const t = attn === true ? (silent ? '🔕 CHAMANDO SUA ATENÇÃO (sem som)! Veja o chat.' : '🔔 CHAMANDO SUA ATENÇÃO! Veja o chat.') : text.trim().slice(0, 500);
     const n = (name || '').trim().slice(0, 40);
     if (!t) return;
     if (!n) { setErr('Escreva seu nome antes de mandar a primeira mensagem.'); return; }
@@ -9111,7 +9131,7 @@ function ChatView({ churchId, church }) {
     setSending(true); setErr('');
     const ts = Date.now();
     const id = ts.toString(36) + '-' + devId.slice(-4) + Math.random().toString(36).slice(2, 5);
-    const fields = { ['chat.' + id]: attn === true ? { n, t, ts, d: devId, a: 1 } : { n, t, ts, d: devId } };
+    const fields = { ['chat.' + id]: attn === true ? (silent ? { n, t, ts, d: devId, a: 1, q: 1 } : { n, t, ts, d: devId, a: 1 }) : { n, t, ts, d: devId } };
     // Limpeza das mais antigas (só quem manda faz isso, e só quando passou do limite).
     try {
       const h = window.__fb && window.__fb.helpers;
@@ -9166,7 +9186,8 @@ function ChatView({ churchId, church }) {
         ${err && html`<div style=${{fontSize:'11.5px', color:'var(--danger)'}}>⚠️ ${err}</div>`}
         <div style=${{display:'flex', gap:'8px', alignItems:'flex-end'}}>
           <textarea value=${text} onInput=${e=>setText(e.target.value)} onKeyDown=${e=>{ if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} placeholder="Escreva a mensagem… (Enter envia, Shift+Enter quebra linha)" rows="2" maxlength="500" style=${{...inputStyle, flex:1, fontSize:'13px', fontFamily:'inherit', resize:'none'}}></textarea>
-          <button type="button" onClick=${() => send(true)} disabled=${sending} title="Faz a tela dos outros aparelhos tremer e abre o chat neles" style=${{...btnPrimary, width:'auto', padding:'12px 14px', background:'linear-gradient(135deg,#ef4444,#b91c1c)', opacity: sending ? 0.6 : 1}}>🔔 Chamar atenção</button>
+          <button type="button" onClick=${() => send(true, true)} disabled=${sending} title="Faz a tela dos outros aparelhos tremer e abre o chat neles, SEM apito" style=${{...btnPrimary, width:'auto', padding:'12px 14px', background:'linear-gradient(135deg,#64748b,#334155)', opacity: sending ? 0.6 : 1}}>🔕 Atenção sem som</button>
+          <button type="button" onClick=${() => send(true)} disabled=${sending} title="Faz a tela dos outros aparelhos tremer e abre o chat neles, COM apito" style=${{...btnPrimary, width:'auto', padding:'12px 14px', background:'linear-gradient(135deg,#ef4444,#b91c1c)', opacity: sending ? 0.6 : 1}}>🔔 Chamar atenção (com som)</button>
           <button type="button" onClick=${() => send()} disabled=${sending || !text.trim()} style=${{...btnPrimary, width:'auto', padding:'12px 18px', background:'linear-gradient(135deg,#db2777,#9d174d)', opacity: (sending || !text.trim()) ? 0.6 : 1}}>${sending ? '…' : '📨 Enviar'}</button>
         </div>
       </div>
@@ -9658,7 +9679,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   const sectionLabels = isSabado ? SABADO_SECTION_LABELS : OUTRO_DIA_SECTION_LABELS;
   const dayDef = LITURGIA_DAYS.find(d => d.key === day) || LITURGIA_DAYS[0];
 
-  const zerarProgramacao = () => {
+  const zerarProgramacao = (silent) => {
     const def = isSabado ? ((church && church.defaultLiturgy) || loadDefaultLiturgy(churchId)) : ((church && church.otherDefaultLiturgy && church.otherDefaultLiturgy[day]) || loadDefaultLiturgy(churchId, day));
     const hasDefault = def && def.versions && def.versions.length > 0;
     // Pedido do Paulo (29/09): Momento de Louvor e Mensagem Musical são escolhidos de novo toda
@@ -9686,13 +9707,14 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       if (onUpdateChurch) onUpdateChurch({ schedules: { ...((church && church.schedules) || {}), [scheduleId]: nextSched } });
     };
     if (!hasDefault) {
+      if (silent === true) return false;
       if (!window.confirm('Você ainda não tem uma Liturgia Padrão salva. Isso vai APAGAR toda a programação atual, ficando vazia. Continuar?')) return;
       setActivities([]);
       clearSpecialMusicIfSabado();
       pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada (ficou vazia — nenhuma Liturgia Padrão salva ainda)' });
       return;
     }
-    if (!window.confirm('Isso vai APAGAR a programação atual e colocar no lugar exatamente a Liturgia Padrão salva — nada além dela fica. Continuar?')) return;
+    if (silent !== true && !window.confirm('Isso vai APAGAR a programação atual e colocar no lugar exatamente a Liturgia Padrão salva — nada além dela fica. Continuar?')) return;
     // Pedido do Paulo (29/09): ao zerar, qualquer mídia avulsa que não seja de Trilha Fixa
     // (📅 fromFixedTrack) nem de Busca Semanal (dynamic — Provai e Vede/Informativo/Vida e Saúde)
     // precisa sair, mesmo que tenha ficado gravada dentro da própria Liturgia Padrão salva (por
@@ -9700,6 +9722,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     setActivities(def.versions[0].list.map(a => ({ ...stripMedia(a), done:false })));
     clearSpecialMusicIfSabado();
     pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Programação zerada e recolocada exatamente igual à Liturgia Padrão (mídia avulsa que não é trilha fixa/busca semanal removida — inclui Momento de Louvor e Mensagem Musical)' });
+    return true;
   };
   const addAt = (act, refId, position) => {
     setActivities(list => {
@@ -9846,6 +9869,8 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     if (onUpdateChurch) onUpdateChurch({ archive: newArch });
     pushLog(loadLog(), { type:'atualizacao', churchName: churchName, churchId: churchId, detail: 'Culto ('+s.dayLabel+') finalizado e arquivado ('+s.dateLabel+')' });
     setFinalizeOpen(false);
+    // v.153: o culto já está arquivado acima; agora limpa a programação que acabou (volta pro Padrão). Sem Padrão salvo, não apaga nada.
+    try { zerarProgramacao(true); } catch (e) {}
   };
 
   const totalDone = activities.filter(a=>a.done).length;
@@ -9868,7 +9893,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       ${makeDefaultGate && html`<${DefaultLiturgyPasswordGate} hasPassword=${!!(savedDefault && savedDefault.password)} onUnlock=${makeCurrentDefault} onClose=${()=>setMakeDefaultGate(false)} />`}
       ${adding && html`<${AddActivityForm} defaultSection=${sections[0]} activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracks} sectionLabels=${sectionLabels} />`}
       <button onClick=${openFinalize} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1px solid var(--success-1)', color:'var(--success-1)'}}>✅ Finalizar Culto</button>
-      <button onClick=${zerarProgramacao} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1px solid var(--danger)', color:'var(--danger)'}}>🧹 Zerar Programação (volta exatamente pro Padrão)</button>
+      <button onClick=${()=>zerarProgramacao()} style=${{...btnGhost, width:'100%', marginBottom:'8px', padding:'12px', border:'1px solid var(--danger)', color:'var(--danger)'}}>🧹 Zerar Programação (volta exatamente pro Padrão)</button>
       ${actIsDirty(churchId, day) && html`<div style=${{fontSize:'11.5px', color:'var(--highlight)', marginBottom:'8px'}}>⚠️ A última alteração ainda não chegou na nuvem. Está salva neste aparelho e o app tenta enviar de novo sozinho.</div>`}
       <details style=${{marginBottom:'8px'}}>
         <summary style=${{cursor:'pointer', fontSize:'12px', fontWeight:800, padding:'8px 2px'}}>🕘 Versões anteriores da programação de ${dayDef.label} (neste aparelho)</summary>
@@ -9906,6 +9931,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       <button onClick=${()=>setLiveMode(true)} style=${{...btnPrimary, width:'100%', marginBottom:'20px', padding:'16px', fontSize:'15px', display:'flex', alignItems:'center', justifyContent:'center', gap:'8px'}}>
         ▶️ Iniciar Modo Ao Vivo
       </button>
+      <button onClick=${openFinalize} style=${{...btnGhost, width:'100%', marginBottom:'20px', padding:'14px', fontSize:'14px', fontWeight:800, border:'1.5px solid var(--success-1)', color:'var(--success-1)'}}>✅ Finalizar Culto</button>
       ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
 
 
@@ -11975,7 +12001,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       if (attnSeen.current.has(m.id)) return;
       attnSeen.current.add(m.id);
       if (m.d === me || Date.now() - (m.ts || 0) > 60000) return;
-      setTab('chat'); gcShakeScreen();
+      setTab('chat'); gcShakeScreen(!!m.q);
     });
   }, [chatDoc && chatDoc.chat]);
   const chatUnread = useMemo(() => gcChatUnread(church.id, chatDoc && chatDoc.chat), [chatDoc && chatDoc.chat, tab]);
