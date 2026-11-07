@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.156';
+const APP_VERSION = '2026-11-07.157';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.157',
+    date: '07/11/2026',
+    items: [
+      "Botão 🎧 Operador não projeta mais no projetor nem em todas as telas: só vai para uma tela de operador de verdade (diferente do Projetor). Sem tela de operador cadastrada, avisa e não projeta nada.",
+    ],
+  },
   {
     version: '2026-11-07.156',
     date: '07/11/2026',
@@ -3686,9 +3693,9 @@ function ProjectButton({ churchId, media, itemKey, only, remote }) {
         }
       } else {
         // v.104: a tela de Retorno é independente — não entra no "Operador".
-        targets = enabled.filter(s => !s.isProjector && !s.isReturnScreen);
+        targets = gcOperatorScreens(enabled);
         if (targets.length === 0) {
-          alert('Nenhuma tela de operador configurada ainda. Vá na aba "Telas", habilite uma tela a mais (sem marcar como Projetor nem Retorno) pra usar esse botão sem som.');
+          alert('Não há tela de operador separada do projetor. Vá na aba "Telas", marque uma tela como Projetor e habilite OUTRA tela (sem marcar como Projetor nem Retorno) pra usar o Operador. Nada foi projetado.');
           return;
         }
       }
@@ -3798,8 +3805,8 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
         if (ret.length === 0) { alert('Nenhuma tela de retorno configurada ainda. Vá na aba "Telas" e marque uma tela como "Definir como Retorno".'); return; }
         scrs = ret;
       } else {
-        scrs = enabled.filter(s => !s.isProjector && !s.isReturnScreen);
-        if (scrs.length === 0) { alert('Nenhuma tela de operador configurada ainda. Vá na aba "Telas", habilite uma tela a mais (sem marcar como Projetor nem Retorno) pra usar esse botão sem som.'); return; }
+        scrs = gcOperatorScreens(enabled);
+        if (scrs.length === 0) { alert('Não há tela de operador separada do projetor. Vá na aba "Telas", marque uma tela como Projetor e habilite OUTRA tela (sem marcar como Projetor nem Retorno) pra usar o Operador. Nada foi projetado.'); return; }
       }
       sendToMany(scrs);
     } catch (e) {
@@ -4727,6 +4734,15 @@ function saveEnabledScreens(churchId, list) {
   try { localStorage.setItem(screensEnabledKey(churchId), JSON.stringify(list)); } catch(e) {}
 }
 function screenSig(s) { return s.width+'x'+s.height+'@'+s.left+','+s.top; }
+// v.157: "Operador" nunca pode cair no projetor. Só vale tela habilitada que NÃO é Projetor/Retorno e que não
+// está na mesma posição de um Projetor (monitor duplicado). Sem nenhuma tela marcada como Projetor (ou só uma
+// tela cadastrada), não existe tela de operador — o botão avisa em vez de projetar em todas.
+function gcOperatorScreens(enabled) {
+  const list = enabled || [];
+  const proj = list.filter(s => s.isProjector);
+  if (proj.length === 0) return [];
+  return list.filter(s => !s.isProjector && !s.isReturnScreen && !proj.some(p => screenSig(p) === screenSig(s)));
+}
 
 // Telas adicionadas "na mão" (pedido do Paulo, 25/09) — pra quando o navegador não detecta uma tela
 // sozinho, ou pra deixar um "slot" já configurado com posição/tamanho antes mesmo de plugar o
@@ -8644,7 +8660,7 @@ function remoteProjectMedia(churchId, media, itemKey, which, onErr) {
     targets = enabled.filter(s => s.isReturnScreen);
     if (targets.length === 0) return 'Nenhuma tela de retorno configurada na aba Telas.';
   } else {
-    targets = enabled.filter(s => !s.isProjector && !s.isReturnScreen);
+    targets = gcOperatorScreens(enabled);
     if (targets.length === 0) return 'Nenhuma tela de operador configurada na aba Telas.';
   }
   targets = targets.filter(scr => routeAllows(churchId, 'video', scr));
