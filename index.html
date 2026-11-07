@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.158';
+const APP_VERSION = '2026-11-07.159';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.159',
+    date: '07/11/2026',
+    items: [
+      "Nova aba 🔎 Busca geral (grupo Músicas): página inteira com 4 botões de modo (Geral, Novo Hinário, Hinário antigo, Coletâneas), UM campo grande de busca e o botão Buscar. Cada resultado tem foto, nome, canal e duração, com os botões de projetar (Projetor/Operador/Retorno), ➕ Enviar para a Liturgia, ▶ Ver e ⭐. A barra de busca de cima continua nas outras abas, como estava.",
+    ],
+  },
   {
     version: '2026-11-07.158',
     date: '07/11/2026',
@@ -3414,6 +3421,7 @@ const NAV_ITEMS = [
   { tab:'telas', icon:'📺', label:'Telas', group:'Culto', c1:'#8b5cf6', c2:'#6d28d9' },
   { tab:'mensagem', icon:'🎤', label:'Mensagem', group:'Culto', c1:'#9333ea', c2:'#6d28d9' },
   { tab:'chat', icon:'💬', label:'Chat', group:'Culto', c1:'#db2777', c2:'#9d174d' },
+  { tab:'busca', icon:'🔎', label:'Busca geral', group:'Músicas', c1:'#0284c7', c2:'#075985' },
   { tab:'musicas', icon:'🎶', label:'Músicas', group:'Músicas', c1:'#2563eb', c2:'#1e3a8a' },
   { tab:'buscas', icon:'🔎', label:'Buscas', group:'Organização', c1:'#0f766e', c2:'#134e4a' },
   { tab:'gestao', icon:'👥', label:'Gestão', group:'Organização', c1:'#0891b2', c2:'#155e75' },
@@ -3422,6 +3430,12 @@ const NAV_ITEMS = [
   { tab:'config', icon:'⚙️', label:'Config.', group:'Sistema', c1:'#4d7c0f', c2:'#365314' },
 ];
 const NAV_GROUPS = ['Culto', 'Músicas', 'Organização', 'Sistema'];
+function BuscaGeralView() {
+  return html`<div style=${{maxWidth:'900px', margin:'0 auto', padding:'18px 16px 90px', display:'grid', gap:'12px'}}>
+    <div style=${{fontSize:'12px', color:'var(--text-dim)'}}>Busque músicas, cantores, playbacks e letras no YouTube, ou hinos do Hinário e álbuns das Coletâneas. Em cada resultado: projetar (Projetor/Operador/Retorno), enviar para a Liturgia ou assistir.</div>
+    <div id="gc-search-tab-slot"></div>
+  </div>`;
+}
 
 function NavTile({ icon, label, c1, c2, active, onClick, delay, badge }) {
   return html`
@@ -10244,7 +10258,7 @@ function gcMatchAll(typed, text) {
   const joined = ' ' + words.join(' ') + ' ';
   return toks.every(w => /^\d+$/.test(w) ? words.includes(w) : (joined.includes(w) || (w.length >= 5 && words.some(x => gcEdit1(w, x)))));
 }
-function QuickSearchFab({ churchId, church, onUpdateChurch }) {
+function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
   const isMobile = useIsMobile();
   const docId = church && (church.fbDocId || church.docId);
   const open = true;
@@ -10316,6 +10330,16 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   useEffect(() => { setLimit(8); }, [q]);
   const [slot, setSlot] = useState(null);
   useEffect(() => { const f = () => { const el = document.getElementById('gc-search-slot'); setSlot(p => p === el ? p : el); }; f(); const iv = setInterval(f, 800); return () => clearInterval(iv); }, []);
+  // v.159: aba "Busca geral" — a mesma busca, mas em página inteira (um campo só, 4 botões de modo e resultados soltos na tela).
+  const inTab = tab === 'busca';
+  const [tslot, setTslot] = useState(null);
+  useEffect(() => { if (!inTab) { setTslot(null); return; } const f = () => { const el = document.getElementById('gc-search-tab-slot'); setTslot(p => p === el ? p : el); }; f(); const iv = setInterval(f, 300); return () => clearInterval(iv); }, [inTab]);
+  useEffect(() => { if (inTab && tslot) { const t = setTimeout(() => { try { inputRef.current && inputRef.current.focus(); } catch(e) {} }, 200); return () => clearTimeout(t); } }, [inTab, !!tslot]);
+  const MODES = [['geral','🔎 Geral'],['novo','📖 Novo Hinário'],['antigo','📜 Hinário antigo'],['colet','💿 Coletâneas']];
+  const PH = { geral:'Digite música, cantor, playback, letra…', novo:'Número ou nome do hino (Novo Hinário)', antigo:'Número ou nome do hino (Hinário antigo)', colet:'Música ou álbum (Coletâneas e CD Jovem)' };
+  const setModeTab = (k) => { if (mode !== k) { modeTexts.current[mode] = q; setModeRaw(k); setQ(modeTexts.current[k] || ''); setYt(null); setAlbums(null); setErr(''); } try { inputRef.current && inputRef.current.focus(); } catch(e) {} };
+  useEffect(() => { modeTexts.current[mode] = q; }, [q, mode]);
+  const target = inTab ? tslot : slot;
   useEffect(() => { const on = () => { try { inputRef.current && inputRef.current.focus(); } catch(e) {} }; window.addEventListener('gc-open-search', on); return () => window.removeEventListener('gc-open-search', on); }, []);
 
   const nq = hinoNormalize(q).trim();
@@ -10377,13 +10401,14 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     all = all.filter(v => {
       if (inAlb.has(v.videoId)) return false;
       const n = hinoNormalize(v.title);
-      if (!gcMatchAll(s, v.title + (mode === 'colet' || mode === 'geral' ? ' ' + (v.channel || '') : ''))) return false;
-      if (mode === 'geral') return true;
+      if (mode === 'geral') return true; // v.159: busca GERAL mostra tudo que o YouTube achou (os que batem com todas as palavras vêm primeiro, abaixo)
+      if (!gcMatchAll(s, v.title + (mode === 'colet' ? ' ' + (v.channel || '') : ''))) return false;
       if (mode === 'antigo') return !/novo hin/.test(n) && /hinario|hino/.test(n);
       if (mode === 'colet' && /hinario adventista|\bhino \d/.test(n)) return false; // coletâneas/CD Jovem não misturam com hinário
       if (mode === 'novo' && !/(hinario|hino)/.test(n)) return false;
       return isOfficialCh(v.channel);
     });
+    if (mode === 'geral') { const hit = (v) => gcMatchAll(s, v.title + ' ' + (v.channel || '')) ? 1 : 0; setYt([...gcLyricsFirst(all.filter(v => hit(v))), ...gcLyricsFirst(all.filter(v => !hit(v)))]); return; }
     setYt(gcLyricsFirst(all));
   };
   // Hinário antigo e Coletâneas/CD Jovem: busca sozinha ao parar de digitar (uma consulta por vez).
@@ -10475,11 +10500,21 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   const secTitle = (txt) => html`<div style=${{fontSize:'10.5px', fontWeight:900, letterSpacing:'1.4px', textTransform:'uppercase', color:'var(--highlight)', padding:'4px 2px 0'}}>${txt}</div>`;
 
   return html`
-    ${slot && ReactDOM.createPortal(html`
+    ${target && ReactDOM.createPortal(html`
       <div style=${{width:'100%', minWidth:0}}>
-        <div style=${{width:'100%', maxWidth:'none', display:'flex', flexDirection:'column', gap:'8px', ...(nq ? {maxHeight:'min(56vh, 520px)', background:'rgba(8,18,40,0.97)', border:'1px solid rgba(56,189,248,0.4)', borderRadius:'16px', padding:'10px'} : {})}}>
+        <div style=${{width:'100%', maxWidth:'none', display:'flex', flexDirection:'column', gap:'8px', ...((nq && !inTab) ? {maxHeight:'min(56vh, 520px)', background:'rgba(8,18,40,0.97)', border:'1px solid rgba(56,189,248,0.4)', borderRadius:'16px', padding:'10px'} : {})}}>
           <form onSubmit=${(e)=>{ e.preventDefault(); doYoutube(); }} style=${{display:'flex', gap:'8px', alignItems:'center'}}>
-            <div style=${{flex:1, minWidth:0, display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(170px, 1fr))', gap:'8px'}}>
+            ${inTab ? html`<div style=${{flex:1, minWidth:0, display:'grid', gap:'10px'}}>
+              <div style=${{display:'flex', gap:'8px', flexWrap:'wrap'}}>
+                ${MODES.map(([k, l]) => html`<button key=${k} type="button" onClick=${() => setModeTab(k)} style=${{padding:'9px 15px', borderRadius:'999px', fontSize:'13px', fontWeight:800, cursor:'pointer', border:'1.5px solid ' + (mode === k ? 'var(--highlight)' : 'var(--border-soft)'), background: mode === k ? 'linear-gradient(90deg, rgba(14,165,233,0.35), rgba(139,92,246,0.35))' : 'transparent', color: mode === k ? '#fff' : 'var(--text-mid)'}}>${l}</button>`)}
+              </div>
+              <div style=${{display:'flex', gap:'8px', alignItems:'center'}}>
+                <input ref=${inputRef} aria-label="Campo de busca" value=${q} onChange=${e => { setQ(e.target.value); }} placeholder=${PH[mode]} style=${{...inputStyle, flex:1, minWidth:0, fontSize:'16px', fontWeight:700, padding:'14px 18px', borderRadius:'999px', border:'1.5px solid rgba(56,189,248,0.85)', background:'linear-gradient(90deg, rgba(14,165,233,0.18), rgba(139,92,246,0.18))'}} />
+                <button type="submit" style=${{...btnPrimary, width:'auto', padding:'13px 20px', fontSize:'14px', whiteSpace:'nowrap'}}>${loading ? 'Buscando…' : '🔎 Buscar'}</button>
+                ${q && html`<button type="button" onClick=${() => { setQ(''); setYt(null); setAlbums(null); setErr(''); }} aria-label="Limpar" style=${{...btnGhost, padding:'12px 14px', fontSize:'14px'}}>✕</button>`}
+              </div>
+            </div>` : ''}
+            <div style=${{flex:1, minWidth:0, display: inTab ? 'none' : 'grid', gridTemplateColumns:'repeat(auto-fit, minmax(170px, 1fr))', gap:'8px'}}>
               ${[['geral','🔎 Busca geral no YouTube — música, cantor, playback…'],['novo','📖 Novo Hinário — nº ou nome'],['antigo','📜 Hinário antigo — nº ou nome'],['colet','💿 Coletâneas e CD Jovem']].map(([k, ph], i) => html`<input key=${k} ref=${i === 0 ? inputRef : null} aria-label=${ph} value=${mode === k ? q : ''} onChange=${e=>typeIn(k, e.target.value)} onFocus=${()=>{ if (mode !== k) { setModeRaw(k); setQ(''); setYt(null); setErr(''); } }} placeholder=${ph.split(' — ')[0]} style=${{...inputStyle, minWidth:0, fontSize:'14px', padding:'12px 14px', borderRadius:'14px', border:'1px solid ' + (mode === k && q ? 'var(--highlight)' : 'rgba(56,189,248,0.5)'), boxShadow: mode === k && q ? '0 0 20px -8px rgba(56,189,248,0.9)' : 'none', ...(k === 'geral' ? { gridColumn:'1 / -1', fontSize:'15px', fontWeight:700, padding:'13px 18px', borderRadius:'999px', border:'1.5px solid rgba(56,189,248,0.85)', background:'linear-gradient(90deg, rgba(14,165,233,0.22), rgba(139,92,246,0.22))', boxShadow:'0 0 26px -4px rgba(56,189,248,0.9), inset 0 0 18px -6px rgba(56,189,248,0.7)', animation: (mode === k && q) ? 'none' : 'gcSearchGlow 2.4s ease-in-out infinite' } : {})}} />`)}
             </div>
           </form>
@@ -10502,7 +10537,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
             ${yt && yt.map(r => row({ compact: mode === 'colet', key:'y-'+r.videoId, vid:r.videoId, title:r.title, sub:[r.channel, r.duration, r.published].filter(Boolean).join(' • '), thumb:r.thumbnail, yt:r, remoteKey:'busca-' + r.videoId }))}
           </div>`}
         </div>
-      </div>`, slot)}
+      </div>`, target)}
   `;
 }
 
@@ -12154,6 +12189,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'gestao' ? html`<${GestaoView} key="gestao" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       ${tab === 'telas' ? html`<${TelasView} key="telas" churchId=${church.id} />` : ''}
       ${tab === 'mensagem' ? html`<${MensagemView} key="mensagem" churchId=${church.id} items=${mensagemItems} setItems=${setMensagemItems} current=${mensagemCurrent} setCurrent=${setMensagemCurrent} />` : ''}
+      ${tab === 'busca' ? html`<${BuscaGeralView} key="busca" />` : ''}
       ${tab === 'buscas' ? html`<${BuscasSemanaisView} key="buscas" churchId=${church.id} />` : ''}
       ${tab === 'chat' ? html`<${ChatView} key="chat" churchId=${church.id} church=${church} />` : ''}
       ${tab === 'ferramentas' ? html`<${FerramentasView} key="ferramentas" churchName=${church.name} churchId=${church.id} churchLogo=${church.logoDataUrl || ''} />` : ''}
@@ -12161,7 +12197,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       ${tab === 'config' ? html`<${ConfiguracoesView} key="config" church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       <${GlobalMixerWidget} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />
       <${RemoteControl} churchId=${church.id} church=${church} />
-      <${QuickSearchFab} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />
+      <${QuickSearchFab} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} tab=${tab} />
       <${StartupProjection} churchId=${church.id} church=${church} />
     </div>
   `;
