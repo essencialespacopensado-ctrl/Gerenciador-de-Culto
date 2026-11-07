@@ -140,11 +140,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.149';
+const APP_VERSION = '2026-11-06.150';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.150',
+    date: '06/11/2026',
+    items: [
+      "Ensaios: o Console agora tem a BARRA DE PROGRESSO do vídeo da projeção (clique/arraste para voltar a qualquer ponto), ⏪10s / 10s⏩ / ⏮ Início e botões de trecho — Estrofe 1, 2, 3, Refrão e Ponte. Toque num botão tracejado quando a música chegar naquele trecho para marcá-lo; depois é só tocar para voltar ali. O trecho em que a música está fica aceso. Os pontos ficam guardados por música (neste aparelho e na nuvem da igreja).",
+      "Vídeos do YouTube na projeção: pedem sempre a maior qualidade disponível (e repetem o pedido logo depois de começar a tocar).",
+    ]
+  },
   {
     version: '2026-11-06.149',
     date: '06/11/2026',
@@ -4507,12 +4515,16 @@ function setProjectionMuted(on) {
   postToProjectionWindows({ gcType:'media_mute', on: projectionAudio.muted });
   projectionAudioNotify();
 }
+let gcProjTime = null; // v.150: posição do vídeo na projeção ({t, d, id, at})
+function seekAllScreens(t) { Object.keys(projectionWindows).forEach(sig => { const w = projectionWindows[sig]; try { if (w && !w.closed) w.postMessage({ gcType:'media_seek', t }, '*'); } catch (e) {} }); }
+function seekRelAllScreens(dt) { Object.keys(projectionWindows).forEach(sig => { const w = projectionWindows[sig]; try { if (w && !w.closed) w.postMessage({ gcType:'media_seekrel', dt }, '*'); } catch (e) {} }); }
 window.addEventListener('message', (e) => {
   const d = e.data;
   if (!d || typeof d !== 'object' || !d.gcEvt || e.origin !== window.location.origin) return;
   if (d.gcEvt === 'sound_blocked') { projectionAudio.muted = true; window.__gcSoundBlocked = true; }
   else if (d.gcEvt === 'sound_on') { projectionAudio.muted = false; window.__gcSoundBlocked = false; }
   else if (d.gcEvt === 'state') projectionAudio.playing = (d.s === 1 || d.s === 3);
+  else if (d.gcEvt === 'time') { gcProjTime = { t: +d.t || 0, d: +d.d || 0, id: String(d.id || ''), at: Date.now() }; try { window.dispatchEvent(new Event('gc-proj-time')); } catch (er) {} return; }
   projectionAudioNotify();
 });
 
@@ -4826,7 +4838,7 @@ function videoEmbedHtml(media) {
   // a reprodução automática). modestbranding/rel/iv_load_policy tiram distrações da tela; playsinline
   // evita que o celular assuma um player nativo separado em vez da nossa própria tela cheia;
   // enablejsapi permite mandar o comando de "play" por script se a reprodução automática for bloqueada.
-  const params = 'autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=hd1080&playsinline=1&enablejsapi=1&mute=0';
+  const params = 'autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=highres&playsinline=1&enablejsapi=1&mute=0';
   const src = media.videoId
     ? 'https://www.youtube-nocookie.com/embed/'+media.videoId+'?'+params
     : media.playlistId
@@ -5038,7 +5050,7 @@ function projectionShellHtml(openerActive) {
         + 'var fadeMs=500;overlay.style.transition="opacity "+fadeMs+"ms ease";overlay.style.opacity="0";'
         + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";closeIfStageEmpty();},fadeMs);'
       + '}'
-      + 'function gcPrep(){try{ytPlayer.unloadModule&&ytPlayer.unloadModule("captions");}catch(e){}try{ytPlayer.setOption&&ytPlayer.setOption("captions","track",{});}catch(e){}try{ytPlayer.setPlaybackQuality&&ytPlayer.setPlaybackQuality("hd1080");}catch(e){}}'
+      + 'function gcPrep(){try{ytPlayer.unloadModule&&ytPlayer.unloadModule("captions");}catch(e){}try{ytPlayer.setOption&&ytPlayer.setOption("captions","track",{});}catch(e){}try{var ql=(ytPlayer.getAvailableQualityLevels&&ytPlayer.getAvailableQualityLevels())||[];var bq=ql.length&&ql[0]!=="auto"?ql[0]:"highres";if(ytPlayer.setPlaybackQualityRange)ytPlayer.setPlaybackQualityRange(bq,bq);if(ytPlayer.setPlaybackQuality)ytPlayer.setPlaybackQuality(bq);}catch(e){}}'
       + 'function gcPrepHint(){if(document.getElementById("gc-prep"))return;var h=document.createElement("div");h.id="gc-prep";h.textContent="\uD83D\uDC46 Clique (ou aperte qualquer tecla) UMA vez para liberar o som da projeção";h.style.cssText="position:fixed;left:50%;bottom:6%;transform:translateX(-50%);z-index:9998;padding:14px 26px;border-radius:999px;background:rgba(0,0,0,.65);color:#fff;font:700 clamp(16px,2.2vw,30px) sans-serif;pointer-events:none;box-shadow:0 0 24px rgba(0,0,0,.6);";document.body.appendChild(h);var rm=function(){try{h.remove();}catch(e){}document.removeEventListener("click",rm,true);};document.addEventListener("click",rm,true);}'
       + 'function gcHint(show){var h=document.getElementById("gc-hint");if(!show){if(h)h.style.display="none";return;}if(!h){h=document.createElement("div");h.id="gc-hint";h.textContent="\uD83D\uDD0A Clique uma vez em qualquer lugar desta tela para liberar o som";h.style.cssText="position:fixed;right:14px;bottom:12px;z-index:9;padding:6px 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#9fe;font:600 13px sans-serif;pointer-events:none;opacity:.8;";document.body.appendChild(h);setTimeout(function(){h.style.display="none";},30000);}h.style.display="block";}'
       // gcOpenerActive: a janela principal já tinha recebido clique do operador quando abriu esta janela
@@ -5070,7 +5082,7 @@ function projectionShellHtml(openerActive) {
           + 'if(tries>=12)clearInterval(t);'
         + '},500);'
       + '}'
-      + 'function bindYt(mute){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onReady:function(){try{if(mute||projMuted)ytPlayer.mute();else ytPlayer.unMute();ytPlayer.setVolume(projVol);}catch(e){}gcPrep();try{ytPlayer.playVideo();}catch(e){}gcEnsurePlay(mute);},onStateChange:function(e){gcNotify({gcEvt:"state",s:e.data});if(e.data===1){gcPrep();}if(e.data===0){fadeOutEnd();notifyMediaEnded();}}}});}catch(e){}}}'
+      + 'function bindYt(mute){if(window.YT&&window.YT.Player){try{ytPlayer=new YT.Player("gc-player",{events:{onReady:function(){try{if(mute||projMuted)ytPlayer.mute();else ytPlayer.unMute();ytPlayer.setVolume(projVol);}catch(e){}gcPrep();try{ytPlayer.playVideo();}catch(e){}gcEnsurePlay(mute);},onStateChange:function(e){gcNotify({gcEvt:"state",s:e.data});if(e.data===1){gcPrep();setTimeout(gcPrep,1500);setTimeout(gcPrep,5000);}if(e.data===0){fadeOutEnd();notifyMediaEnded();}}}});}catch(e){}}}'
       + 'function fadeOutEnd(){'
         + 'if(fading||!ytPlayer)return;fading=true;'
         + 'var startVol=100;try{startVol=ytPlayer.getVolume();}catch(e){}'
@@ -5084,7 +5096,7 @@ function projectionShellHtml(openerActive) {
       + 'function renderVideo(media,mute){'
         + 'stage.innerHTML="";fading=false;ytPlayer=null;localVideoEl=null;clearCronoInterval();gcSoundPending=false;gcAutoTried=false;gcUserPaused=false;gcHint(false);if(frozenCanvas){try{frozenCanvas.remove();}catch(e){}frozenCanvas=null;}frozenYt=false;'
         + 'if(!mute&&!projMuted&&!gcCanSound()){projMuted=true;gcSoundPending=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});}'
-        + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=hd1080&playsinline=1&enablejsapi=1&mute="+((mute||projMuted)?1:0);'
+        + 'var params="autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=highres&playsinline=1&enablejsapi=1&mute="+((mute||projMuted)?1:0);'
         + 'var src=media&&media.videoId?("https://www.youtube-nocookie.com/embed/"+media.videoId+"?"+params)'
           + ':media&&media.playlistId?("https://www.youtube-nocookie.com/embed/videoseries?list="+media.playlistId+"&"+params):null;'
         + 'if(!src){if(media&&media.url)window.location.href=media.url;return;}'
@@ -5098,12 +5110,12 @@ function projectionShellHtml(openerActive) {
       + 'var ytScript=document.createElement("scr"+"ipt");ytScript.src="https://www.youtube.com/iframe_api";document.head.appendChild(ytScript);'
       + 'window.addEventListener("message",function(ev){'
         + 'var d=ev.data;if(!d||typeof d!=="object")return;'
-        + 'if(d.gcType==="media"){lastMute=!!d.mute;if(typeof d.vol==="number")projVol=d.vol;projMuted=!!d.pmute;renderVideo(d.media,d.mute);}'
+        + 'if(d.gcType==="media"){curId=String((d.media&&(d.media.videoId||d.media.url))||"");lastMute=!!d.mute;if(typeof d.vol==="number")projVol=d.vol;projMuted=!!d.pmute;renderVideo(d.media,d.mute);}'
         + 'else if(d.gcType==="media_volume"){projVol=+d.value;if(projVol>0&&(projMuted||gcSoundPending)){projMuted=false;gcApplyMute();gcNotify({gcEvt:"sound_on"});}try{if(ytPlayer)ytPlayer.setVolume(projVol);gcYtCmd("setVolume",[projVol]);}catch(e){}try{if(localVideoEl)localVideoEl.volume=projVol/100;}catch(e){}}'
         + 'else if(d.gcType==="media_mute"){projMuted=!!d.on;gcApplyMute();}'
         + 'else if(d.gcType==="freeze"){gcFreeze(!!d.on,d.bg||"");}'
         + 'else if(d.gcType==="imagem"){renderImage(d.item);gcNotify({gcEvt:"state",s:-1});}'
-        + 'else if(d.gcType==="localvideo"){if(typeof d.vol==="number")projVol=d.vol;projMuted=!!d.pmute;renderLocalVideo(d.item,d.mute);}'
+        + 'else if(d.gcType==="localvideo"){curId=String((d.item&&(d.item.id||d.item.url||d.item.title))||"");if(typeof d.vol==="number")projVol=d.vol;projMuted=!!d.pmute;renderLocalVideo(d.item,d.mute);}'
         + 'else if(d.gcType==="texto"){renderText(d.text);gcNotify({gcEvt:"state",s:-1});}'
         + 'else if(d.gcType==="cronometro"){renderCronometro(d.item);gcNotify({gcEvt:"state",s:-1});}'
         + 'else if(d.gcType==="relogio"){renderRelogio();gcNotify({gcEvt:"state",s:-1});}'
@@ -5111,6 +5123,7 @@ function projectionShellHtml(openerActive) {
         + 'else if(d.gcType==="overlay_limpar")clearOverlayText();'
         + 'else if(d.gcType==="media_play")playMedia();'
         + 'else if(d.gcType==="media_pause")pauseMedia();'
+        + 'else if(d.gcType==="media_seek"||d.gcType==="media_seekrel"){try{var cur=0;if(localVideoEl)cur=localVideoEl.currentTime;else if(ytPlayer&&ytPlayer.getCurrentTime)cur=ytPlayer.getCurrentTime();var tt=d.gcType==="media_seek"?+d.t:cur+(+d.dt);if(!(tt>=0))tt=0;if(localVideoEl){localVideoEl.currentTime=tt;}else if(ytPlayer&&ytPlayer.seekTo){ytPlayer.seekTo(tt,true);}else{gcYtCmd("seekTo",[tt,true]);}}catch(e){}}'
         + 'else if(d.gcType==="media_fadeout")fadeOutNow(d.ms);'
         + 'else if(d.gcType==="prep"){gcPrepHint();}'
         + 'else if(d.gcType==="blank"){renderBlank();gcNotify({gcEvt:"state",s:-1});}'
@@ -5126,6 +5139,7 @@ function projectionShellHtml(openerActive) {
       + 'document.addEventListener("touchstart",function(){tryFullscreen();},{passive:true});'
       + 'function gcFsChange(){try{if(document.fullscreenElement||document.webkitFullscreenElement){window.__gcWasFs=true;if(navigator.keyboard&&navigator.keyboard.lock)navigator.keyboard.lock(["Escape"]).catch(function(){});}else{if(window.__gcWasFs){setTimeout(tryFullscreen,50);}var b=document.getElementById("fs-fallback");if(b)b.style.display="";}}catch(e){}}'
       + 'document.addEventListener("fullscreenchange",gcFsChange);document.addEventListener("webkitfullscreenchange",gcFsChange);'
+      + 'var curId="";setInterval(function(){try{var t=-1,du=0;if(localVideoEl){t=localVideoEl.currentTime;du=localVideoEl.duration||0;}else if(ytPlayer&&ytPlayer.getCurrentTime){t=ytPlayer.getCurrentTime();du=ytPlayer.getDuration();}if(t>=0&&du>0)gcNotify({gcEvt:"time",t:t,d:du,id:curId});}catch(e){}},500);'
       + 'var gcOpenerSeen=false;setInterval(function(){try{if(window.opener){if(!window.opener.closed){gcOpenerSeen=true;}else if(gcOpenerSeen){window.close();}}}catch(e){}},2000);'
       + 'document.addEventListener("touchend",tryFullscreen);'
     + '})();<\/scr'+'ipt>'
@@ -6390,7 +6404,7 @@ function ColetaneaTrackRow({ churchId, coletaneaId, coletaneaTitle, track, onCha
         <div style=${{display:'grid', gap:'8px'}}>
           ${media && html`
             <div style=${{position:'relative', width:'100%', aspectRatio:'16/9', borderRadius:'10px', overflow:'hidden', background:'#000'}}>
-              <iframe key=${media.videoId} src=${'https://www.youtube-nocookie.com/embed/'+media.videoId+'?autoplay=1&rel=0&playsinline=1&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=hd1080'} title=${track.title} allow="autoplay; encrypted-media; fullscreen" allowfullscreen style=${{position:'absolute', inset:0, width:'100%', height:'100%', border:0}}></iframe>
+              <iframe key=${media.videoId} src=${'https://www.youtube-nocookie.com/embed/'+media.videoId+'?autoplay=1&rel=0&playsinline=1&modestbranding=1&iv_load_policy=3&cc_load_policy=0&hl=pt-BR&vq=highres'} title=${track.title} allow="autoplay; encrypted-media; fullscreen" allowfullscreen style=${{position:'absolute', inset:0, width:'100%', height:'100%', border:0}}></iframe>
             </div>`}
           <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
             ${linkingVideo
@@ -8302,6 +8316,76 @@ function LedMeter({ level }) {
   `;
 }
 
+// v.150: barra de progresso + pontos da música (Estrofe 1/2/3, Refrão, Ponte) pro ensaio. Os pontos ficam guardados por
+// música (neste aparelho e na nuvem da igreja) e o botão do trecho em que a música está agora fica aceso (rastreio).
+const GC_MARK_LABELS = ['Estrofe 1', 'Estrofe 2', 'Estrofe 3', 'Refrão', 'Ponte'];
+const gcMarkId = (id) => String(id || '').replace(/[^\w-]/g, '_').slice(0, 80);
+function gcMarksLoad(id) { try { const m = JSON.parse(localStorage.getItem('gc_vmarks_v1') || '{}'); return m[gcMarkId(id)] || null; } catch (e) { return null; } }
+function gcMarksSave(id, marks) { try { const m = JSON.parse(localStorage.getItem('gc_vmarks_v1') || '{}'); if (marks && Object.keys(marks).length) m[gcMarkId(id)] = marks; else delete m[gcMarkId(id)]; localStorage.setItem('gc_vmarks_v1', JSON.stringify(m)); } catch (e) {} }
+function gcFmtTime(sec) { sec = Math.max(0, Math.floor(sec || 0)); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0'); }
+function ProjectionSeekBar({ church }) {
+  const [pt, setPt] = useState(gcProjTime);
+  const [, force] = useState(0);
+  const [mark, setMark] = useState(false);
+  const [drag, setDrag] = useState(null);
+  const dragRef = useRef(null);
+  const [marks, setMarks] = useState({});
+  useEffect(() => {
+    const on = () => setPt(gcProjTime ? { ...gcProjTime } : null);
+    window.addEventListener('gc-proj-time', on);
+    const iv = setInterval(() => force(n => n + 1), 1000);
+    return () => { window.removeEventListener('gc-proj-time', on); clearInterval(iv); };
+  }, []);
+  const fresh = !!(pt && Date.now() - pt.at < 2500 && pt.d > 0);
+  const id = fresh ? pt.id : '';
+  const docId = church && (church.fbDocId || church.docId);
+  const cloud = id && church && church.videoMarks && church.videoMarks[gcMarkId(id)];
+  const cloudKey = JSON.stringify(cloud || null);
+  useEffect(() => { if (!id) { setMarks({}); return; } setMarks(gcMarksLoad(id) || cloud || {}); }, [id, cloudKey]);
+  const saveMarks = (next) => {
+    setMarks(next); gcMarksSave(id, next);
+    if (docId) { try { fbUpdateChurchFields(docId, { ['videoMarks.' + gcMarkId(id)]: next }); } catch (e) {} }
+  };
+  if (!fresh) return html`<div style=${{fontSize:'10.5px', color:'var(--text-dim)', textAlign:'center', padding:'2px 0'}}>⏱️ A barra de progresso e os pontos da música aparecem aqui quando um vídeo estiver tocando na projeção.</div>`;
+  const cur = drag !== null ? drag : pt.t;
+  const entries = GC_MARK_LABELS.filter(l => marks[l] !== undefined);
+  let active = '';
+  entries.forEach(l => { if (marks[l] <= cur + 0.6 && (!active || marks[l] >= marks[active])) active = l; });
+  const chip = (l) => {
+    const has = marks[l] !== undefined;
+    const on = active === l;
+    return html`<button key=${l} type="button" onClick=${() => { if (has && !mark) seekAllScreens(marks[l]); else saveMarks({ ...marks, [l]: Math.round(pt.t * 10) / 10 }); }} title=${has ? (mark ? 'Marcar de novo no ponto atual' : 'Voltar para ' + l + ' (' + gcFmtTime(marks[l]) + ')') : 'Marcar ' + l + ' no ponto atual da música'} style=${{padding:'7px 10px', borderRadius:'10px', fontSize:'12px', fontWeight:800, cursor:'pointer', border: has ? (on ? '2px solid #00ff9d' : '1px solid var(--accent-1)') : '1px dashed var(--text-dim)', background: on ? 'rgba(0,255,157,0.22)' : (has ? 'rgba(56,189,248,0.12)' : 'transparent'), color: has ? '#fff' : 'var(--text-dim)', boxShadow: on ? '0 0 12px -2px #00ff9d' : 'none'}}>${has ? '' : '📍 '}${l}${has ? ' · ' + gcFmtTime(marks[l]) : ''}</button>`;
+  };
+  return html`
+    <div style=${{display:'grid', gap:'8px', padding:'10px', borderRadius:'12px', border:'1px solid var(--border-soft)', background:'rgba(2,6,23,0.35)'}}>
+      <div style=${{display:'flex', alignItems:'center', gap:'8px'}}>
+        <span style=${{fontSize:'13px', fontWeight:800, minWidth:'40px', color:'#fff'}}>${gcFmtTime(cur)}</span>
+        <div style=${{position:'relative', flex:1, minWidth:0, paddingBottom:'6px'}}>
+          <input type="range" min="0" max=${pt.d} step="0.5" value=${cur} aria-label="Barra de progresso do vídeo"
+            onChange=${e => { const v = +e.target.value; dragRef.current = v; setDrag(v); }}
+            onPointerUp=${() => { if (dragRef.current !== null) { seekAllScreens(dragRef.current); dragRef.current = null; setTimeout(() => setDrag(null), 350); } }}
+            onKeyUp=${() => { if (dragRef.current !== null) { seekAllScreens(dragRef.current); dragRef.current = null; setTimeout(() => setDrag(null), 350); } }}
+            style=${{width:'100%', height:'26px', accentColor:'#00ff9d', cursor:'pointer'}} />
+          ${entries.map(l => html`<div key=${l} title=${l} style=${{position:'absolute', left:'calc(' + (marks[l] / pt.d * 100) + '% - 1px)', bottom:0, width:'3px', height:'8px', borderRadius:'2px', background: active === l ? '#00ff9d' : 'var(--highlight)', pointerEvents:'none'}}></div>`)}
+        </div>
+        <span style=${{fontSize:'12px', color:'var(--text-mid)', minWidth:'40px', textAlign:'right'}}>${gcFmtTime(pt.d)}</span>
+      </div>
+      <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+        <button type="button" onClick=${() => seekRelAllScreens(-10)} style=${{...btnGhost, padding:'7px 10px', fontSize:'12px', fontWeight:800}}>⏪ 10s</button>
+        <button type="button" onClick=${() => seekRelAllScreens(10)} style=${{...btnGhost, padding:'7px 10px', fontSize:'12px', fontWeight:800}}>10s ⏩</button>
+        <button type="button" onClick=${() => seekAllScreens(0)} style=${{...btnGhost, padding:'7px 10px', fontSize:'12px', fontWeight:800}}>⏮ Início</button>
+      </div>
+      <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+        ${GC_MARK_LABELS.map(chip)}
+      </div>
+      <div style=${{display:'flex', gap:'8px', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap'}}>
+        <label style=${{display:'flex', alignItems:'center', gap:'6px', fontSize:'11.5px', color:'var(--text-mid)', cursor:'pointer'}}><input type="checkbox" checked=${mark} onChange=${e => setMark(e.target.checked)} /> 📍 Modo marcar (os botões gravam o ponto atual)</label>
+        ${entries.length > 0 && html`<button type="button" onClick=${() => { if (confirm('Apagar os pontos marcados desta música?')) saveMarks({}); }} style=${{...btnGhost, padding:'5px 9px', fontSize:'11px'}}>🗑 Limpar pontos</button>`}
+      </div>
+      <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Botão tracejado = ainda não marcado: toque nele quando a música chegar nesse trecho. Depois é só tocar para voltar ali. O trecho atual fica aceso.</div>
+    </div>`;
+}
+
 // Botões da projeção dentro do console (antes ficavam num botão separado no canto esquerdo).
 function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCurrent, setMensagemCurrent, frozen }) {
   const items = mensagemItems || [];
@@ -8334,6 +8418,7 @@ function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCur
         ${btn('❄️', frozen ? 'Descongelar' : 'Congelar', frozen ? 'Descongelar — a tela volta a mostrar o que está passando' : 'Congelar — a tela segura a imagem atual até descongelar', congelar, frozen ? {background:'#00e5ff', color:'#001418', borderColor:'#00e5ff'} : {})}
         ${btn('✖️', 'Fechar', 'Parar e tirar o vídeo/imagem das telas (a janela de projeção continua aberta)', fechar, {color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 45%, transparent)'})}
       </div>
+      <${ProjectionSeekBar} church=${church} />
       ${items.length > 0 && html`
         <button type="button" onClick=${proximo} disabled=${!hasNext} class="gc-console-btn" style=${{flexDirection:'row', opacity: hasNext ? 1 : 0.4}}>⏭️ <span style=${{fontSize:'10.5px', fontWeight:800}}>Próximo item da Mensagem (${Math.min(mensagemCurrent, items.length-1)+1}/${items.length})</span></button>
       `}
