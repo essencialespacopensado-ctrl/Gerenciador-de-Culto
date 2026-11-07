@@ -140,11 +140,20 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.151';
+const APP_VERSION = '2026-11-07.152';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.152',
+    date: '07/11/2026',
+    items: [
+      "Volume do PROJETOR agora é o volume geral das saídas de som do computador principal: controla a projeção e também os fundos (Fundo 1/2/3).",
+      "Pelo celular (cadastrado e habilitado), tudo vai para o COMPUTADOR PRINCIPAL e não toca nada no celular: botões do Console (Play, Pause, Fade out, Fundo, Congelar, Fechar), Atenuador, volumes/mudo/play dos fundos, volume do Projetor, vídeos do YouTube (Operador/Projetor) e textos/letras. As telas usadas são as cadastradas no computador principal.",
+      "Controle remoto no celular ficou simples: escreva o nome e toque em Ligar (sem aprovar no computador principal); fica ligado até Desligar.",
+    ]
+  },
   {
     version: '2026-11-06.151',
     date: '06/11/2026',
@@ -3593,6 +3602,11 @@ function ProjectButton({ churchId, media, itemKey, only, remote }) {
   const projectTo = (which) => {
     try {
       // v.127: celular habilitado → manda pro computador principal (que tem as telas e o som).
+      if (gcPhoneRemote.on && which !== 'rota' && !remote) {
+        const vid0 = (media && media.videoId) || extractYouTubeId(String((media && media.url) || ''));
+        if (vid0) remote = { type:'project_media', arg:{ videoId: vid0, title: media.title, key: itemKey || ('rapida-' + vid0) } };
+        else { alert('Pelo celular só dá para mandar vídeos do YouTube. Arquivos ficam no computador principal — projete por lá.'); return; }
+      }
       if (remote && gcPhoneRemote.on && which !== 'rota') {
         if (!gcPhoneRemote.online) { alert('O computador principal não está conectado agora. Abra o app lá e tente de novo.'); return; }
         gcRemoteSend(remote.type, { ...remote.arg, which });
@@ -4002,7 +4016,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
               : html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>🎬 ${media.title}</div>`}
           </div>
           ${media && media.title
-            ? html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${ProjectButton} churchId=${churchId} media=${media} itemKey=${act.id} /></div>`
+            ? html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${ProjectButton} churchId=${churchId} media=${media} itemKey=${act.id} remote=${{ type:'project', arg:{ actId: act.id } }} /></div>`
             : (needsMedia && !act.fixed && !act.weeklyFixed && html`<div style=${{display:'flex', justifyContent: isMobile ? 'stretch' : 'flex-start'}}><${CronometroAtividadeButton} churchId=${churchId} itemKey=${act.id} title=${act.name} responsible=${act.responsible} time=${act.time} plannedSeconds=${act.plannedSeconds} onChangeDuration=${(secs)=>onEdit({...act, plannedSeconds: secs})} /></div>`)}
         </div>
       `}
@@ -4510,14 +4524,23 @@ function projectionAudioNotify() { projectionAudio.listeners.forEach(f => { try 
 function postToProjectionWindows(msg) {
   Object.keys(projectionWindows).forEach(sig => { const w = projectionWindows[sig]; try { if (w && !w.closed) w.postMessage(msg, '*'); } catch(e) {} });
 }
+// v.152: celular habilitado como controle remoto → o pedido vai pro COMPUTADOR PRINCIPAL (que tem as telas e o som); o celular não toca nada.
+function gcViaPhone(type, arg) {
+  if (!gcPhoneRemote.on) return false;
+  if (!gcPhoneRemote.online) { alert('O computador principal não está conectado agora. Abra o app lá e tente de novo.'); return true; }
+  gcRemoteSend(type, arg);
+  return true;
+}
 function setProjectionVolume(v) {
   projectionAudio.volume = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+  if (gcPhoneRemote.on) { gcViaPhone('pvol', { value: projectionAudio.volume }); projectionAudioNotify(); return; }
   try { localStorage.setItem('gc_proj_audio_v1', JSON.stringify({ volume: projectionAudio.volume })); } catch(e) {}
   postToProjectionWindows({ gcType:'media_volume', value: projectionAudio.volume });
   if (projectionAudio.muted && projectionAudio.volume > 0) { setProjectionMuted(false); return; }
   projectionAudioNotify();
 }
 function setProjectionMuted(on) {
+  if (gcPhoneRemote.on) { gcViaPhone('pmute'); projectionAudio.muted = !!on; projectionAudioNotify(); return; }
   projectionAudio.muted = !!on;
   postToProjectionWindows({ gcType:'media_mute', on: projectionAudio.muted });
   projectionAudioNotify();
@@ -5226,6 +5249,16 @@ function gcFlushBlocked() {
 async function sendToScreenObj(scr, kind, payload, opts) {
   const quiet = !!(opts && opts.quiet);
   const fail = (msg) => { if (!quiet) alert(msg); return msg; };
+  // v.152: celular habilitado → nada é projetado no celular; textos/letras/relógio/tela vazia vão pro computador principal.
+  if (gcPhoneRemote.on) {
+    if (kind === 'texto' || kind === 'blank' || kind === 'relogio') {
+      const key = kind + '|' + (typeof payload === 'string' ? payload : '');
+      if (gcPhoneLast.key !== key || Date.now() - gcPhoneLast.at > 1200) { gcPhoneLast.key = key; gcPhoneLast.at = Date.now(); gcViaPhone('screen', { kind, text: typeof payload === 'string' ? payload.slice(0, 4000) : '' }); }
+      return '';
+    }
+    if (kind === 'media') return '';
+    return fail('Pelo celular esse tipo de conteúdo só pode ser enviado pelo computador principal.');
+  }
   try {
     const sig = screenSig(scr);
     // Enquanto estiver congelado, guarda só a última tentativa de troca pra essa tela e não toca em
@@ -8087,6 +8120,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
   };
 
   const togglePlay = (i) => {
+    if (gcViaPhone('bg', { i, action: 'play' })) return;
     const t = tracks[i];
     if (t.mode === 'file') {
       const el = audioRefs[i].current;
@@ -8118,6 +8152,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
   };
 
   const setVolume = (i, rawVal) => {
+    gcViaPhone('bg', { i, action: 'volume', value: Number(rawVal) });
     const newVal = Math.max(0, Math.min(100, Number(rawVal)));
     setTracks(prev => {
       const next = prev.map(t => ({...t}));
@@ -8138,21 +8173,25 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
   };
 
   // Mantém o volume real (arquivo local ou player do YouTube) sincronizado sempre que muda
+  // v.152: o volume do PROJETOR é o volume geral — multiplica o de cada fundo.
+  const [masterV, setMasterV] = useState(projectionAudio.volume);
+  useEffect(() => { const f = () => setMasterV(projectionAudio.volume); projectionAudio.listeners.add(f); return () => { projectionAudio.listeners.delete(f); }; }, []);
+  const masterRef = useRef(100); masterRef.current = gcPhoneRemote.on ? 100 : masterV;
   useEffect(() => {
     tracks.forEach((t, i) => {
       if (t.mode === 'file') {
         const el = audioRefs[i].current;
-        if (el) el.volume = (t.muted ? 0 : t.volume) / 100;
+        if (el) el.volume = (t.muted ? 0 : t.volume * masterRef.current / 100) / 100;
       } else if (t.mode === 'youtube') {
         const frame = iframeRefs[i].current;
         if (frame && frame.contentWindow) {
-          const effVol = t.muted ? 0 : t.volume;
+          const effVol = t.muted ? 0 : Math.round(t.volume * masterRef.current / 100);
           ytPostCommand(frame.contentWindow, 'setVolume', [effVol]);
           ytPostCommand(frame.contentWindow, effVol === 0 ? 'mute' : 'unMute');
         }
       }
     });
-  }, [tracks.map(t=>t.mode+'|'+t.videoId+'|'+t.volume+'|'+t.muted).join(';')]);
+  }, [tracks.map(t=>t.mode+'|'+t.videoId+'|'+t.volume+'|'+t.muted).join(';'), masterV]);
 
   const onIframeLoad = (i) => {
     // dá um tempinho pro player do YouTube inicializar antes de mandar comandos
@@ -8160,7 +8199,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
       const frame = iframeRefs[i].current;
       if (!frame || !frame.contentWindow) return;
       const cur = tracksRef.current[i] || {};
-      const effVol = cur.muted ? 0 : (cur.volume || 0);
+      const effVol = cur.muted ? 0 : Math.round((cur.volume || 0) * masterRef.current / 100);
       ytPostCommand(frame.contentWindow, effVol === 0 ? 'mute' : 'unMute');
       ytPostCommand(frame.contentWindow, 'setVolume', [effVol]);
       ytPostCommand(frame.contentWindow, 'playVideo');
@@ -8216,6 +8255,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
     try { postToProjectionWindows({ gcType:'media_volume', value: Math.round(projectionAudio.volume * k) }); } catch(e) {}
   };
   const attSet = (on) => {
+    if (gcPhoneRemote.on) { gcViaPhone('atten', { on: !!on }); setAtt(!!on); return; }
     const s = attRef.current; if (s.on === on) return; s.on = on; setAtt(on);
     if (s.iv) clearInterval(s.iv);
     const target = on ? Math.pow(10, -(attDbRef.current || 14) / 20) : 1, step = on ? 0.16 : 0.08;
@@ -8249,7 +8289,7 @@ function BackgroundAudioMixer({ churchId, church, onUpdateChurch, visible, topSl
   return html`
     ${topSlot}
     <div style=${{display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:'6px', marginTop:'10px'}}>
-      ${tracks.map((t,i) => stripCol('f'+i, t.name, levels[i] || 0, t.volume, (v)=>setVolume(i, v), !!t.muted, ()=>updateTrack(i,{muted:!t.muted}), playBtn(i), 'var(--highlight)'))}
+      ${tracks.map((t,i) => stripCol('f'+i, t.name, levels[i] || 0, t.volume, (v)=>setVolume(i, v), !!t.muted, ()=>{ gcViaPhone('bg', { i, action: 'mute' }); updateTrack(i,{muted:!t.muted}); }, playBtn(i), 'var(--highlight)'))}
       ${stripCol('proj', 'Projetor', levels[3] || 0, projectionAudio.volume, (v)=>setProjectionVolume(v), projectionAudio.muted, ()=>setProjectionMuted(!projectionAudio.muted), '', '#00b3ff')}
     </div>
     <div style=${{display:'flex', gap:'6px', marginTop:'10px'}}>
@@ -8457,12 +8497,12 @@ function ProjectionConsoleButtons({ churchId, church, mensagemItems, mensagemCur
     setMensagemCurrent(newIdx);
     projectMensagemItem(churchId, items[newIdx], 'msg-' + items[newIdx].id);
   };
-  const play = () => playAllScreens(churchId);
-  const pause = () => pauseAllScreens(churchId);
-  const fadeOut = () => fadeOutAllScreens(churchId);
-  const fechar = () => { setProjectionFrozen(false); stopAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); };
-  const fundo = () => sendBackgroundToAllScreens(churchId, church);
-  const congelar = () => setProjectionFrozen(!isProjectionFrozen());
+  const play = () => { if (gcViaPhone('play')) return; playAllScreens(churchId); };
+  const pause = () => { if (gcViaPhone('pause')) return; pauseAllScreens(churchId); };
+  const fadeOut = () => { if (gcViaPhone('fadeout')) return; fadeOutAllScreens(churchId); };
+  const fechar = () => { if (gcViaPhone('close')) return; setProjectionFrozen(false); stopAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); };
+  const fundo = () => { if (gcViaPhone('background')) return; sendBackgroundToAllScreens(churchId, church); };
+  const congelar = () => { if (gcViaPhone('freeze')) return; setProjectionFrozen(!isProjectionFrozen()); };
   const btn = (icon, label, title, onClick, extra) => html`
     <button type="button" class="gc-console-btn" onClick=${onClick} title=${title} style=${extra || {}}>
       <span style=${{fontSize:'18px'}}>${icon}</span>
@@ -8500,6 +8540,7 @@ function remoteToday() { const d = new Date(); return d.getFullYear() + '-' + St
 // v.127: este aparelho é um celular habilitado (não o principal)? Quem projeta do celular (ex.: aba Ensaios)
 // manda o pedido pro computador principal em vez de abrir a projeção no próprio celular.
 const gcPhoneRemote = { on: false, docId: '', online: false };
+const gcPhoneLast = { key: '', at: 0 };
 function gcRemoteSend(type, arg) {
   if (!gcPhoneRemote.docId) return false;
   fbUpdateChurchFields(gcPhoneRemote.docId, { ['remoteCmds.' + remoteDeviceId()]: { id: Date.now() + '-' + Math.random().toString(36).slice(2,6), type, arg: arg || null, ts: Date.now() } });
@@ -8575,6 +8616,13 @@ function remoteExecute(churchId, church, cmd, onErr) {
     case 'freeze': setProjectionFrozen(!isProjectionFrozen()); return '';
     case 'reload': setTimeout(() => { try { gcForceUpdateApp(); } catch (e) { window.location.reload(); } }, 400); return '';
     case 'close': Object.keys(gcBlockedQueue).forEach(k => delete gcBlockedQueue[k]); setProjectionFrozen(false); stopAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); return '';
+    case 'screen': {
+      const k = a.kind === 'blank' ? 'blank' : (a.kind === 'relogio' ? 'relogio' : 'texto');
+      const en = loadEnabledScreens(churchId); if (!en.length) return 'Nenhuma tela habilitada na aba Telas.';
+      const tg = pickTargetScreens(churchId, 'remoto-' + k, en, k === 'texto' ? 'letra' : 'relogio'); if (!tg.length) return 'Nenhuma tela liberada para esse conteúdo (Telas › Rotas de conteúdo).';
+      tg.forEach(scr => { sendToScreenObj(scr, k, k === 'texto' ? String(a.text || '') : null, { quiet: true }).then(er => { if (er && onErr) onErr(er); }); });
+      return '';
+    }
     case 'pvol': setProjectionVolume(a.value); return '';
     case 'pmute': setProjectionMuted(!projectionAudio.muted); return '';
     case 'bg': window.dispatchEvent(new CustomEvent('gc-remote-bg', { detail: a })); return '';
@@ -8845,6 +8893,9 @@ function RemoteControl({ churchId, church }) {
     setTimeout(() => setOv(o => { const n = { ...o }; delete n[key]; return n; }), 1800);
   };
   const askRegister = () => { const n = phoneName.trim(); if (!n) { alert('Escreva um nome pra esse celular (ex: Celular do Paulo).'); return; } w({ ['remotePhones.' + devId]: { name: n, status: 'pending', requestedAt: Date.now() } }); };
+  // v.152: ligar/desligar direto no celular — sem aprovação no computador principal; fica ligado até desligar.
+  const turnOnRemote = () => { const n = (phoneName || (me && me.name) || '').trim(); if (!n) { alert('Escreva um nome pra esse celular (ex: Celular do Paulo).'); return; } w({ ['remotePhones.' + devId]: { name: n, status: 'registered', enabled: true, enabledDay: remoteToday(), requestedAt: Date.now() } }); };
+  const turnOffRemote = () => { w({ ['remotePhones.' + devId + '.enabled']: false, ['remotePhones.' + devId + '.enabledDay']: '' }); };
   const approve = (id) => w({ ['remotePhones.' + id + '.status']: 'registered' });
   const refuse = (id) => w({ ['remotePhones.' + id + '.status']: 'removed', ['remotePhones.' + id + '.enabled']: false, ['remotePhones.' + id + '.enabledDay']: '' });
   // Habilitar = permanente (fica até Desabilitar/Remover). enabledDay guarda só a data em que foi habilitado.
@@ -8912,19 +8963,16 @@ function RemoteControl({ churchId, church }) {
             </div>
           ` : html`
             <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>Aqui você comanda o computador principal da igreja pelo celular. ${online ? '🟢 Computador principal conectado.' : '🔴 Computador principal não está conectado agora.'}</div>
-            ${!me || me.status === 'removed' ? html`
+            ${!meOk ? html`
               <div class="glass" style=${cardS}>
-                <div style=${{fontWeight:800, fontSize:'12.5px'}}>Cadastrar este celular</div>
-                <input placeholder="Nome deste celular (ex: Celular do Paulo)" value=${phoneName} onInput=${e=>setPhoneName(e.target.value)} style=${inputStyle} />
-                <button type="button" onClick=${askRegister} style=${btnPrimary}>Pedir cadastro</button>
-                <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Depois, no computador principal, toque em 📱 e aprove este celular.</div>
-              </div>` : me.status === 'pending' ? html`
-              <div class="glass" style=${cardS}><div style=${{fontSize:'12px'}}>⏳ Pedido enviado como <b>${me.name}</b>. Aguardando aprovação no computador principal.</div></div>`
-              : !meOk ? html`
-              <div class="glass" style=${cardS}><div style=${{fontSize:'12px'}}>📱 <b>${me.name}</b> está cadastrado, mas <b>está desabilitado</b>. No computador principal, toque em 📱 e use "Habilitar".</div></div>`
+                <div style=${{fontWeight:800, fontSize:'12.5px'}}>Controle remoto deste celular</div>
+                <input placeholder="Nome deste celular (ex: Celular do Paulo)" value=${phoneName || (me && me.name) || ''} onInput=${e=>setPhoneName(e.target.value)} style=${inputStyle} />
+                <button type="button" onClick=${turnOnRemote} style=${btnPrimary}>🟢 Ligar controle remoto</button>
+                <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Ligando, tudo o que você fizer aqui (projetar, buscar, volumes, botões) acontece no app do computador principal. Não precisa aprovar lá e fica ligado até você desligar.</div>
+              </div>`
               : html`
               <div class="glass" style=${cardS}>
-                <div style=${{fontSize:'11px', color:'var(--success-1)', fontWeight:800}}>✅ ${me.name} habilitado</div>
+                <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center', gap:'8px'}}><div style=${{fontSize:'11px', color:'var(--success-1)', fontWeight:800}}>✅ ${me.name} — controle remoto LIGADO</div><button type="button" onClick=${turnOffRemote} style=${small}>Desligar</button></div>
                 ${st && st.wins === 0 && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>ℹ️ A projeção está fechada no computador principal — ela abre sozinha quando você projetar. Pro som sair, lá no computador: 📱 > "Preparar projeção e som" (1 clique).</div>`}
                 ${st && st.blocked && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>🔇 O navegador do computador bloqueou o som. Lá, toque em 📱 > "Preparar projeção e som" (ou clique uma vez na tela de projeção).</div>`}
                 ${st && st.v && st.v !== APP_VERSION && html`<div style=${{fontSize:'11px', color:'var(--highlight)', display:'grid', gap:'6px'}}>
