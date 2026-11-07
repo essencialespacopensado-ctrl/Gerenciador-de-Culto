@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.154';
+const APP_VERSION = '2026-11-07.155';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.155',
+    date: '07/11/2026',
+    items: [
+      "Controle remoto no celular: a Liturgia agora tem abas de todos os dias (Sábado a Sexta). Escolha o dia e projete (Projetor/Operador/Retorno) os vídeos e músicas daquele dia no computador principal. Abre já no dia de hoje, se ele tiver programação com vídeo/música.",
+    ]
+  },
   {
     version: '2026-11-07.154',
     date: '07/11/2026',
@@ -8621,6 +8628,13 @@ function remoteProjectMedia(churchId, media, itemKey, which, onErr) {
   return '';
 }
 const gcRemoteCrono = { total: 0, remainingMs: 0, running: false, startedAt: 0 };
+// v.155: programação de qualquer dia da semana (mesma regra da aba Liturgia: alteração local não confirmada vale; Sábado = church.activities; outros = church.otherActivities[dia]).
+function gcDayActivities(churchId, church, d) {
+  try { if (actIsDirty(churchId, d)) return loadActivities(churchId, d); } catch (e) {}
+  if (!d || d === 'sabado') return (church && church.activities) ? church.activities : loadActivities(churchId);
+  const st = church && church.otherActivities && church.otherActivities[d];
+  return st !== undefined ? st : loadActivities(churchId, d);
+}
 function remoteExecute(churchId, church, cmd, onErr) {
   const a = cmd.arg || {};
   switch (cmd.type) {
@@ -8675,7 +8689,8 @@ function remoteExecute(churchId, church, cmd, onErr) {
       return '';
     }
     case 'project': {
-      const act = loadActivities(churchId).find(x => x.id === a.actId);
+      const dayK = LITURGIA_DAYS.some(x => x.key === a.day) ? a.day : 'sabado';
+      const act = (gcDayActivities(churchId, church, dayK) || []).find(x => x.id === a.actId) || loadActivities(churchId).find(x => x.id === a.actId);
       if (!act || !act.media || !act.media.title) return 'Essa atividade não tem vídeo/música.';
       return remoteProjectMedia(churchId, act.media, act.id, a.which === 'operador' ? 'operador' : (a.which === 'retorno' ? 'retorno' : 'projetor'), onErr);
     }
@@ -8809,6 +8824,7 @@ function RemoteControl({ churchId, church }) {
   const computers = (data && data.remoteComputers) || {};
   const [phoneName, setPhoneName] = useState('');
   const [ov, setOv] = useState({});
+  const [rday, setRday] = useState('');
   const [, tick] = useState(0);
   const handled = useRef(null);
   const lastErr = useRef('');
@@ -8891,11 +8907,12 @@ function RemoteControl({ churchId, church }) {
     if (!isMain || !docId) return;
     let lastJson = '', lastAt = 0;
     const push = () => {
-      let acts = [];
-      try { acts = loadActivities(churchId).map(a => ({ id: a.id, name: a.name, time: a.time || '', media: !!(a.media && a.media.title), done: !!a.done })); } catch (e) {}
+      let acts = [], actsByDay = {};
+      try { const ch0 = churchRef.current; LITURGIA_DAYS.forEach(dd => { if (dd.key === 'sabado') return; const l = (gcDayActivities(churchId, ch0, dd.key) || []).map(a => ({ id: a.id, name: a.name, time: a.time || '', media: !!(a.media && a.media.title), done: !!a.done })); if (l.some(a => a.media)) actsByDay[dd.key] = l; }); } catch (e) {}
+      try { acts = (gcDayActivities(churchId, churchRef.current, 'sabado') || []).map(a => ({ id: a.id, name: a.name, time: a.time || '', media: !!(a.media && a.media.title), done: !!a.done })); } catch (e) {}
       let ens = []; try { ens = loadEnsaios(churchId).map(g => ({ id: g.id, name: g.name, songs: (g.songs || []).map(sg => ({ id: sg.id, name: ensaioSongName(sg), items: ensaioItems(sg).map(it => ({ key: it.key, label: it.label })) })).filter(x => x.items.length) })).filter(g => g.songs.length); } catch (e) {}
       let wins = 0; try { wins = Object.keys(projectionWindows).filter(k => projectionWindows[k] && !projectionWindows[k].closed).length; } catch (e) {}
-      const s = { v: APP_VERSION, wins, blocked: !!window.__gcSoundBlocked, pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, ens, err: lastErr.current || '' };
+      const s = { v: APP_VERSION, wins, blocked: !!window.__gcSoundBlocked, pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, actsByDay, ens, err: lastErr.current || '' };
       const json = JSON.stringify(s);
       if (json === lastJson && Date.now() - lastAt < 35000) return;
       fbUpdateChurchFields(docId, { remoteState: { ...s, ts: Date.now() } }).then(ok => { if (ok) { lastJson = json; lastAt = Date.now(); } });
@@ -9017,13 +9034,25 @@ function RemoteControl({ churchId, church }) {
                 ${st ? html`
                   ${fader('pvol','PROJETOR (vídeo na tela)', st.pvol, v=>slide('pvol','pvol',{},v), v=>slideEnd('pvol','pvol',{},v), st.pmuted, ()=>send('pmute'))}
                   ${(st.bg || []).map((t,i) => fader('bg'+i, t.name, t.vol, v=>slide('bg'+i,'bg',{i, action:'volume'},v), v=>slideEnd('bg'+i,'bg',{i, action:'volume'},v), t.muted, ()=>send('bg',{i, action:'mute'}), t.has ? ()=>send('bg',{i, action:'play'}) : null, t.playing))}
-                  <div style=${{fontWeight:800, fontSize:'12px', marginTop:'4px'}}>Liturgia (Sábado)</div>
-                  ${(st.acts || []).filter(a => a.media).map(a => html`<div key=${a.id} style=${{display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap'}}>
-                    <div style=${{flex:1, fontSize:'11.5px', minWidth:'120px'}}>${a.time ? a.time+' · ' : ''}${a.name}</div>
-                    <button type="button" onClick=${()=>send('project',{actId:a.id, which:'projetor'})} style=${small}>🔊 Projetor</button>
-                    <button type="button" onClick=${()=>send('project',{actId:a.id, which:'operador'})} style=${small}>🎧 Operador</button>
-                    <button type="button" onClick=${()=>send('project',{actId:a.id, which:'retorno'})} style=${small}>📺 Retorno</button>
-                  </div>`)}
+                  ${(() => {
+                    const byDay = { sabado: st.acts || [], ...(st.actsByDay || {}) };
+                    const todayK = (LITURGIA_DAYS.find(x => x.jsDay === new Date().getDay()) || {}).key || 'sabado';
+                    const cur = rday || ((byDay[todayK] || []).some(a => a.media) ? todayK : 'sabado');
+                    const list = (byDay[cur] || []).filter(a => a.media);
+                    const dLabel = (LITURGIA_DAYS.find(x => x.key === cur) || {}).label || 'Sábado';
+                    return html`
+                      <div style=${{fontWeight:800, fontSize:'12px', marginTop:'4px'}}>Liturgia (${dLabel})</div>
+                      <div style=${{display:'flex', gap:'4px', flexWrap:'wrap'}}>
+                        ${LITURGIA_DAYS.map(d => { const n = (byDay[d.key] || []).filter(a => a.media).length; return html`<button key=${d.key} type="button" onClick=${()=>setRday(d.key)} style=${{...small, padding:'5px 8px', fontWeight: cur === d.key ? 800 : 500, outline: cur === d.key ? '2px solid var(--accent-1)' : 'none', opacity: n ? 1 : 0.55}}>${d.label}${n ? ' · ' + n : ''}</button>`; })}
+                      </div>
+                      ${list.length === 0 && html`<div style=${{fontSize:'11px', color:'var(--text-dim)'}}>Sem vídeo/música na programação de ${dLabel}.</div>`}
+                      ${list.map(a => html`<div key=${a.id} style=${{display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap'}}>
+                        <div style=${{flex:1, fontSize:'11.5px', minWidth:'120px'}}>${a.time ? a.time+' · ' : ''}${a.name}</div>
+                        <button type="button" onClick=${()=>send('project',{actId:a.id, day:cur, which:'projetor'})} style=${small}>🔊 Projetor</button>
+                        <button type="button" onClick=${()=>send('project',{actId:a.id, day:cur, which:'operador'})} style=${small}>🎧 Operador</button>
+                        <button type="button" onClick=${()=>send('project',{actId:a.id, day:cur, which:'retorno'})} style=${small}>📺 Retorno</button>
+                      </div>`)}`;
+                  })()}
                   ${(st.ens || []).length > 0 && html`<div style=${{fontWeight:800, fontSize:'12px', marginTop:'8px'}}>🎼 Ensaios</div>`}
                   ${(st.ens || []).map(g => html`<details key=${g.id} style=${{padding:'6px 8px', borderRadius:'10px', border:'1px solid var(--border-soft)'}}>
                     <summary style=${{fontWeight:700, fontSize:'12px', cursor:'pointer'}}>${g.name} (${g.songs.length})</summary>
