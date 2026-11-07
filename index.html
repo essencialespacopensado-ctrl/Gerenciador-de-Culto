@@ -140,11 +140,25 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.159';
+const APP_VERSION = '2026-11-07.161';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.161',
+    date: '07/11/2026',
+    items: [
+      "Controle Remoto: tirado o botão \"Preparar projeção e som (1 clique por dia)\" — ele abria 3 janelas (projetor e duas na tela do operador). A janela de projeção agora abre sozinha ao abrir o app, só na tela do projetor, com ou sem o controle remoto do celular.",
+    ],
+  },
+  {
+    version: '2026-11-07.160',
+    date: '07/11/2026',
+    items: [
+      "Janela de projeção ao abrir o app: o primeiro clique (ou tecla) seu dentro do app já coloca a janela do projetor em tela cheia, na tela do projetor (o navegador não aceita tela cheia sem um clique seu). Se a janela já estiver em tela cheia, não mexe.",
+    ],
+  },
   {
     version: '2026-11-07.159',
     date: '07/11/2026',
@@ -8900,6 +8914,24 @@ function PhoneTools({ send }) {
 // v.113 (pedido do Paulo: "quando o aplicativo for iniciado, já abra uma janela de popup em tela cheia pra eu clicar,
 // com o fundo da imagem do botão Fundo"): ao abrir o app num computador com telas habilitadas, abre a projeção
 // com a imagem de Fundo e o aviso "clique aqui uma vez" — esse clique libera o som das próximas projeções.
+// v.160: ao abrir o app não há clique do operador, e o navegador só aceita tela cheia depois de um clique/tecla. Então o PRIMEIRO
+// clique (ou tecla) dentro do app, nos primeiros minutos, já manda as janelas de projeção abertas que ainda não estão em tela cheia
+// para a tela cheia NA tela delas (projetor). Depois que estiverem em tela cheia, não mexe mais.
+function gcArmFullscreenOnFirstClick(churchId) {
+  if (window.__gcFsArmed) return; window.__gcFsArmed = true;
+  const t0 = Date.now(); let n = 0;
+  const off = () => { window.removeEventListener('pointerdown', go, true); window.removeEventListener('keydown', go, true); };
+  function go() {
+    n++;
+    if (n > 6 || Date.now() - t0 > 180000) { off(); return; }
+    try {
+      const enabled = loadEnabledScreens(churchId);
+      const pending = enabled.some(scr => { const w = projectionWindows[screenSig(scr)]; try { return !!(w && !w.closed && !(w.document.fullscreenElement || w.document.webkitFullscreenElement)); } catch (e) { return false; } });
+      if (pending) retryFullscreenAllScreens(churchId);
+    } catch (e) {}
+  }
+  window.addEventListener('pointerdown', go, true); window.addEventListener('keydown', go, true);
+}
 function StartupProjection({ churchId, church }) {
   const isMobile = useIsMobile();
   useEffect(() => {
@@ -8915,6 +8947,7 @@ function StartupProjection({ churchId, church }) {
         const pj = enabled.filter(s => s.isProjector);
         const startTargets = pj.length ? pj : enabled.slice(0, 1);
         startTargets.forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet: true, prep: true }); } catch (e) {} });
+        gcArmFullscreenOnFirstClick(churchId);
       } catch (e) {}
     }, 2500);
     return () => clearTimeout(t);
@@ -9097,8 +9130,7 @@ function RemoteControl({ churchId, church }) {
             <div class="glass" style=${cardS}>
               <div style=${{fontWeight:800, fontSize:'12.5px', color:'var(--success-1)'}}>💻 Este é o computador principal</div>
               <div style=${{fontSize:'11px', color:'var(--text-mid)'}}>Ele executa o que os celulares habilitados mandarem (projetar, play/pause, volumes). Deixe o app aberto aqui. Se a janela de projeção for fechada, ela reabre sozinha na próxima projeção — pra isso o Chrome deste computador precisa permitir pop-ups pro site (o celular avisa se bloquear).</div>
-              <button type="button" onClick=${prepareScreens} style=${btnPrimary}>🔊 Preparar projeção e som (1 clique por dia)</button>
-              <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>O navegador só libera o som da projeção depois de um clique feito NESTE computador. Toque aqui uma vez antes do culto; depois o celular manda o som normalmente.</div>
+              <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>A janela de projeção abre sozinha ao abrir o app, só na tela do projetor, com ou sem controle remoto. O primeiro clique seu no app já coloca ela em tela cheia, e um clique nela libera o som.</div>
               <button type="button" onClick=${releaseMain} style=${small}>Deixar de ser o principal</button>
             </div>
             <div class="glass" style=${cardS}>
@@ -9129,8 +9161,8 @@ function RemoteControl({ churchId, church }) {
               : html`
               <div class="glass" style=${cardS}>
                 <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center', gap:'8px'}}><div style=${{fontSize:'11px', color:'var(--success-1)', fontWeight:800}}>✅ ${me.name} — controle remoto LIGADO</div><button type="button" onClick=${turnOffRemote} style=${small}>Desligar</button></div>
-                ${st && st.wins === 0 && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>ℹ️ A projeção está fechada no computador principal — ela abre sozinha quando você projetar. Pro som sair, lá no computador: 📱 > "Preparar projeção e som" (1 clique).</div>`}
-                ${st && st.blocked && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>🔇 O navegador do computador bloqueou o som. Lá, toque em 📱 > "Preparar projeção e som" (ou clique uma vez na tela de projeção).</div>`}
+                ${st && st.wins === 0 && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>ℹ️ A projeção está fechada no computador principal — ela abre sozinha quando você projetar. Pro som sair, lá no computador, clique uma vez na tela de projeção.</div>`}
+                ${st && st.blocked && html`<div style=${{fontSize:'11px', color:'var(--danger)'}}>🔇 O navegador do computador bloqueou o som. Lá no computador, clique uma vez na tela de projeção.</div>`}
                 ${st && st.v && st.v !== APP_VERSION && html`<div style=${{fontSize:'11px', color:'var(--highlight)', display:'grid', gap:'6px'}}>
                   <div>🔁 Versões diferentes: computador na <b>${st.v.split('-').pop()}</b>, este celular na <b>${APP_VERSION.split('-').pop()}</b>. ${st.v < APP_VERSION ? 'O computador está desatualizado.' : 'Este celular está desatualizado.'}</div>
                   ${st.v < APP_VERSION && html`<button type="button" onClick=${()=>send('reload')} style=${small}>🔄 Atualizar o computador agora</button>`}
