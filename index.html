@@ -140,11 +140,20 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.162';
+const APP_VERSION = '2026-11-07.163';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.163',
+    date: '07/11/2026',
+    items: [
+      "Telas reconhecidas SOZINHAS pelo nome que o Windows dá (ex.: SONY TV): se a posição ou a resolução mudar, ou a TV for ligada depois, a tela habilitada acompanha a de mesmo nome e mantém Projetor/Retorno, nomes e rotas — antes virava \"não conectada\" e a projeção caía no notebook. Sem tela marcada como Projetor, o app escolhe sozinho a tela externa.",
+      "Ao abrir o app a janela de projeção só abre na tela do projetor que está ligada de verdade; com a TV desligada ela espera a TV aparecer, em vez de abrir no notebook.",
+      "Aba Telas › Rotas de conteúdo: novo botão \"📽️ Tudo só no projetor\" e uma explicação do que é \"padrão\" e \"Personalizar\".",
+    ],
+  },
   {
     version: '2026-11-07.162',
     date: '07/11/2026',
@@ -4798,6 +4807,51 @@ function saveEnabledScreens(churchId, list) {
   try { localStorage.setItem(screensEnabledKey(churchId), JSON.stringify(list)); } catch(e) {}
 }
 function screenSig(s) { return s.width+'x'+s.height+'@'+s.left+','+s.top; }
+// v.163: o app RECONHECE as telas sozinho pelo NOME que o Windows dá (ex.: "SONY TV"). Antes a tela era guardada só pela posição/tamanho
+// (ex.: 1280x721@1920,0); se o Windows mudasse qualquer número (resolução, posição, ligar a TV depois), a tela habilitada virava
+// "não conectada" e a projeção caía na tela do notebook. Agora a tela guardada acompanha a tela de mesmo nome, mantendo Projetor/Retorno,
+// nomes, rotas e escolhas.
+function gcScreenItem(s, i) {
+  const nomeWindows = (s.label && s.label.trim()) ? s.label.trim() : '';
+  const base = s.isPrimary ? 'Tela Principal' : 'Tela ' + ((i || 0) + 1);
+  const label = (nomeWindows ? base + ' — ' + nomeWindows : base) + ' — ' + s.width + 'x' + s.height;
+  return { label, winName: nomeWindows, left: s.left, top: s.top, width: s.width, height: s.height, isInternal: (s.isInternal === true ? true : (s.isInternal === false ? false : undefined)) };
+}
+function gcWinName(e) { if (!e) return ''; if (e.winName) return String(e.winName).trim(); const p = String(e.label || '').split(' — '); return p.length >= 3 ? p[1].trim() : ''; }
+function gcReconcileScreens(churchId, detected) {
+  try {
+    const enabled = loadEnabledScreens(churchId);
+    if (!enabled.length || !detected || !detected.length) return false;
+    const dSigs = detected.map(screenSig);
+    const used = new Set(enabled.map(screenSig).filter(sg => dSigs.includes(sg)));
+    let changed = false; const map = {};
+    let next = enabled.map(e => {
+      const sg = screenSig(e);
+      if (dSigs.includes(sg)) { const d = detected[dSigs.indexOf(sg)]; if (d.winName && e.winName !== d.winName) { changed = true; return { ...e, winName: d.winName }; } return e; }
+      const nm = gcWinName(e); if (!nm) return e;
+      const cands = detected.filter(d => d.winName === nm && !used.has(screenSig(d)));
+      if (cands.length !== 1) return e;
+      const d = cands[0]; used.add(screenSig(d)); map[sg] = screenSig(d); changed = true;
+      return { ...e, left: d.left, top: d.top, width: d.width, height: d.height, label: d.label, winName: d.winName, isInternal: d.isInternal };
+    });
+    const moved = Object.keys(map);
+    if (moved.length) {
+      try { const r = loadRoutes(churchId); Object.keys(r).forEach(k => { if (Array.isArray(r[k])) r[k] = r[k].map(x => map[x] || x); }); saveRoutes(churchId, r); } catch (e) {}
+      try { const all = loadScreenNames(churchId); moved.forEach(o => { if (all[o]) { all[map[o]] = { ...all[o], ...(all[map[o]] || {}) }; delete all[o]; } }); localStorage.setItem(screenNamesKey(churchId), JSON.stringify(all)); } catch (e) {}
+      try { const pre = screenPrefKey(churchId, ''); for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.indexOf(pre) === 0) { const v = localStorage.getItem(k); if (map[v]) localStorage.setItem(k, map[v]); } } } catch (e) {}
+      try { const w = projectionWindows; moved.forEach(o => { if (w[o]) { w[map[o]] = w[o]; delete w[o]; } }); } catch (e) {}
+    }
+    // Nenhuma tela marcada como Projetor: escolhe sozinho a tela EXTERNA (TV/projetor), se só houver uma conectada.
+    if (!next.some(e => e.isProjector)) {
+      const conn = next.filter(e => dSigs.includes(screenSig(e)));
+      let c = conn.filter(e => e.isInternal === false);
+      if (c.length !== 1) c = conn.filter(e => /\b(tv|projetor|projector|datashow|data show|epson|benq|sony)\b/i.test(gcWinName(e)));
+      if (c.length === 1) { const sg = screenSig(c[0]); next = next.map(e => screenSig(e) === sg ? { ...e, isProjector: true } : e); changed = true; }
+    }
+    if (changed) saveEnabledScreens(churchId, next);
+    return changed;
+  } catch (e) { return false; }
+}
 // v.157: "Operador" nunca pode cair no projetor. Só vale tela habilitada que NÃO é Projetor/Retorno e que não
 // está na mesma posição de um Projetor (monitor duplicado). Sem nenhuma tela marcada como Projetor (ou só uma
 // tela cadastrada), não existe tela de operador — o botão avisa em vez de projetar em todas.
@@ -7364,6 +7418,8 @@ function RoutesPanel({ churchId, enabled }) {
   const [routes, setRoutes] = useState(() => loadRoutes(churchId));
   const save = (next) => { setRoutes(next); saveRoutes(churchId, next); };
   const sigs = enabled.map(screenSig);
+  const sigsKey = sigs.join('|');
+  useEffect(() => { setRoutes(loadRoutes(churchId)); }, [sigsKey]);
   const toggle = (key, sig) => {
     const cur = Array.isArray(routes[key]) ? routes[key] : null;
     if (!cur) return;
@@ -7385,6 +7441,10 @@ function RoutesPanel({ churchId, enabled }) {
     <div>
       <h3 style=${{fontSize:'13px', fontWeight:800, color:'var(--text-mid)', textTransform:'uppercase', letterSpacing:'0.04em', margin:'16px 0 6px 0'}}>🧭 Rotas de conteúdo — o que aparece em cada tela</h3>
       <div style=${{fontSize:'11px', color:'var(--text-dim)', marginBottom:'10px', lineHeight:1.45}}>Escolha, pra cada tipo de conteúdo, em quais telas habilitadas ele pode aparecer. Ex.: <b>Vídeo e música</b> em tudo menos a tela do notebook; <b>Avisos</b> só no projetor e no retorno. Em "Padrão do app" o conteúdo vai pro projetor, como sempre. Dá pra mudar a qualquer momento. O som dos vídeos sai só na tela marcada como 📽️ Projetor.</div>
+      <div style=${{display:'flex', gap:'8px', flexWrap:'wrap', alignItems:'center', marginBottom:'10px'}}>
+        <button type="button" onClick=${() => { if (confirm('Colocar TODOS os conteúdos no padrão do app (aparecem só na tela do projetor)? As caixinhas personalizadas voltam ao padrão.')) save({}); }} style=${{...btnPrimary, width:'auto', padding:'9px 14px', fontSize:'12px'}}>📽️ Tudo só no projetor</button>
+        <span style=${{fontSize:'11px', color:'var(--text-dim)'}}>Quando a linha mostra "padrão", o conteúdo vai só pro Projetor. Para mandar algo também a outra tela, clique em "Personalizar" na linha e marque as telas.</span>
+      </div>
       <div class="glass" style=${{borderRadius:'14px', padding:'10px', overflowX:'auto'}}>
         <table style=${{borderCollapse:'collapse', width:'100%', fontSize:'12px'}}>
           <thead>
@@ -7448,7 +7508,7 @@ function TelasView({ churchId }) {
     const nomeWindows = (s.label && s.label.trim()) ? s.label.trim() : '';
     const base = s.isPrimary ? 'Tela Principal' : 'Tela '+(i+1);
     const label = (nomeWindows ? base+' — '+nomeWindows : base) + ' — '+s.width+'x'+s.height;
-    return { label, left: s.left, top: s.top, width: s.width, height: s.height, isInternal: (s.isInternal === true ? true : (s.isInternal === false ? false : undefined)) };
+    return { label, winName: nomeWindows, left: s.left, top: s.top, width: s.width, height: s.height, isInternal: (s.isInternal === true ? true : (s.isInternal === false ? false : undefined)) };
   };
   const detectScreens = async (deep) => {
     const isDeep = deep === true;
@@ -7472,6 +7532,7 @@ function TelasView({ churchId }) {
         }
         list = details.screens.map(screenToItem);
         setScreens(list);
+        if (gcReconcileScreens(churchId, list)) setEnabled(loadEnabledScreens(churchId));
         if (i < attempts - 1) await new Promise(r => setTimeout(r, 1300));
       }
       if (isDeep && list) {
@@ -8946,18 +9007,39 @@ function StartupProjection({ churchId, church }) {
   const isMobile = useIsMobile();
   useEffect(() => {
     if (isMobile || window.__gcStartupDone) return;
-    const t = setTimeout(() => {
+    let details = null;
+    const openStart = (connectedSigs) => {
+      const enabled = loadEnabledScreens(churchId);
+      if (!enabled.length) return false;
+      const url = gcGetBackground(church) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      // v.153: ao abrir o app, a janela abre SÓ na tela do projetor. Sem tela marcada como projetor, abre só na primeira habilitada.
+      // v.163: só abre na tela que o Windows está mostrando AGORA (reconhecida pelo nome); com a TV desligada espera ela aparecer
+      // (em vez de abrir a janela no notebook).
+      const pj = enabled.filter(s => s.isProjector);
+      let startTargets = pj.length ? pj : enabled.slice(0, 1);
+      if (connectedSigs) startTargets = startTargets.filter(s => connectedSigs.includes(screenSig(s)));
+      if (!startTargets.length) return false;
+      window.__gcStartupDone = true;
+      startTargets.forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet: true, prep: true }); } catch (e) {} });
+      gcArmFullscreenOnFirstClick(churchId);
+      return true;
+    };
+    const t = setTimeout(async () => {
       try {
-        if (window.__gcStartupDone) return; window.__gcStartupDone = true;
-        const enabled = loadEnabledScreens(churchId);
-        if (!enabled.length) return;
-        const url = gcGetBackground(church) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-        // v.153: ao abrir o app, a janela abre SÓ na tela do projetor (antes abria em todas as telas do Fundo). Sem tela marcada
-        // como projetor, abre só na primeira tela habilitada. As outras telas abrem quando você mandar algo pra elas.
-        const pj = enabled.filter(s => s.isProjector);
-        const startTargets = pj.length ? pj : enabled.slice(0, 1);
-        startTargets.forEach(scr => { try { sendToScreenObj(scr, 'imagem', { dataUrl: url, title: 'Plano de Fundo' }, { quiet: true, prep: true }); } catch (e) {} });
-        gcArmFullscreenOnFirstClick(churchId);
+        if (window.__gcStartupDone) return;
+        if (!loadEnabledScreens(churchId).length) return;
+        let granted = false;
+        if ('getScreenDetails' in window) {
+          try { const q = await navigator.permissions.query({ name: 'window-management' }); granted = q && q.state === 'granted'; } catch (e) {}
+        }
+        if (!granted) { openStart(null); return; }
+        details = await window.getScreenDetails();
+        const refresh = () => { try { const items = details.screens.map(gcScreenItem); gcReconcileScreens(churchId, items); return items.map(screenSig); } catch (e) { return null; } };
+        const sigs = refresh();
+        // Sempre que o Windows ligar/desligar/mover uma tela, a lista guardada se acerta sozinha; se a TV do projetor ainda não
+        // tinha aparecido, a janela abre assim que ela aparecer.
+        try { details.addEventListener('screenschange', () => { const sg2 = refresh(); if (!window.__gcStartupDone) openStart(sg2); }); } catch (e) {}
+        openStart(sigs);
       } catch (e) {}
     }, 2500);
     return () => clearTimeout(t);
