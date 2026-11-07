@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.161';
+const APP_VERSION = '2026-11-07.162';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.162',
+    date: '07/11/2026',
+    items: [
+      "Janela de projeção que já estava aberta de antes (ex.: depois de atualizar o app) e fora da tela cheia agora volta sozinha para a tela do projetor, em vez de ficar na tela do operador. O primeiro clique seu no app coloca ela em tela cheia lá.",
+    ],
+  },
   {
     version: '2026-11-07.161',
     date: '07/11/2026',
@@ -5410,6 +5417,9 @@ async function sendToScreenObj(scr, kind, payload, opts) {
       let reused = false;
       try { reused = !!(win && win.document && (win.__gcWasFs || win.__gcShell || win.document.getElementById('gc-stage'))); } catch (e) {}
       isNewWindow = !reused;
+      // v.162: janela que sobrou aberta de antes (o app foi recarregado) e que NÃO está em tela cheia volta pro lugar certo: a tela do
+      // projetor (antes ela ficava onde estava, por exemplo na tela do operador). Janela em tela cheia não é mexida.
+      if (reused) { try { if (!(win.document.fullscreenElement || win.document.webkitFullscreenElement) && !win.__gcWasFs) { win.moveTo(scr.left, scr.top); win.resizeTo(scr.width, scr.height); } } catch (e) {} }
     } else {
       // v.118: mover/redimensionar uma janela que já está em TELA CHEIA a tira da tela cheia (e o som volta a
       // ficar bloqueado). Janela em tela cheia já está no lugar certo — não mexe nela.
