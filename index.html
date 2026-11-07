@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.153';
+const APP_VERSION = '2026-11-07.154';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.154',
+    date: '07/11/2026',
+    items: [
+      "Aba Liturgia, nos dias que não são Sábado (Domingo a Sexta): agora aparecem direto ➕ Acrescentar Atividade e 🤖 Assistente de Liturgia, para montar a programação daquele dia sem ir em Gestão. (Em Gestão › Programação da Liturgia continuam como antes.)",
+    ]
+  },
   {
     version: '2026-11-07.153',
     date: '07/11/2026',
@@ -9932,6 +9939,12 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
         ▶️ Iniciar Modo Ao Vivo
       </button>
       <button onClick=${openFinalize} style=${{...btnGhost, width:'100%', marginBottom:'20px', padding:'14px', fontSize:'14px', fontWeight:800, border:'1.5px solid var(--success-1)', color:'var(--success-1)'}}>✅ Finalizar Culto</button>
+      ${!isSabado && html`<div style=${{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'20px'}}>
+        <button onClick=${()=>setAdding(v=>!v)} style=${{...btnGhost, padding:'12px', border:'1.5px dashed var(--border-soft)', fontWeight:700}}>➕ Acrescentar Atividade (${dayDef.label})</button>
+        <button onClick=${()=>setAssistantOpen(true)} style=${{...btnGhost, padding:'12px', border:'1.5px dashed var(--accent-1)', color:'var(--accent-1)', fontWeight:700}}>🤖 Assistente de Liturgia</button>
+      </div>
+      ${adding && html`<${AddActivityForm} defaultSection=${sections[0]} activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracks} sectionLabels=${sectionLabels} />`}
+      ${assistantOpen && html`<${LiturgyAssistantModal} onImportAll=${importFromAssistant} onClose=${()=>setAssistantOpen(false)} defaultSection=${sections[0]} sectionLabels=${sectionLabels} />`}`}
       ${liveMode && html`<${CultoLiveMode} activities=${activities} sections=${sections} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} onAdvance=${markDone} onClose=${()=>setLiveMode(false)} onOpenFinalize=${()=>{ setLiveMode(false); openFinalize(); }} />`}
 
 
