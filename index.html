@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.155';
+const APP_VERSION = '2026-11-07.156';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.156',
+    date: '07/11/2026',
+    items: [
+      "Buscas de músicas (busca geral, Hinário, Coletâneas e a busca ao colocar vídeo/música numa atividade da Liturgia): agora procuram também a versão COM LETRA e mostram essas versões primeiro. Versões 'sem letra' ficam por último.",
+    ]
+  },
   {
     version: '2026-11-07.155',
     date: '07/11/2026',
@@ -3151,6 +3158,24 @@ function clearMediaSearchState(searchKey) {
   try { localStorage.removeItem(mediaSearchStorageKey(searchKey)); } catch(e) {}
 }
 
+// v.156: pra Liturgia as músicas têm que ser as versões COM LETRA — busca a consulta normal e a mesma com "com letra",
+// junta sem repetir e põe primeiro os vídeos com letra (título com "letra"/"lyrics"); "sem letra" vai pro fim.
+function gcLyricScore(v) {
+  const t = String((v && v.title) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (/\bsem\s+letra\b/.test(t)) return -1;
+  return /(\bcom\s+letra\b|\bc\/\s?letra\b|\bletra\b|\blyrics?\b|\blegendad[oa]\b)/.test(t) ? 1 : 0;
+}
+function gcLyricsFirst(list) {
+  return (list || []).map((v, i) => ({ v, i, sc: gcLyricScore(v) })).sort((a, b) => (b.sc - a.sc) || (a.i - b.i)).map(x => x.v);
+}
+async function gcSearchLyrics(q) {
+  const base = String(q || '').trim();
+  const [a, b] = await Promise.all([searchYoutubeServer(base), /letra|lyric/i.test(base) ? Promise.resolve(null) : searchYoutubeServer(base + ' com letra')]);
+  if (!a && !b) return a;
+  const seen = new Set(), all = [];
+  [a, b].forEach(l => (l || []).forEach(v => { if (v && !seen.has(v.videoId)) { seen.add(v.videoId); all.push(v); } }));
+  return gcLyricsFirst(all);
+}
 function MediaSearchField({ media, onChange, searchKey }) {
   const [q, setQ] = useState(() => { const s = loadMediaSearchState(searchKey); return (s && s.q) || ''; });
   const [videos, setVideos] = useState(() => { const s = loadMediaSearchState(searchKey); return s && s.videos !== undefined ? s.videos : null; }); // null = não buscou ainda; [] = buscou e veio vazio
@@ -3167,7 +3192,7 @@ function MediaSearchField({ media, onChange, searchKey }) {
     const query = q.trim();
     if (!query) return;
     setSearching(true);
-    const result = await searchYoutubeServer(query);
+    const result = await gcSearchLyrics(query);
     setSearching(false);
     if (result) { setVideos(result); return; }
     window.open(youtubeSearchUrl(query), '_blank', 'noopener'); // sem servidor de busca disponível
@@ -10268,7 +10293,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     else if (mode === 'colet') queries = [s + ' CD Jovem adventista', s + ' coletânea adventista álbum oficial', s + ' CD Jovem músicas oficial'];
     else queries = ['novo hinário adventista ' + s];
     const albP = mode === 'colet' ? gcLoadAlbums(s) : Promise.resolve(null);
-    const lists = await Promise.all(queries.map(x => searchYoutubeServer(x)));
+    const lists = await Promise.all(queries.map(x => gcSearchLyrics(x)));
     const alb = await albP;
     setLoading(false);
     if (alb) setAlbums(alb);
@@ -10286,7 +10311,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
       if (mode === 'novo' && !/(hinario|hino)/.test(n)) return false;
       return isOfficialCh(v.channel);
     });
-    setYt(all);
+    setYt(gcLyricsFirst(all));
   };
   // Hinário antigo e Coletâneas/CD Jovem: busca sozinha ao parar de digitar (uma consulta por vez).
   useEffect(() => {
