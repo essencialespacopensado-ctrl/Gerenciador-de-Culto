@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.157';
+const APP_VERSION = '2026-11-07.158';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.158',
+    date: '07/11/2026',
+    items: [
+      "Barra de progresso da música: novo ✂️ Trecho — marque o INÍCIO e o FIM (clicando no ponto da música ou digitando o minuto, ex.: 2:30) e ligue o 🔁 Repetir (loop). No fim, a música volta ao início (loop) ou faz fade out e para. O trecho fica guardado por música e funciona mesmo com o Console fechado.",
+    ],
+  },
   {
     version: '2026-11-07.157',
     date: '07/11/2026',
@@ -4659,13 +4666,35 @@ function gcInjectSeekPatch(win) {
 }
 function seekAllScreens(t) { Object.keys(projectionWindows).forEach(sig => { const w = projectionWindows[sig]; try { if (w && !w.closed) w.postMessage({ gcType:'media_seek', t }, '*'); } catch (e) {} }); }
 function seekRelAllScreens(dt) { Object.keys(projectionWindows).forEach(sig => { const w = projectionWindows[sig]; try { if (w && !w.closed) w.postMessage({ gcType:'media_seekrel', dt }, '*'); } catch (e) {} }); }
+// v.158: trecho da música (início/fim/loop) marcado na barra de progresso. Vale mesmo com o Console fechado: a cada aviso de
+// tempo da projeção (500 ms) confere se chegou no FIM — repete do INÍCIO (loop) ou faz fade out (igual ao botão Fade out).
+let gcRangeLastAt = 0, gcRangeStartId = '';
+function gcRangeTick() {
+  try {
+    const p = gcProjTime; if (!p || !p.id || !(p.d > 0)) return;
+    const m = gcMarksLoad(p.id); if (!m) return;
+    const a = +m._a > 0 ? +m._a : 0, loop = !!m._loop;
+    let b = +m._b > 0 ? +m._b : 0;
+    const explicitB = b > 0;
+    if (!b && loop) b = Math.max(0, p.d - 0.8);
+    if (!(b > a + 1) && !(a > 0 && gcRangeStartId !== p.id)) return;
+    const now = Date.now();
+    if (gcRangeStartId !== p.id) { gcRangeStartId = p.id; if (a > 0 && p.t < a - 0.5) { gcRangeLastAt = now; seekAllScreens(a); return; } }
+    if (!(b > a + 1)) return;
+    if (p.t >= b - 0.3 && (!explicitB || p.t <= b + 6) && now - gcRangeLastAt > 3000) {
+      gcRangeLastAt = now;
+      if (loop) seekAllScreens(a);
+      else postToProjectionWindows({ gcType:'media_fadeout', ms: (typeof gcFadeMs === 'function' ? gcFadeMs() : 2000) });
+    }
+  } catch (e) {}
+}
 window.addEventListener('message', (e) => {
   const d = e.data;
   if (!d || typeof d !== 'object' || !d.gcEvt || e.origin !== window.location.origin) return;
   if (d.gcEvt === 'sound_blocked') { projectionAudio.muted = true; window.__gcSoundBlocked = true; }
   else if (d.gcEvt === 'sound_on') { projectionAudio.muted = false; window.__gcSoundBlocked = false; }
   else if (d.gcEvt === 'state') projectionAudio.playing = (d.s === 1 || d.s === 3);
-  else if (d.gcEvt === 'time') { gcProjTime = { t: +d.t || 0, d: +d.d || 0, id: String(d.id || ''), at: Date.now() }; try { window.dispatchEvent(new Event('gc-proj-time')); } catch (er) {} return; }
+  else if (d.gcEvt === 'time') { gcProjTime = { t: +d.t || 0, d: +d.d || 0, id: String(d.id || ''), at: Date.now() }; try { window.dispatchEvent(new Event('gc-proj-time')); } catch (er) {} gcRangeTick(); return; }
   projectionAudioNotify();
 });
 
@@ -8489,6 +8518,11 @@ const gcMarkId = (id) => String(id || '').replace(/[^\w-]/g, '_').slice(0, 80);
 function gcMarksLoad(id) { try { const m = JSON.parse(localStorage.getItem('gc_vmarks_v1') || '{}'); return m[gcMarkId(id)] || null; } catch (e) { return null; } }
 function gcMarksSave(id, marks) { try { const m = JSON.parse(localStorage.getItem('gc_vmarks_v1') || '{}'); if (marks && Object.keys(marks).length) m[gcMarkId(id)] = marks; else delete m[gcMarkId(id)]; localStorage.setItem('gc_vmarks_v1', JSON.stringify(m)); } catch (e) {} }
 function gcFmtTime(sec) { sec = Math.max(0, Math.floor(sec || 0)); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0'); }
+function gcParseTime(txt) {
+  const t = String(txt || '').trim().replace(',', '.'); if (!t) return 0;
+  const parts = t.split(':').map(x => parseFloat(x)); if (parts.some(x => isNaN(x) || x < 0)) return -1;
+  return parts.reduce((acc, x) => acc * 60 + x, 0);
+}
 function ProjectionSeekBar({ church }) {
   const [pt, setPt] = useState(gcProjTime);
   const [, force] = useState(0);
@@ -8517,6 +8551,16 @@ function ProjectionSeekBar({ church }) {
   const entries = GC_MARK_LABELS.filter(l => marks[l] !== undefined);
   let active = '';
   entries.forEach(l => { if (marks[l] <= cur + 0.6 && (!active || marks[l] >= marks[active])) active = l; });
+  const ra = +marks._a > 0 ? +marks._a : 0, rb = +marks._b > 0 ? +marks._b : 0, rloop = !!marks._loop;
+  const setRange = (patch) => {
+    const next = { ...marks, ...patch };
+    Object.keys(next).forEach(k => { if (k.charAt(0) === '_' && (!next[k])) delete next[k]; });
+    saveMarks(next);
+  };
+  const timeInput = (val, onCommit, label) => html`<input key=${id + ':' + label + ':' + val} type="text" inputmode="numeric" defaultValue=${val > 0 ? gcFmtTime(val) : ''} placeholder="0:00" aria-label=${label}
+    onBlur=${e => { const v = gcParseTime(e.target.value); if (v < 0) { e.target.value = val > 0 ? gcFmtTime(val) : ''; return; } onCommit(Math.round(Math.min(v, pt.d) * 10) / 10); }}
+    onKeyDown=${e => { if (e.key === 'Enter') e.target.blur(); }}
+    style=${{width:'58px', padding:'6px 7px', borderRadius:'8px', border:'1px solid var(--border-soft)', background:'rgba(2,6,23,0.5)', color:'#fff', fontSize:'12px', fontWeight:700, textAlign:'center'}} />`;
   const chip = (l) => {
     const has = marks[l] !== undefined;
     const on = active === l;
@@ -8532,6 +8576,9 @@ function ProjectionSeekBar({ church }) {
             onPointerUp=${() => { if (dragRef.current !== null) { seekAllScreens(dragRef.current); dragRef.current = null; setTimeout(() => setDrag(null), 350); } }}
             onKeyUp=${() => { if (dragRef.current !== null) { seekAllScreens(dragRef.current); dragRef.current = null; setTimeout(() => setDrag(null), 350); } }}
             style=${{width:'100%', height:'26px', accentColor:'#00ff9d', cursor:'pointer'}} />
+          ${(ra > 0 || rb > 0) && html`<div title="Trecho da música" style=${{position:'absolute', left:(ra / pt.d * 100) + '%', width:(((rb > ra ? rb : pt.d) - ra) / pt.d * 100) + '%', bottom:0, height:'4px', borderRadius:'2px', background: rloop ? 'rgba(0,229,255,0.55)' : 'rgba(255,184,0,0.55)', pointerEvents:'none'}}></div>`}
+          ${ra > 0 && html`<div title=${'Início do trecho ' + gcFmtTime(ra)} style=${{position:'absolute', left:'calc(' + (ra / pt.d * 100) + '% - 1px)', bottom:0, width:'3px', height:'12px', background:'#00e5ff', pointerEvents:'none'}}></div>`}
+          ${rb > 0 && html`<div title=${'Fim do trecho ' + gcFmtTime(rb)} style=${{position:'absolute', left:'calc(' + (rb / pt.d * 100) + '% - 1px)', bottom:0, width:'3px', height:'12px', background:'#ff4d6d', pointerEvents:'none'}}></div>`}
           ${entries.map(l => html`<div key=${l} title=${l} style=${{position:'absolute', left:'calc(' + (marks[l] / pt.d * 100) + '% - 1px)', bottom:0, width:'3px', height:'8px', borderRadius:'2px', background: active === l ? '#00ff9d' : 'var(--highlight)', pointerEvents:'none'}}></div>`)}
         </div>
         <span style=${{fontSize:'12px', color:'var(--text-mid)', minWidth:'40px', textAlign:'right'}}>${gcFmtTime(pt.d)}</span>
@@ -8540,6 +8587,16 @@ function ProjectionSeekBar({ church }) {
         <button type="button" onClick=${() => seekRelAllScreens(-10)} style=${{...btnGhost, padding:'7px 10px', fontSize:'12px', fontWeight:800}}>⏪ 10s</button>
         <button type="button" onClick=${() => seekRelAllScreens(10)} style=${{...btnGhost, padding:'7px 10px', fontSize:'12px', fontWeight:800}}>10s ⏩</button>
         <button type="button" onClick=${() => seekAllScreens(0)} style=${{...btnGhost, padding:'7px 10px', fontSize:'12px', fontWeight:800}}>⏮ Início</button>
+      </div>
+      <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center', padding:'8px', borderRadius:'10px', border:'1px solid ' + (rloop ? 'rgba(0,229,255,0.5)' : 'var(--border-soft)')}}>
+        <span style=${{fontSize:'11.5px', fontWeight:800, color:'var(--text-mid)'}}>✂️ Trecho:</span>
+        <button type="button" onClick=${() => setRange({ _a: Math.round(pt.t * 10) / 10 })} title="Começar a música neste ponto" style=${{...btnGhost, padding:'6px 9px', fontSize:'11.5px', fontWeight:800}}>▶ Início aqui</button>
+        ${timeInput(ra, v => setRange({ _a: v }), 'Início')}
+        <button type="button" onClick=${() => setRange({ _b: Math.round(pt.t * 10) / 10 })} title="Terminar a música neste ponto" style=${{...btnGhost, padding:'6px 9px', fontSize:'11.5px', fontWeight:800}}>⏹ Fim aqui</button>
+        ${timeInput(rb, v => setRange({ _b: v }), 'Fim')}
+        <label style=${{display:'flex', alignItems:'center', gap:'5px', fontSize:'12px', fontWeight:800, color: rloop ? '#00e5ff' : 'var(--text-mid)', cursor:'pointer'}}><input type="checkbox" checked=${rloop} onChange=${e => setRange({ _loop: e.target.checked ? 1 : 0 })} /> 🔁 Repetir (loop)</label>
+        ${(ra > 0 || rb > 0 || rloop) && html`<button type="button" onClick=${() => setRange({ _a: 0, _b: 0, _loop: 0 })} style=${{...btnGhost, padding:'5px 9px', fontSize:'11px'}}>✖ Limpar trecho</button>`}
+        <div style=${{flexBasis:'100%', fontSize:'10.5px', color:'var(--text-dim)'}}>${rb > 0 ? (rloop ? 'Toca do início ao fim e volta ao início, sem parar.' : 'Quando chegar no fim, faz fade out e para.') : (rloop ? 'Sem fim marcado: repete a música inteira (do início marcado).' : 'Marque o fim (e o início, se quiser) pela barra ou digitando o minuto, ex.: 2:30.')} Vale também com o Console fechado.</div>
       </div>
       <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
         ${GC_MARK_LABELS.map(chip)}
