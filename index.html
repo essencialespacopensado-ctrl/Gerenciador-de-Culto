@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.167';
+const APP_VERSION = '2026-11-07.168';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.168',
+    date: '07/11/2026',
+    items: [
+      "Janela de projeção: depois de UM clique (ou quando o app já recebeu clique do operador) ela nunca mais liga o mudo sozinha — antes, ao maximizar, o vídeo demorava um instante para tocar e a janela ligava o mudo \"por segurança\", exigindo outro clique. Agora, se o vídeo parar nessa hora, ela só manda tocar de novo, com som. O mudo automático continua só quando o navegador ainda não permite som (nenhum clique dado).",
+    ],
+  },
   {
     version: '2026-11-07.167',
     date: '07/11/2026',
@@ -5372,7 +5379,7 @@ function projectionShellHtml(openerActive) {
       + 'function gcApplyMute(){var m=lastMute||projMuted;if(!m&&!gcCanSound()){projMuted=true;gcSoundPending=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});m=true;}try{if(ytPlayer){if(m)ytPlayer.mute();else{ytPlayer.unMute();ytPlayer.setVolume(projVol);}}else{gcYtCmd(m?"mute":"unMute");if(!m)gcYtCmd("setVolume",[projVol]);}}catch(e){}try{if(localVideoEl){localVideoEl.muted=m;localVideoEl.volume=projVol/100;}}catch(e){}if(!m){gcSoundPending=false;gcHint(false);gcUnmuteGuard();}}'
       // Se o navegador pausar o vídeo por causa do "ligar som" sem clique, volta mudo e continua tocando
       // (nunca fica parado por causa disso) e avisa o mixer pra ele mostrar o mudo ligado.
-      + 'function gcUnmuteGuard(){var n=0;var t=setInterval(function(){n++;var paused=false;try{if(ytPlayer)paused=(ytPlayer.getPlayerState()===2);else if(localVideoEl)paused=localVideoEl.paused;}catch(e){}if(paused&&!gcUserPaused&&!frozenYt){clearInterval(t);try{if(ytPlayer){ytPlayer.mute();ytPlayer.playVideo();}if(localVideoEl){localVideoEl.muted=true;localVideoEl.play().catch(function(){});}}catch(e){}gcSoundPending=true;projMuted=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});return;}if(n>=6)clearInterval(t);},300);}'
+      + 'function gcUnmuteGuard(){var n=0;var t=setInterval(function(){n++;var paused=false;try{if(ytPlayer)paused=(ytPlayer.getPlayerState()===2);else if(localVideoEl)paused=localVideoEl.paused;}catch(e){}if(paused&&!gcUserPaused&&!frozenYt&&gcCanSound()){try{if(ytPlayer)ytPlayer.playVideo();if(localVideoEl)localVideoEl.play().catch(function(){});}catch(e){}if(n>=12)clearInterval(t);return;}if(paused&&!gcUserPaused&&!frozenYt){clearInterval(t);try{if(ytPlayer){ytPlayer.mute();ytPlayer.playVideo();}if(localVideoEl){localVideoEl.muted=true;localVideoEl.play().catch(function(){});}}catch(e){}gcSoundPending=true;projMuted=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});return;}if(n>=12)clearInterval(t);},300);}'
       + 'function gcSoundOn(){if(gcSoundPending&&!lastMute){projMuted=false;gcApplyMute();gcNotify({gcEvt:"sound_on"});}}'
       + 'function gcSnap(src){try{var c=document.createElement("canvas");c.width=src.videoWidth||1280;c.height=src.videoHeight||720;c.getContext("2d").drawImage(src,0,0,c.width,c.height);c.style.cssText="position:fixed;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:4";document.body.appendChild(c);frozenCanvas=c;return true;}catch(e){return false;}}'
       // Congelar = print da tela. YouTube roda em outro site e o navegador não deixa copiar o quadro; o jeito é a
@@ -5388,7 +5395,7 @@ function projectionShellHtml(openerActive) {
       + 'function gcEnsurePlay(mute){'
         + 'var tries=0;var t=setInterval(function(){tries++;var st=-2;try{st=ytPlayer.getPlayerState();}catch(e){}'
           + 'if(st===1){clearInterval(t);gcPrep();if(gcSoundPending&&!lastMute&&!gcAutoTried){gcAutoTried=true;setTimeout(gcSoundOn,700);}return;}'
-          + 'if(tries===4&&!mute&&!projMuted){try{ytPlayer.mute();gcSoundPending=true;projMuted=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});}catch(e){}}'
+          + 'if(tries===4&&!mute&&!projMuted&&!gcCanSound()){try{ytPlayer.mute();gcSoundPending=true;projMuted=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});}catch(e){}}'
           + 'try{ytPlayer.playVideo();}catch(e){}'
           + 'if(tries>=12)clearInterval(t);'
         + '},500);'
