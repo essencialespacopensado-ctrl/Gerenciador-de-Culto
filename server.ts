@@ -562,6 +562,95 @@ app.get("/api/search-weekly-videos", async (req, res) => {
 });
 
 
+// ===== Álbuns / coletâneas (playlists do YouTube) e as faixas de cada um — pedido do Paulo (06/11) =====
+const GC_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+function gcCollect(o: any, key: string, acc: any[]) {
+  if (!o || typeof o !== "object") return;
+  if (Array.isArray(o)) { o.forEach(x => gcCollect(x, key, acc)); return; }
+  if (o[key]) acc.push(o[key]);
+  Object.keys(o).forEach(k => gcCollect(o[k], key, acc));
+}
+const gcAlbumSearchCache = new Map<string, { ts: number; list: any[] }>();
+const gcAlbumTracksCache = new Map<string, { ts: number; list: any[] }>();
+// Busca só playlists (filtro "Playlist" do YouTube: sp=EgIQAw==). Devolve { playlistId, title, channel, count, thumbnail }.
+app.get("/api/search-albums", async (req, res) => {
+  const q = String(req.query.q || "").trim().slice(0, 120);
+  if (!q) return res.status(400).json({ error: "busca vazia" });
+  const c = gcAlbumSearchCache.get(q);
+  if (c && Date.now() - c.ts < 10 * 60 * 1000) return res.json({ status: "ok", albums: c.list });
+  try {
+    const r = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}&sp=EgIQAw%253D%253D`, { headers: { "User-Agent": GC_UA, "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8", "Cookie": "CONSENT=YES+1; SOCS=CAI" } });
+    const html = await r.text();
+    const m = html.match(/var ytInitialData = ({.*?});<\/script>/s) || html.match(/ytInitialData\s*=\s*({.+?});/);
+    if (!m) return res.json({ status: "ok", albums: [] });
+    const data = JSON.parse(m[1]);
+    const out: any[] = [];
+    const seen = new Set<string>();
+    const lk: any[] = []; gcCollect(data, "lockupViewModel", lk);
+    lk.forEach(x => {
+      const id = x && x.contentId;
+      if (typeof id !== "string" || seen.has(id) || !/^[A-Za-z0-9_-]{10,60}$/.test(id)) return;
+      if (x.contentType && !/PLAYLIST/.test(x.contentType)) return;
+      const meta = x.metadata && x.metadata.lockupMetadataViewModel;
+      const title = (meta && meta.title && meta.title.content) || "";
+      const channel = (meta && meta.metadata && meta.metadata.contentMetadataViewModel && meta.metadata.contentMetadataViewModel.metadataRows && meta.metadata.contentMetadataViewModel.metadataRows[0] && meta.metadata.contentMetadataViewModel.metadataRows[0].metadataParts && meta.metadata.contentMetadataViewModel.metadataRows[0].metadataParts[0] && meta.metadata.contentMetadataViewModel.metadataRows[0].metadataParts[0].text && meta.metadata.contentMetadataViewModel.metadataRows[0].metadataParts[0].text.content) || "";
+      const raw = JSON.stringify(x);
+      const cm = /"text":"(\d+)\s+v[ií]deos?"/i.exec(raw);
+      const th = x.contentImage && x.contentImage.collectionThumbnailViewModel && x.contentImage.collectionThumbnailViewModel.primaryThumbnail && x.contentImage.collectionThumbnailViewModel.primaryThumbnail.thumbnailViewModel && x.contentImage.collectionThumbnailViewModel.primaryThumbnail.thumbnailViewModel.image && x.contentImage.collectionThumbnailViewModel.primaryThumbnail.thumbnailViewModel.image.sources;
+      seen.add(id);
+      out.push({ playlistId: id, title, channel, count: cm ? parseInt(cm[1], 10) : 0, thumbnail: (th && th[0] && th[0].url) || "" });
+    });
+    // layout antigo
+    const pr: any[] = []; gcCollect(data, "playlistRenderer", pr);
+    pr.forEach(p => {
+      const id = p && p.playlistId; if (!id || seen.has(id)) return; seen.add(id);
+      out.push({ playlistId: id, title: (p.title && (p.title.simpleText || (p.title.runs && p.title.runs[0] && p.title.runs[0].text))) || "", channel: (p.shortBylineText && p.shortBylineText.runs && p.shortBylineText.runs[0] && p.shortBylineText.runs[0].text) || "", count: parseInt(p.videoCount || "0", 10) || 0, thumbnail: "" });
+    });
+    if (out.length) gcAlbumSearchCache.set(q, { ts: Date.now(), list: out });
+    res.json({ status: "ok", albums: out.slice(0, 20) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Erro na busca de álbuns" });
+  }
+});
+// Todas as faixas (vídeos) de uma playlist — { videoId, title, channel, duration }.
+app.get("/api/playlist-tracks", async (req, res) => {
+  const id = String(req.query.id || "").trim();
+  if (!/^[A-Za-z0-9_-]{10,60}$/.test(id)) return res.status(400).json({ error: "playlist inválida" });
+  const c = gcAlbumTracksCache.get(id);
+  if (c && Date.now() - c.ts < 30 * 60 * 1000) return res.json({ status: "ok", tracks: c.list });
+  try {
+    const r = await fetch("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false", {
+      method: "POST",
+      headers: { "User-Agent": GC_UA, "Content-Type": "application/json", "Accept-Language": "pt-BR,pt;q=0.9", "Origin": "https://www.youtube.com" },
+      body: JSON.stringify({ context: { client: { clientName: "WEB", clientVersion: "2.20241030.01.00", hl: "pt-BR", gl: "BR" } }, browseId: "VL" + id })
+    });
+    if (!r.ok) throw new Error("youtube " + r.status);
+    const j: any = await r.json();
+    const out: any[] = []; const seen = new Set<string>();
+    const pv: any[] = []; gcCollect(j, "playlistVideoRenderer", pv);
+    pv.forEach(v => {
+      const vid = v && v.videoId; if (typeof vid !== "string" || seen.has(vid)) return; seen.add(vid);
+      out.push({ videoId: vid, title: (v.title && (v.title.simpleText || (v.title.runs && v.title.runs.map((x: any) => x.text).join("")))) || "", channel: (v.shortBylineText && v.shortBylineText.runs && v.shortBylineText.runs[0] && v.shortBylineText.runs[0].text) || "", duration: (v.lengthText && v.lengthText.simpleText) || "" });
+    });
+    if (!out.length) {
+      const lk: any[] = []; gcCollect(j, "lockupViewModel", lk);
+      lk.forEach(x => {
+        const vid = x && x.contentId; if (typeof vid !== "string" || !/^[\w-]{11}$/.test(vid) || seen.has(vid)) return; seen.add(vid);
+        const meta = x.metadata && x.metadata.lockupMetadataViewModel;
+        const title = (meta && meta.title && meta.title.content) || "";
+        const rows = meta && meta.metadata && meta.metadata.contentMetadataViewModel && meta.metadata.contentMetadataViewModel.metadataRows;
+        const channel = (rows && rows[0] && rows[0].metadataParts && rows[0].metadataParts[0] && rows[0].metadataParts[0].text && rows[0].metadataParts[0].text.content) || "";
+        const dm = /"text":"(\d+:\d+(?::\d+)?)"/.exec(JSON.stringify(x));
+        out.push({ videoId: vid, title, channel, duration: dm ? dm[1] : "" });
+      });
+    }
+    if (out.length) gcAlbumTracksCache.set(id, { ts: Date.now(), list: out });
+    res.json({ status: "ok", tracks: out });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Erro ao ler as faixas" });
+  }
+});
+
 // ===== Lista de vídeos de uma playlist do YouTube, com 3 camadas (o feed do YouTube responde 404/429 de vez em quando pro IP do servidor) =====
 type PlEntry = { videoId: string; title: string; published: string; views: number };
 let plWhy = "";
