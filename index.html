@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.166';
+const APP_VERSION = '2026-11-07.167';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.167',
+    date: '07/11/2026',
+    items: [
+      "🎧 Operador agora é SEMPRE a tela onde o app está aberto (a do notebook): funciona sem precisar habilitar nenhuma tela na aba Telas e NUNCA vai para o projetor. Se o app estiver aberto no próprio projetor, o Operador não projeta nada. Vale para vídeo/música, cronômetro e comandos do celular.",
+    ],
+  },
   {
     version: '2026-11-07.166',
     date: '07/11/2026',
@@ -3744,7 +3751,7 @@ function ProjectButton({ churchId, media, itemKey, only, remote }) {
         return;
       }
       const enabled = loadEnabledScreens(churchId);
-      if (enabled.length === 0) {
+      if (enabled.length === 0 && which !== 'operador') {
         alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.');
         return;
       }
@@ -3769,7 +3776,7 @@ function ProjectButton({ churchId, media, itemKey, only, remote }) {
         // v.104: a tela de Retorno é independente — não entra no "Operador".
         targets = gcOperatorScreens(enabled);
         if (targets.length === 0) {
-          alert('Não há tela de operador separada do projetor. Vá na aba "Telas", marque uma tela como Projetor e habilite OUTRA tela (sem marcar como Projetor nem Retorno) pra usar o Operador. Nada foi projetado.');
+          alert('O app está aberto na tela do projetor, então o Operador não projetou nada (ele nunca vai pro projetor). Abra o app na tela do notebook.');
           return;
         }
       }
@@ -3866,7 +3873,7 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
   const sendTo = (which) => {
     try {
       const enabled = loadEnabledScreens(churchId);
-      if (enabled.length === 0) { alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.'); return; }
+      if (enabled.length === 0 && which !== 'operador') { alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.'); return; }
       let scrs;
       if (which === 'projetor') {
         const projectors = enabled.filter(s => s.isProjector);
@@ -3880,7 +3887,7 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
         scrs = ret;
       } else {
         scrs = gcOperatorScreens(enabled);
-        if (scrs.length === 0) { alert('Não há tela de operador separada do projetor. Vá na aba "Telas", marque uma tela como Projetor e habilite OUTRA tela (sem marcar como Projetor nem Retorno) pra usar o Operador. Nada foi projetado.'); return; }
+        if (scrs.length === 0) { alert('O app está aberto na tela do projetor, então o Operador não projetou nada (ele nunca vai pro projetor). Abra o app na tela do notebook.'); return; }
       }
       sendToMany(scrs);
     } catch (e) {
@@ -4881,8 +4888,21 @@ function gcReconcileScreens(churchId, detected) {
 function gcOperatorScreens(enabled) {
   const list = enabled || [];
   const proj = list.filter(s => s.isProjector);
-  if (proj.length === 0) return [];
-  return list.filter(s => !s.isProjector && !s.isReturnScreen && !proj.some(p => screenSig(p) === screenSig(s)));
+  const samePos = (a, b) => a.left === b.left && a.top === b.top;
+  // v.167: o Operador é SEMPRE a tela onde o app está aberto (a do notebook) — não precisa habilitar nada. Só cai em outra tela
+  // habilitada (que não seja Projetor/Retorno) se ela for a mesma tela onde o app está. Nunca vai pro projetor.
+  let here = null;
+  try {
+    const sc = window.screen || {};
+    here = { label: 'Tela do operador (onde o app está aberto)', winName: '', left: (typeof sc.availLeft === 'number' ? sc.availLeft : 0), top: (typeof sc.availTop === 'number' ? sc.availTop : 0), width: sc.width || 1280, height: sc.height || 720, __op: true };
+  } catch (e) {}
+  const cands = list.filter(s => !s.isProjector && !s.isReturnScreen && !proj.some(p => screenSig(p) === screenSig(s)));
+  if (here) {
+    if (proj.some(p => samePos(p, here))) return []; // o app está aberto no próprio projetor: não projeta nada
+    const match = cands.find(s => samePos(s, here));
+    return [match || here];
+  }
+  return proj.length === 0 ? [] : cands;
 }
 
 // Telas adicionadas "na mão" (pedido do Paulo, 25/09) — pra quando o navegador não detecta uma tela
@@ -8830,7 +8850,7 @@ function useChurchDoc(docId) {
 // Nunca usa alert() nesse caminho: um alert travaria o app no computador principal.
 function remoteProjectMedia(churchId, media, itemKey, which, onErr) {
   const enabled = loadEnabledScreens(churchId);
-  if (enabled.length === 0) return 'Nenhuma tela habilitada na aba Telas.';
+  if (enabled.length === 0 && which !== 'operador') return 'Nenhuma tela habilitada na aba Telas.';
   let targets;
   if (which === 'projetor') {
     const projectors = enabled.filter(s => s.isProjector);
@@ -8840,9 +8860,9 @@ function remoteProjectMedia(churchId, media, itemKey, which, onErr) {
     if (targets.length === 0) return 'Nenhuma tela de retorno configurada na aba Telas.';
   } else {
     targets = gcOperatorScreens(enabled);
-    if (targets.length === 0) return 'Nenhuma tela de operador configurada na aba Telas.';
+    if (targets.length === 0) return 'O app está aberto na tela do projetor — o Operador não projeta lá.';
   }
-  targets = targets.filter(scr => routeAllows(churchId, 'video', scr));
+  targets = targets.filter(scr => scr.__op || routeAllows(churchId, 'video', scr));
   if (targets.length === 0) return 'Nenhuma tela liberada para Vídeo e música (veja Telas › Rotas de conteúdo no computador).';
   targets.forEach(scr => { try { sendToScreenObj(scr, 'media', media, { mute: which === 'operador' || which === 'retorno', quiet: true }).then(err => { if (err && onErr) onErr(err); }); } catch (e) { if (onErr) onErr(String((e && e.message) || e)); } });
   return '';
