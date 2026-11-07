@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.146';
+const APP_VERSION = '2026-11-06.147';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.147',
+    date: '06/11/2026',
+    items: [
+      "Janela de projeção: depois de entrar em tela cheia uma vez, o app nunca mais move, redimensiona ou reescreve a janela (só troca o conteúdo dentro dela) e, se ela sair da tela cheia, pede pra voltar na hora. Funciona também no Firefox e Safari (pedido de tela cheia compatível com qualquer navegador). Apertar qualquer tecla na janela de projeção vale como um clique: entra em tela cheia e libera o som.",
+    ]
+  },
   {
     version: '2026-11-06.146',
     date: '06/11/2026',
@@ -4896,8 +4903,9 @@ function projectionShellHtml(openerActive) {
       + 'var cronoInterval=null,cronoItem=null;'
       + 'function tryFullscreen(){'
         + 'try{'
-          + 'if(document.fullscreenElement)return;'
-          + 'if(document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(function(){});'
+          + 'if(document.fullscreenElement||document.webkitFullscreenElement)return;'
+          + 'var de=document.documentElement;var rf=de.requestFullscreen||de.webkitRequestFullscreen||de.mozRequestFullScreen||de.msRequestFullscreen;'
+          + 'if(rf){var pr=rf.call(de);if(pr&&pr.catch)pr.catch(function(){});}'
         + '}catch(e){}'
       + '}'
       + 'function renderBlank(){stage.innerHTML="";localVideoEl=null;ytPlayer=null;clearCronoInterval();}'
@@ -5016,7 +5024,7 @@ function projectionShellHtml(openerActive) {
         + 'overlayClearTimer=setTimeout(function(){overlay.innerHTML="";closeIfStageEmpty();},fadeMs);'
       + '}'
       + 'function gcPrep(){try{ytPlayer.unloadModule&&ytPlayer.unloadModule("captions");}catch(e){}try{ytPlayer.setOption&&ytPlayer.setOption("captions","track",{});}catch(e){}try{ytPlayer.setPlaybackQuality&&ytPlayer.setPlaybackQuality("hd1080");}catch(e){}}'
-      + 'function gcPrepHint(){if(document.getElementById("gc-prep"))return;var h=document.createElement("div");h.id="gc-prep";h.textContent="\uD83D\uDC46 Clique aqui UMA vez para liberar o som da projeção";h.style.cssText="position:fixed;left:50%;bottom:6%;transform:translateX(-50%);z-index:9998;padding:14px 26px;border-radius:999px;background:rgba(0,0,0,.65);color:#fff;font:700 clamp(16px,2.2vw,30px) sans-serif;pointer-events:none;box-shadow:0 0 24px rgba(0,0,0,.6);";document.body.appendChild(h);var rm=function(){try{h.remove();}catch(e){}document.removeEventListener("click",rm,true);};document.addEventListener("click",rm,true);}'
+      + 'function gcPrepHint(){if(document.getElementById("gc-prep"))return;var h=document.createElement("div");h.id="gc-prep";h.textContent="\uD83D\uDC46 Clique (ou aperte qualquer tecla) UMA vez para liberar o som da projeção";h.style.cssText="position:fixed;left:50%;bottom:6%;transform:translateX(-50%);z-index:9998;padding:14px 26px;border-radius:999px;background:rgba(0,0,0,.65);color:#fff;font:700 clamp(16px,2.2vw,30px) sans-serif;pointer-events:none;box-shadow:0 0 24px rgba(0,0,0,.6);";document.body.appendChild(h);var rm=function(){try{h.remove();}catch(e){}document.removeEventListener("click",rm,true);};document.addEventListener("click",rm,true);}'
       + 'function gcHint(show){var h=document.getElementById("gc-hint");if(!show){if(h)h.style.display="none";return;}if(!h){h=document.createElement("div");h.id="gc-hint";h.textContent="\uD83D\uDD0A Clique uma vez em qualquer lugar desta tela para liberar o som";h.style.cssText="position:fixed;right:14px;bottom:12px;z-index:9;padding:6px 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#9fe;font:600 13px sans-serif;pointer-events:none;opacity:.8;";document.body.appendChild(h);setTimeout(function(){h.style.display="none";},30000);}h.style.display="block";}'
       // gcOpenerActive: a janela principal já tinha recebido clique do operador quando abriu esta janela
       // (v.96) — aí o navegador costuma liberar o som aqui também, então tenta com som primeiro e só cai
@@ -5098,10 +5106,11 @@ function projectionShellHtml(openerActive) {
       + 'document.addEventListener("click",function(){tryFullscreen();gcSoundOn();});'
       // v.146: qualquer toque/tecla na janela já pede a tela cheia de volta; ao entrar na tela cheia, trava o Esc
       // (segurar o Esc é o jeito de sair); e a janela só fecha sozinha quando o app que a abriu foi FECHADO.
-      + 'document.addEventListener("keydown",function(){tryFullscreen();});'
-      + 'document.addEventListener("pointerdown",function(){tryFullscreen();});'
+      + 'document.addEventListener("keydown",function(e){if(e&&e.key==="Escape")return;tryFullscreen();gcSoundOn();var h=document.getElementById("gc-prep");if(h)try{h.remove();}catch(x){}});'
+      + 'document.addEventListener("pointerdown",function(){tryFullscreen();gcSoundOn();});'
       + 'document.addEventListener("touchstart",function(){tryFullscreen();},{passive:true});'
-      + 'document.addEventListener("fullscreenchange",function(){try{if(document.fullscreenElement){if(navigator.keyboard&&navigator.keyboard.lock)navigator.keyboard.lock(["Escape"]).catch(function(){});}else{var b=document.getElementById("fs-fallback");if(b)b.style.display="";}}catch(e){}});'
+      + 'function gcFsChange(){try{if(document.fullscreenElement||document.webkitFullscreenElement){window.__gcWasFs=true;if(navigator.keyboard&&navigator.keyboard.lock)navigator.keyboard.lock(["Escape"]).catch(function(){});}else{if(window.__gcWasFs){setTimeout(tryFullscreen,50);}var b=document.getElementById("fs-fallback");if(b)b.style.display="";}}catch(e){}}'
+      + 'document.addEventListener("fullscreenchange",gcFsChange);document.addEventListener("webkitfullscreenchange",gcFsChange);'
       + 'var gcOpenerSeen=false;setInterval(function(){try{if(window.opener){if(!window.opener.closed){gcOpenerSeen=true;}else if(gcOpenerSeen){window.close();}}}catch(e){}},2000);'
       + 'document.addEventListener("touchend",tryFullscreen);'
     + '})();<\/scr'+'ipt>'
@@ -5155,12 +5164,12 @@ async function sendToScreenObj(scr, kind, payload, opts) {
       // foi atualizado/recarregado e perdeu a referência). Se ela já tem a nossa página de projeção, NÃO reescreve:
       // reescrever tira da tela cheia e zera a liberação do som.
       let reused = false;
-      try { reused = !!(win && win.document && (win.__gcShell || win.document.getElementById('gc-stage'))); } catch (e) {}
+      try { reused = !!(win && win.document && (win.__gcWasFs || win.__gcShell || win.document.getElementById('gc-stage'))); } catch (e) {}
       isNewWindow = !reused;
     } else {
       // v.118: mover/redimensionar uma janela que já está em TELA CHEIA a tira da tela cheia (e o som volta a
       // ficar bloqueado). Janela em tela cheia já está no lugar certo — não mexe nela.
-      try { if (!(win.document && win.document.fullscreenElement)) { win.moveTo(scr.left, scr.top); win.resizeTo(scr.width, scr.height); } } catch(e) {}
+      try { if (!(win.document && (win.document.fullscreenElement || win.document.webkitFullscreenElement)) && !win.__gcWasFs) { win.moveTo(scr.left, scr.top); win.resizeTo(scr.width, scr.height); } } catch(e) {}
     }
     if (!win) { if (quiet) gcQueueBlocked(scr, kind, payload, opts); return fail(GC_POPUP_BLOCKED_MSG); }
 
@@ -5179,8 +5188,9 @@ async function sendToScreenObj(scr, kind, payload, opts) {
       const tryFs = () => {
         try {
           const el = win.document.documentElement;
-          if (el && el.requestFullscreen && !win.document.fullscreenElement) {
-            (fsScreen ? el.requestFullscreen({ screen: fsScreen }) : el.requestFullscreen()).catch(()=>{});
+          if (el && !win.document.fullscreenElement && !win.document.webkitFullscreenElement) {
+            if (el.requestFullscreen) { (fsScreen ? el.requestFullscreen({ screen: fsScreen }) : el.requestFullscreen()).catch(()=>{}); }
+            else if (el.webkitRequestFullscreen) { el.webkitRequestFullscreen(); }
           }
         } catch(e) {}
       };
