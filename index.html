@@ -140,11 +140,20 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.145';
+const APP_VERSION = '2026-11-06.146';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.146',
+    date: '06/11/2026',
+    items: [
+      "Busca: o botão grande do topo virou um campo de BUSCA GERAL só no YouTube (acha só o que você digitou). Os 3 campos (Novo Hinário, Hinário antigo, Coletâneas e CD Jovem) ficam sempre visíveis, sem abrir/fechar; Esc limpa a busca.",
+      "Fade out: ao terminar, a tela do projetor mostra o Plano de Fundo (não mais preto).",
+      "Janela de projeção: nunca mais se fecha sozinha (antes fechava quando o texto/versículo sumia e não havia mais nada na tela) — só fecha quando o app é fechado. Ela também tenta voltar à tela cheia a qualquer clique/tecla e trava o Esc na tela cheia. O botão 'Encerrar em Todas as Telas' agora pede confirmação.",
+    ]
+  },
   {
     version: '2026-11-06.145',
     date: '06/11/2026',
@@ -3454,7 +3463,6 @@ function ChurchHeader({ church, tab, setTab, onLogout, badges }) {
             ${!isMobile && html`<div style=${{fontSize:'11px', color:'var(--text-mid)'}}>${church.city}${church.state ? ' - '+church.state : ''} • ${clock}</div>`}
           </div>
         </div>
-        <button type="button" onClick=${()=>{ try { window.dispatchEvent(new Event('gc-open-search')); } catch(e) {} }} title="Busca rápida: hinário, músicas, cantores, playbacks e letras" aria-label="Busca rápida" style=${{order: isMobile ? 3 : 0, flex: isMobile ? '1 1 100%' : '1 1 280px', maxWidth: isMobile ? 'none' : '420px', height: isMobile ? '44px' : '46px', padding:'0 18px', borderRadius:'999px', border:'1.5px solid rgba(56,189,248,0.85)', cursor:'pointer', display:'flex', alignItems:'center', gap:'12px', fontSize:'14px', fontWeight:800, color:'#fff', background:'linear-gradient(90deg, rgba(14,165,233,0.35), rgba(139,92,246,0.35))', boxShadow:'0 0 26px -4px rgba(56,189,248,0.95), inset 0 0 18px -6px rgba(56,189,248,0.9)', animation:'gcSearchGlow 2.4s ease-in-out infinite'}}><span style=${{fontSize:'20px'}}>🔎</span><span style=${{flex:1, textAlign:'left', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>Busca rápida — hino, música, cantor…</span><span style=${{fontSize:'10.5px', fontWeight:800, padding:'3px 9px', borderRadius:'999px', background:'rgba(2,6,23,0.55)'}}>1–600</span></button>
         <div style=${{display:'flex', alignItems:'center', gap:'8px'}}>
           ${isMobile && html`
             <button onClick=${()=>setNavOpen(o=>!o)} style=${{...btnGhost, display:'flex', alignItems:'center', gap:'6px', fontSize:'11px'}}>
@@ -4999,7 +5007,9 @@ function projectionShellHtml(openerActive) {
       // sendo mostrado sozinho), fecha a janela de projeção sozinha quando o texto sumir — assim a
       // tela/projetor volta ao normal em vez de ficar com uma janela preta parada. Se tinha algo por
       // baixo, a janela continua aberta mostrando esse conteúdo (o texto some, o resto fica).
-      + 'function closeIfStageEmpty(){try{if(!stage.innerHTML.trim())window.close();}catch(e){}}'
+      // v.146: a janela de projeção NUNCA se fecha sozinha (só fecha quando o app é fechado) — fechar e reabrir tira da
+      // tela cheia e trava o som de novo. Quando o texto some e não há nada embaixo, fica a tela preta.
+      + 'function closeIfStageEmpty(){}'
       + 'function clearOverlayText(){'
         + 'clearOverlayTimers();'
         + 'var fadeMs=500;overlay.style.transition="opacity "+fadeMs+"ms ease";overlay.style.opacity="0";'
@@ -5086,6 +5096,13 @@ function projectionShellHtml(openerActive) {
       + '});'
       + 'tryFullscreen();'
       + 'document.addEventListener("click",function(){tryFullscreen();gcSoundOn();});'
+      // v.146: qualquer toque/tecla na janela já pede a tela cheia de volta; ao entrar na tela cheia, trava o Esc
+      // (segurar o Esc é o jeito de sair); e a janela só fecha sozinha quando o app que a abriu foi FECHADO.
+      + 'document.addEventListener("keydown",function(){tryFullscreen();});'
+      + 'document.addEventListener("pointerdown",function(){tryFullscreen();});'
+      + 'document.addEventListener("touchstart",function(){tryFullscreen();},{passive:true});'
+      + 'document.addEventListener("fullscreenchange",function(){try{if(document.fullscreenElement){if(navigator.keyboard&&navigator.keyboard.lock)navigator.keyboard.lock(["Escape"]).catch(function(){});}else{var b=document.getElementById("fs-fallback");if(b)b.style.display="";}}catch(e){}});'
+      + 'var gcOpenerSeen=false;setInterval(function(){try{if(window.opener){if(!window.opener.closed){gcOpenerSeen=true;}else if(gcOpenerSeen){window.close();}}}catch(e){}},2000);'
       + 'document.addEventListener("touchend",tryFullscreen);'
     + '})();<\/scr'+'ipt>'
     + '</body></html>';
@@ -5191,7 +5208,11 @@ async function sendToScreenObj(scr, kind, payload, opts) {
     const post = () => { try { win.postMessage(msg, '*'); } catch(e) {} };
     // Numa janela recém-criada, dá um tiquinho pro script da página terminar de registrar o "ouvinte"
     // de mensagens antes de mandar o conteúdo; numa janela já aberta, manda na hora.
-    if (isNewWindow) { setTimeout(post, 60); } else { post(); }
+    if (isNewWindow) { setTimeout(post, 60); } else {
+      post();
+      // v.146: janela já aberta que não está em tela cheia: aproveita o clique do operador pra voltar pra tela cheia.
+      try { if (navigator.userActivation && navigator.userActivation.isActive && win.document && !win.document.fullscreenElement) { const el = win.document.documentElement; if (el && el.requestFullscreen) el.requestFullscreen().catch(()=>{}); } } catch(e) {}
+    }
     if (opts && opts.prep) { try { setTimeout(() => { try { win.postMessage({ gcType: 'prep' }, '*'); } catch (e) {} }, isNewWindow ? 250 : 50); } catch (e) {} }
     try { win.focus(); } catch (e) {}
     return '';
@@ -5253,6 +5274,18 @@ function fadeOutAllScreens(churchId) {
     const win = projectionWindows[sig];
     try { if (win && !win.closed) win.postMessage({ gcType:'media_fadeout', ms: gcFadeMs() }, '*'); } catch(e) {}
   });
+  // v.146: terminado o fade, a tela do projetor mostra o PLANO DE FUNDO (não preto). Só nas janelas já abertas.
+  setTimeout(() => {
+    try {
+      const url = gcGetBackground({ id: churchId });
+      if (!url) return;
+      const enabled = loadEnabledScreens(churchId);
+      fundoScreens(churchId, enabled).forEach(scr => {
+        const win = projectionWindows[screenSig(scr)];
+        try { if (win && !win.closed) win.postMessage({ gcType:'imagem', item: { dataUrl: url, title: 'Plano de Fundo' } }, '*'); } catch(e) {}
+      });
+    } catch(e) {}
+  }, gcFadeMs() + 450);
 }
 function pauseAllScreens(churchId) {
   Object.keys(projectionWindows).forEach(sig => {
@@ -7298,7 +7331,7 @@ function TelasView({ churchId }) {
       <div style=${{display:'flex', gap:'8px', flexWrap:'wrap'}}>
         <button onClick=${()=>detectScreens(true)} disabled=${!!detecting} style=${{...btnGhost, justifySelf:'start', opacity: detecting ? 0.7 : 1}}>${detecting || '🔄 Detectar Telas Novamente'}</button>
         <button onClick=${()=>setShowAddManual(v=>!v)} style=${{...btnGhost, justifySelf:'start'}}>➕ Adicionar Tela Manualmente</button>
-        <button onClick=${closeAllProjectionScreens} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🔴 Encerrar em Todas as Telas</button>
+        <button onClick=${()=>{ if (confirm('Fechar as janelas de projeção? Elas saem da tela cheia e o som pode travar de novo quando abrir outra vez. Para só tirar o vídeo da tela, use ✖ Fechar no console.')) closeAllProjectionScreens(); }} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🔴 Encerrar em Todas as Telas</button>
       </div>
 
       ${showAddManual && html`<${AddManualScreenForm} onAdd=${addManualScreen} onClose=${()=>setShowAddManual(false)} suggestedLeft=${allScreens.reduce((sum,s)=>sum+s.width,0)} />`}
@@ -9811,12 +9844,12 @@ function gcMatchAll(typed, text) {
 function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   const isMobile = useIsMobile();
   const docId = church && (church.fbDocId || church.docId);
-  const [open, setOpen] = useState(false);
+  const open = true;
   const inputRef = useRef(null);
   const [q, setQ] = useState('');
   // v.144: 3 buscas — Novo Hinário (2022), Hinário antigo, Coletâneas & CD Jovem. "Só oficiais" ligado por padrão.
-  const [mode, setModeRaw] = useState('novo');
-  const modeTexts = useRef({ novo: '', antigo: '', colet: '' });
+  const [mode, setModeRaw] = useState('geral');
+  const modeTexts = useRef({ geral: '', novo: '', antigo: '', colet: '' });
   const typeIn = (m, v) => { if (m !== mode) { setModeRaw(m); setYt(null); setErr(''); } setQ(v); };
   const [yt, setYt] = useState(null);          // resultados do YouTube da última busca
   const [ytQ, setYtQ] = useState('');
@@ -9872,19 +9905,18 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') { setQ(''); setYt(null); setErr(''); } };
     window.addEventListener('keydown', onKey);
-    const tm = setTimeout(() => { try { inputRef.current && inputRef.current.focus(); } catch(e) {} }, 60);
-    return () => { window.removeEventListener('keydown', onKey); clearTimeout(tm); };
+    return () => { window.removeEventListener('keydown', onKey); };
   }, [open]);
   useEffect(() => { setLimit(8); }, [q]);
   const [slot, setSlot] = useState(null);
-  useEffect(() => { setSlot(document.getElementById('gc-search-slot')); }, [open]);
-  useEffect(() => { const on = () => setOpen(o => !o); window.addEventListener('gc-open-search', on); return () => window.removeEventListener('gc-open-search', on); }, []);
+  useEffect(() => { const f = () => { const el = document.getElementById('gc-search-slot'); setSlot(p => p === el ? p : el); }; f(); const iv = setInterval(f, 800); return () => clearInterval(iv); }, []);
+  useEffect(() => { const on = () => { try { inputRef.current && inputRef.current.focus(); } catch(e) {} }; window.addEventListener('gc-open-search', on); return () => window.removeEventListener('gc-open-search', on); }, []);
 
   const nq = hinoNormalize(q).trim();
   const hymns = useMemo(() => (nq && mode === 'novo') ? NHA_HYMNS.filter(h => String(h.num) === nq || h.n === nq || hinoNormalize(h.t).includes(nq) || (!/^\d+$/.test(nq) && gcMatchAll(nq, h.t))) : [], [nq, mode]);
-  const libHits = nq ? lib.filter(x => hinoNormalize(x.title + ' ' + (x.singer || '') + ' ' + x.cat).includes(nq)) : [];
+  const libHits = (nq && mode !== 'geral') ? lib.filter(x => hinoNormalize(x.title + ' ' + (x.singer || '') + ' ' + x.cat).includes(nq)) : [];
   const inLib = (vid) => lib.some(x => x.videoId === vid);
   // v.140: se o texto bate com um hino do hinário, NUNCA faz busca geral (só o hinário: vídeo, playback, cifra, partitura).
   const [hv, setHv] = useState({});   // { 'n|kind': { loading, list, err } }
@@ -9925,7 +9957,8 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     setLoading(true); setErr(''); setYt(null); setYtQ(s);
     const isNum = /^\d{1,3}$/.test(s);
     let queries;
-    if (mode === 'antigo') queries = ['hinário adventista ' + s + (isNum ? ' antigo' : '')];
+    if (mode === 'geral') queries = [s];
+    else if (mode === 'antigo') queries = ['hinário adventista ' + s + (isNum ? ' antigo' : '')];
     else if (mode === 'colet') queries = [s + ' CD Jovem adventista', s + ' coletânea adventista álbum oficial'];
     else queries = ['novo hinário adventista ' + s];
     const lists = await Promise.all(queries.map(x => searchYoutubeServer(x)));
@@ -9935,7 +9968,8 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     lists.forEach(l => (l || []).forEach(v => { if (!seen.has(v.videoId)) { seen.add(v.videoId); all.push(v); } }));
     all = all.filter(v => {
       const n = hinoNormalize(v.title);
-      if (!gcMatchAll(s, v.title + (mode === 'colet' ? ' ' + (v.channel || '') : ''))) return false;
+      if (!gcMatchAll(s, v.title + (mode === 'colet' || mode === 'geral' ? ' ' + (v.channel || '') : ''))) return false;
+      if (mode === 'geral') return true;
       if (mode === 'antigo') return !/novo hin/.test(n) && /hinario|hino/.test(n);
       if (mode === 'colet' && /hinario adventista|\bhino \d/.test(n)) return false; // coletâneas/CD Jovem não misturam com hinário
       if (mode === 'novo' && !/(hinario|hino)/.test(n)) return false;
@@ -9945,7 +9979,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   };
   // Hinário antigo e Coletâneas/CD Jovem: busca sozinha ao parar de digitar (uma consulta por vez).
   useEffect(() => {
-    if (mode === 'novo' || nq.length < 2) return;
+    if (mode === 'novo' || nq.length < 2) return;  // geral, antigo e colet buscam sozinhos
     const tm = setTimeout(() => { doYoutube(); }, 700);
     return () => clearTimeout(tm);
   }, [nq, mode]);
@@ -10031,14 +10065,13 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   const secTitle = (txt) => html`<div style=${{fontSize:'10.5px', fontWeight:900, letterSpacing:'1.4px', textTransform:'uppercase', color:'var(--highlight)', padding:'4px 2px 0'}}>${txt}</div>`;
 
   return html`
-    ${open && slot && ReactDOM.createPortal(html`
+    ${slot && ReactDOM.createPortal(html`
       <div style=${{width:'100%', minWidth:0}}>
         <div style=${{width:'100%', maxWidth:'none', display:'flex', flexDirection:'column', gap:'8px', ...(nq ? {maxHeight:'min(56vh, 520px)', background:'rgba(8,18,40,0.97)', border:'1px solid rgba(56,189,248,0.4)', borderRadius:'16px', padding:'10px'} : {})}}>
           <form onSubmit=${(e)=>{ e.preventDefault(); doYoutube(); }} style=${{display:'flex', gap:'8px', alignItems:'center'}}>
-            <div style=${{flex:1, minWidth:0, display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(210px, 1fr))', gap:'8px'}}>
-              ${[['novo','📖 Novo Hinário — nº ou nome'],['antigo','📜 Hinário antigo — nº ou nome'],['colet','💿 Coletâneas e CD Jovem']].map(([k, ph], i) => html`<input key=${k} ref=${i === 0 ? inputRef : null} aria-label=${ph} value=${mode === k ? q : ''} onChange=${e=>typeIn(k, e.target.value)} onFocus=${()=>{ if (mode !== k) { setModeRaw(k); setQ(''); setYt(null); setErr(''); } }} placeholder=${ph} style=${{...inputStyle, minWidth:0, fontSize:'14px', padding:'12px 14px', borderRadius:'14px', border:'1px solid ' + (mode === k && q ? 'var(--highlight)' : 'rgba(56,189,248,0.5)'), boxShadow: mode === k && q ? '0 0 20px -8px rgba(56,189,248,0.9)' : 'none'}} />`)}
+            <div style=${{flex:1, minWidth:0, display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(170px, 1fr))', gap:'8px'}}>
+              ${[['geral','🔎 Busca geral no YouTube — música, cantor, playback…'],['novo','📖 Novo Hinário — nº ou nome'],['antigo','📜 Hinário antigo — nº ou nome'],['colet','💿 Coletâneas e CD Jovem']].map(([k, ph], i) => html`<input key=${k} ref=${i === 0 ? inputRef : null} aria-label=${ph} value=${mode === k ? q : ''} onChange=${e=>typeIn(k, e.target.value)} onFocus=${()=>{ if (mode !== k) { setModeRaw(k); setQ(''); setYt(null); setErr(''); } }} placeholder=${ph.split(' — ')[0]} style=${{...inputStyle, minWidth:0, fontSize:'14px', padding:'12px 14px', borderRadius:'14px', border:'1px solid ' + (mode === k && q ? 'var(--highlight)' : 'rgba(56,189,248,0.5)'), boxShadow: mode === k && q ? '0 0 20px -8px rgba(56,189,248,0.9)' : 'none', ...(k === 'geral' ? { gridColumn:'1 / -1', fontSize:'15px', fontWeight:700, padding:'13px 18px', borderRadius:'999px', border:'1.5px solid rgba(56,189,248,0.85)', background:'linear-gradient(90deg, rgba(14,165,233,0.22), rgba(139,92,246,0.22))', boxShadow:'0 0 26px -4px rgba(56,189,248,0.9), inset 0 0 18px -6px rgba(56,189,248,0.7)', animation: (mode === k && q) ? 'none' : 'gcSearchGlow 2.4s ease-in-out infinite' } : {})}} />`)}
             </div>
-            <button type="button" onClick=${()=>setOpen(false)} title="Fechar (Esc)" style=${{...btnGhost, padding:'12px 14px', fontSize:'14px'}}>✕</button>
           </form>
           ${nq && html`<div style=${{overflowY:'auto', minHeight:0, display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'10px', alignContent:'start', paddingRight:'2px'}}>
             
