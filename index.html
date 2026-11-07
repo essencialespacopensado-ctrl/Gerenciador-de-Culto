@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.148';
+const APP_VERSION = '2026-11-06.149';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.149',
+    date: '06/11/2026',
+    items: [
+      "Lista de músicas dos álbuns (Coletâneas): letra maior e branca, informações em verde bem legível, botões em tamanho normal e cada música num cartão com borda mais clara — continua compacta, mas fácil de ler.",
+    ]
+  },
   {
     version: '2026-11-06.148',
     date: '06/11/2026',
@@ -10041,7 +10048,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     const secs = isLit ? secsFor(lit.day) : null;
     const dayList = isLit ? readDay(lit.day).filter(a => lit.day === 'sabado' ? a.section === lit.section : true) : [];
     return html`
-      <div key=${o.key} style=${{padding: o.compact ? '5px 8px' : '12px', borderRadius: o.compact ? '10px' : '16px', border:'1px solid rgba(56,189,248,0.22)', background:'linear-gradient(135deg, rgba(56,189,248,0.07), rgba(139,92,246,0.06))', display:'grid', gap: o.compact ? '2px 8px' : '10px', minWidth:0, ...(o.compact ? { gridTemplateColumns:'minmax(0,1fr) auto', alignItems:'center' } : {})}}>
+      <div key=${o.key} style=${{padding: o.compact ? '7px 12px' : '12px', borderRadius: o.compact ? '12px' : '16px', border:'1px solid ' + (o.compact ? 'rgba(56,189,248,0.38)' : 'rgba(56,189,248,0.22)'), background:'linear-gradient(135deg, rgba(56,189,248,0.07), rgba(139,92,246,0.06))', display:'grid', gap: o.compact ? '5px' : '10px', minWidth:0}}>
         <div style=${{display: o.compact ? 'none' : 'flex', gap:'12px', alignItems:'center', minWidth:0}}>
           ${o.badge
             ? html`<div style=${{flex:'0 0 auto', minWidth:'52px', height:'52px', padding:'0 6px', borderRadius:'14px', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:900, fontSize:'18px', color:'#fff', background:'linear-gradient(135deg,var(--accent-1),var(--accent-2))', boxShadow:'0 0 18px -4px var(--accent-1)'}}>${o.badge}</div>`
@@ -10051,8 +10058,8 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
             ${o.sub && html`<div style=${{fontSize:'11px', color:'var(--text-dim)', overflowWrap:'anywhere'}}>${o.sub}</div>`}
           </div>
         </div>
-        ${o.compact && html`<div style=${{minWidth:0, display:'flex', gap:'8px', alignItems:'baseline', flexWrap:'wrap'}}><span style=${{fontWeight:800, fontSize:'12px', overflowWrap:'anywhere'}}>${o.title}</span>${o.sub && html`<span style=${{fontSize:'10px', color:'var(--text-dim)'}}>${o.sub}</span>`}</div>`}
-        <div style=${{display:'flex', gap: o.compact ? '4px' : '6px', flexWrap:'wrap', alignItems:'center', zoom: o.compact ? 0.78 : 1, flexWrap: o.compact ? 'nowrap' : 'wrap'}}>
+        ${o.compact && html`<div style=${{minWidth:0, display:'flex', flexWrap:'wrap', alignItems:'baseline', gap:'2px 10px'}}><span style=${{fontWeight:700, fontSize:'14.5px', lineHeight:1.3, color:'#fff', overflowWrap:'anywhere'}}>${o.title}</span>${o.sub && html`<span style=${{fontSize:'12.5px', color:'var(--highlight)', fontWeight:600}}>${o.sub}</span>`}</div>`}
+        <div style=${{display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap'}}>
           <${ProjectButton} churchId=${churchId} media=${media} itemKey=${o.remoteKey} remote=${{ type:'project_media', arg:{ videoId: o.vid, title: o.title, key: o.remoteKey } }} />
           <button type="button" onClick=${()=>openLit(o.key, o.title, o.vid)} style=${{...btn, borderColor:'var(--accent-1)', color:'var(--highlight)'}}>➕ Enviar para a Liturgia</button>
           <button type="button" onClick=${()=>setPlaying(isPlay ? null : o.key)} style=${btn}>${isPlay ? '⏹ Fechar' : '▶ Ver'}</button>
