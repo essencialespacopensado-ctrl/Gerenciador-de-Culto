@@ -140,11 +140,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-06.147';
+const APP_VERSION = '2026-11-06.148';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-06.148',
+    date: '06/11/2026',
+    items: [
+      "Coletâneas e CD Jovem: ao digitar uma música ou o nome de um álbum, aparecem os álbuns que têm aquela música (ou aquele nome) com TODAS as faixas, em linhas compactas (cada uma com Operador/Projetor/Liturgia). Álbuns de canais oficiais vêm primeiro; se não houver oficial, mostra os outros marcados '(não oficial)'. Requer a atualização do servidor.",
+      "Encerrar em Todas as Telas e o ✖ Fechar só limpam as telas (a janela de projeção continua em tela cheia). Novo botão 🖥️ Fechar projetor: é o único que fecha de verdade a janela de projeção (pede confirmação).",
+    ]
+  },
   {
     version: '2026-11-06.147',
     date: '06/11/2026',
@@ -7341,7 +7349,8 @@ function TelasView({ churchId }) {
       <div style=${{display:'flex', gap:'8px', flexWrap:'wrap'}}>
         <button onClick=${()=>detectScreens(true)} disabled=${!!detecting} style=${{...btnGhost, justifySelf:'start', opacity: detecting ? 0.7 : 1}}>${detecting || '🔄 Detectar Telas Novamente'}</button>
         <button onClick=${()=>setShowAddManual(v=>!v)} style=${{...btnGhost, justifySelf:'start'}}>➕ Adicionar Tela Manualmente</button>
-        <button onClick=${()=>{ if (confirm('Fechar as janelas de projeção? Elas saem da tela cheia e o som pode travar de novo quando abrir outra vez. Para só tirar o vídeo da tela, use ✖ Fechar no console.')) closeAllProjectionScreens(); }} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🔴 Encerrar em Todas as Telas</button>
+        <button onClick=${()=>{ stopAllProjectionScreens(); }} style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🔴 Encerrar em Todas as Telas</button>
+        <button onClick=${()=>{ if (confirm('Fechar o projetor? A janela de projeção sai da tela cheia e o som pode travar de novo quando abrir outra vez.')) closeAllProjectionScreens(); }} title="Fecha de verdade a janela de projeção (só use quando for encerrar)" style=${{...btnGhost, color:'var(--danger)', borderColor:'color-mix(in srgb, var(--danger) 32%, transparent)'}}>🖥️ Fechar projetor</button>
       </div>
 
       ${showAddManual && html`<${AddManualScreenForm} onAdd=${addManualScreen} onClose=${()=>setShowAddManual(false)} suggestedLeft=${allScreens.reduce((sum,s)=>sum+s.width,0)} />`}
@@ -9841,6 +9850,23 @@ function saveSongLib(churchId, list) { try { localStorage.setItem(songLibKey(chu
 // v.144: canais OFICIAIS (conferidos no YouTube: verificados / selo da gravadora). Fora disso = não oficial.
 const OFFICIAL_CH_RE = /casa publicadora|^cpb\b|cpb - topic|igreja adventista do s[eé]timo dia - topic|minist[eé]rio jovem|feliz ?7 ?play|gravadora ?nt|novo tom|r[aá]dio novo tempo|adoradores novo tempo|bel7 ?play|novo tempo/i;
 const isOfficialCh = (ch) => OFFICIAL_CH_RE.test(String(ch || ''));
+// v.148: Coletâneas — acha os ÁLBUNS (playlists) que têm a música/nome digitado e traz TODAS as faixas de cada um.
+async function gcFetchJson(url) {
+  try { const c = new AbortController(); const t = setTimeout(() => c.abort(), 12000); const r = await fetch(url, { signal: c.signal }); clearTimeout(t); if (!r.ok) return null; return await r.json(); } catch (e) { return null; }
+}
+async function gcLoadAlbums(s) {
+  const js = await Promise.all([s + ' CD Jovem adventista', s + ' álbum adventista'].map(x => gcFetchJson('/api/search-albums?q=' + encodeURIComponent(x))));
+  const seen = new Set(); let pls = [];
+  js.forEach(j => ((j && j.albums) || []).forEach(a => { if (a && a.playlistId && !seen.has(a.playlistId)) { seen.add(a.playlistId); pls.push(a); } }));
+  pls = pls.filter(a => a.count >= 2 && a.count <= 60);
+  const off = pls.filter(a => isOfficialCh(a.channel));
+  const use = (off.length ? off : pls).slice(0, 6);
+  const trs = await Promise.all(use.map(a => gcFetchJson('/api/playlist-tracks?id=' + encodeURIComponent(a.playlistId))));
+  return use.map((a, i) => ({ ...a, official: isOfficialCh(a.channel), tracks: (trs[i] && trs[i].tracks) || [] }))
+    .map(a => ({ ...a, hit: a.tracks.filter(t => gcMatchAll(s, t.title)).map(t => t.videoId) }))
+    .filter(a => a.tracks.length && (a.hit.length || gcMatchAll(s, a.title)))
+    .slice(0, 4);
+}
 // v.145: relevância estrita — todas as palavras digitadas precisam aparecer no título (tolera 1 letra errada em palavras de 5+ letras e acentos).
 function gcEdit1(a, b) { if (a === b) return true; if (Math.abs(a.length - b.length) > 1) return false; let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1) || (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2)); return a.length > b.length ? a.slice(i + 1) === b.slice(i) : b.slice(i + 1) === a.slice(i); }
 function gcMatchAll(typed, text) {
@@ -9862,6 +9888,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
   const modeTexts = useRef({ geral: '', novo: '', antigo: '', colet: '' });
   const typeIn = (m, v) => { if (m !== mode) { setModeRaw(m); setYt(null); setErr(''); } setQ(v); };
   const [yt, setYt] = useState(null);          // resultados do YouTube da última busca
+  const [albums, setAlbums] = useState(null);  // v.148: álbuns (com todas as faixas) da busca em Coletâneas
   const [ytQ, setYtQ] = useState('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -9954,7 +9981,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     }).slice(0, 6);
     setHv(m => ({ ...m, [key]: { list: good } }));
   };
-  useEffect(() => { setYt(null); setErr(''); }, [q]);
+  useEffect(() => { setYt(null); setAlbums(null); setErr(''); }, [q]);
   // Digitou um hino (até 3 resultados): já traz Playback, Cifra e Partitura, cada um com Operador / Projetor / Liturgia.
   useEffect(() => {
     if (!nq || hymns.length === 0 || hymns.length > 3) return;
@@ -9969,14 +9996,19 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     let queries;
     if (mode === 'geral') queries = [s];
     else if (mode === 'antigo') queries = ['hinário adventista ' + s + (isNum ? ' antigo' : '')];
-    else if (mode === 'colet') queries = [s + ' CD Jovem adventista', s + ' coletânea adventista álbum oficial'];
+    else if (mode === 'colet') queries = [s + ' CD Jovem adventista', s + ' coletânea adventista álbum oficial', s + ' CD Jovem músicas oficial'];
     else queries = ['novo hinário adventista ' + s];
+    const albP = mode === 'colet' ? gcLoadAlbums(s) : Promise.resolve(null);
     const lists = await Promise.all(queries.map(x => searchYoutubeServer(x)));
+    const alb = await albP;
     setLoading(false);
-    if (lists.every(l => !l)) { setErr('Não consegui buscar no YouTube agora. Tente de novo em instantes.'); return; }
+    if (alb) setAlbums(alb);
+    if (lists.every(l => !l) && !(alb && alb.length)) { setErr('Não consegui buscar no YouTube agora. Tente de novo em instantes.'); return; }
     const seen = new Set(); let all = [];
     lists.forEach(l => (l || []).forEach(v => { if (!seen.has(v.videoId)) { seen.add(v.videoId); all.push(v); } }));
+    const inAlb = new Set(); (alb || []).forEach(a => a.tracks.forEach(t => inAlb.add(t.videoId)));
     all = all.filter(v => {
+      if (inAlb.has(v.videoId)) return false;
       const n = hinoNormalize(v.title);
       if (!gcMatchAll(s, v.title + (mode === 'colet' || mode === 'geral' ? ' ' + (v.channel || '') : ''))) return false;
       if (mode === 'geral') return true;
@@ -10009,8 +10041,8 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
     const secs = isLit ? secsFor(lit.day) : null;
     const dayList = isLit ? readDay(lit.day).filter(a => lit.day === 'sabado' ? a.section === lit.section : true) : [];
     return html`
-      <div key=${o.key} style=${{padding:'12px', borderRadius:'16px', border:'1px solid rgba(56,189,248,0.22)', background:'linear-gradient(135deg, rgba(56,189,248,0.07), rgba(139,92,246,0.06))', display:'grid', gap:'10px', minWidth:0}}>
-        <div style=${{display:'flex', gap:'12px', alignItems:'center', minWidth:0}}>
+      <div key=${o.key} style=${{padding: o.compact ? '5px 8px' : '12px', borderRadius: o.compact ? '10px' : '16px', border:'1px solid rgba(56,189,248,0.22)', background:'linear-gradient(135deg, rgba(56,189,248,0.07), rgba(139,92,246,0.06))', display:'grid', gap: o.compact ? '2px 8px' : '10px', minWidth:0, ...(o.compact ? { gridTemplateColumns:'minmax(0,1fr) auto', alignItems:'center' } : {})}}>
+        <div style=${{display: o.compact ? 'none' : 'flex', gap:'12px', alignItems:'center', minWidth:0}}>
           ${o.badge
             ? html`<div style=${{flex:'0 0 auto', minWidth:'52px', height:'52px', padding:'0 6px', borderRadius:'14px', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:900, fontSize:'18px', color:'#fff', background:'linear-gradient(135deg,var(--accent-1),var(--accent-2))', boxShadow:'0 0 18px -4px var(--accent-1)'}}>${o.badge}</div>`
             : html`<img src=${o.thumb || ('https://i.ytimg.com/vi/' + o.vid + '/mqdefault.jpg')} loading="lazy" alt="" style=${{width:'92px', height:'52px', objectFit:'cover', borderRadius:'12px', flex:'0 0 auto', background:'#000'}} />`}
@@ -10019,7 +10051,8 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
             ${o.sub && html`<div style=${{fontSize:'11px', color:'var(--text-dim)', overflowWrap:'anywhere'}}>${o.sub}</div>`}
           </div>
         </div>
-        <div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+        ${o.compact && html`<div style=${{minWidth:0, display:'flex', gap:'8px', alignItems:'baseline', flexWrap:'wrap'}}><span style=${{fontWeight:800, fontSize:'12px', overflowWrap:'anywhere'}}>${o.title}</span>${o.sub && html`<span style=${{fontSize:'10px', color:'var(--text-dim)'}}>${o.sub}</span>`}</div>`}
+        <div style=${{display:'flex', gap: o.compact ? '4px' : '6px', flexWrap:'wrap', alignItems:'center', zoom: o.compact ? 0.78 : 1, flexWrap: o.compact ? 'nowrap' : 'wrap'}}>
           <${ProjectButton} churchId=${churchId} media=${media} itemKey=${o.remoteKey} remote=${{ type:'project_media', arg:{ videoId: o.vid, title: o.title, key: o.remoteKey } }} />
           <button type="button" onClick=${()=>openLit(o.key, o.title, o.vid)} style=${{...btn, borderColor:'var(--accent-1)', color:'var(--highlight)'}}>➕ Enviar para a Liturgia</button>
           <button type="button" onClick=${()=>setPlaying(isPlay ? null : o.key)} style=${btn}>${isPlay ? '⏹ Fechar' : '▶ Ver'}</button>
@@ -10043,7 +10076,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
               </div>`; })}
           </div>`; })()}
         ${isLit && html`
-          <div style=${{display:'grid', gap:'8px', padding:'10px', borderRadius:'12px', background:'rgba(2,6,23,0.45)', border:'1px solid var(--border-soft)'}}>
+          <div style=${{display:'grid', gap:'8px', padding:'10px', borderRadius:'12px', background:'rgba(2,6,23,0.45)', border:'1px solid var(--border-soft)', gridColumn:'1 / -1'}}>
             ${lit.done
               ? html`<div style=${{fontSize:'12.5px', fontWeight:800, color:'var(--success-1)'}}>✅ Adicionada à Liturgia (${lit.done})</div>`
               : html`
@@ -10066,7 +10099,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
             ${links[o.hymnN] && html`<button type="button" onClick=${()=>{ setLinkFor(o.hymnN, null); setLinking(null); }} style=${{...btn, justifySelf:'start'}}>↩ Voltar ao vídeo oficial</button>`}
           </div>`}
         ${isPlay && html`
-          <div style=${{position:'relative', width:'100%', aspectRatio:'16/9', borderRadius:'12px', overflow:'hidden', background:'#000'}}>
+          <div style=${{position:'relative', width:'100%', aspectRatio:'16/9', borderRadius:'12px', overflow:'hidden', background:'#000', gridColumn:'1 / -1'}}>
             <iframe key=${o.vid} src=${'https://www.youtube-nocookie.com/embed/' + o.vid + '?autoplay=1&rel=0&playsinline=1&modestbranding=1&hl=pt-BR'} title=${o.title} allow="autoplay; encrypted-media; fullscreen" allowfullscreen style=${{position:'absolute', inset:0, width:'100%', height:'100%', border:0}}></iframe>
           </div>`}
       </div>`;
@@ -10093,9 +10126,13 @@ function QuickSearchFab({ churchId, church, onUpdateChurch }) {
             ${nq && mode === 'novo' && hymns.length === 0 && html`<button type="button" onClick=${doYoutube} style=${{...btnPrimary, width:'100%', padding:'11px', fontSize:'13px'}}>${loading ? 'Buscando…' : '🔎 Buscar “' + q.trim() + '” no YouTube (músicas, cantores, playbacks, letras)'}</button>`}
             ${err && html`<div style=${{fontSize:'12px', color:'var(--danger)'}}>${err}</div>`}
             ${loading && mode !== 'novo' && html`<div style=${{fontSize:'12px', color:'var(--text-dim)'}}>Buscando…</div>`}
-            ${yt && yt.length === 0 && html`<div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.5}}>Não achei nada ${mode === 'antigo' ? '' : 'oficial '}para “${ytQ}”.</div>`}
+            ${albums && albums.map(a => html`<div key=${'alb-' + a.playlistId} style=${{display:'grid', gap:'4px'}}>
+              ${secTitle('💿 ' + a.title + ' · ' + a.tracks.length + ' músicas · ' + (a.channel || '—') + (a.official ? '' : ' (não oficial)'))}
+              ${a.tracks.map(t => row({ compact:true, key:'a-' + a.playlistId + t.videoId, vid:t.videoId, title:t.title, sub:[t.duration, a.hit.includes(t.videoId) ? '← a música que você digitou' : ''].filter(Boolean).join(' • '), remoteKey:'busca-' + t.videoId }))}
+            </div>`)}
+            ${yt && yt.length === 0 && !(albums && albums.length) && html`<div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.5}}>Não achei nada ${mode === 'antigo' ? '' : 'oficial '}para “${ytQ}”.</div>`}
             ${yt && yt.length > 0 && secTitle('▶ ' + (mode === 'antigo' ? 'Hinário antigo' : mode === 'colet' ? 'Coletâneas e CD Jovem' : 'YouTube') + ' · ' + yt.length + ' resultado(s) para “' + ytQ + '”')}
-            ${yt && yt.map(r => row({ key:'y-'+r.videoId, vid:r.videoId, title:r.title, sub:[r.channel, r.duration, r.published].filter(Boolean).join(' • '), thumb:r.thumbnail, yt:r, remoteKey:'busca-' + r.videoId }))}
+            ${yt && yt.map(r => row({ compact: mode === 'colet', key:'y-'+r.videoId, vid:r.videoId, title:r.title, sub:[r.channel, r.duration, r.published].filter(Boolean).join(' • '), thumb:r.thumbnail, yt:r, remoteKey:'busca-' + r.videoId }))}
           </div>`}
         </div>
       </div>`, slot)}
