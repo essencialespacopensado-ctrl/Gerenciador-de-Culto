@@ -140,11 +140,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.168';
+const APP_VERSION = '2026-11-07.169';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-07.169',
+    date: '07/11/2026',
+    items: [
+      "Liturgia: toda etapa com música (inclusive Momentos de Louvor que estão trancados 🔒 ou marcados \"todo sábado\" 📅) tem o botão \"🔎 Trocar música\" — busca ali mesmo e a escolhida vira a música da etapa. Em etapa \"todo sábado\" a troca vale só desta vez e há \"↩ Voltar ao fixo\".",
+      "Nos botões de projetar ficam só 🎧 Operador e 🔊 Projetor (saíram \"📡 Rota\" e o botão \"Principal\"/telas avulsas). O \"▶ Play\" que abria o YouTube no navegador foi trocado por \"🔎 Trocar\".",
+    ],
+  },
   {
     version: '2026-11-07.168',
     date: '07/11/2026',
@@ -3321,8 +3329,7 @@ function MediaSearchField({ media, onChange, searchKey }) {
       <div style=${{display:'flex', alignItems:'center', gap:'8px', padding:'8px 10px', borderRadius:'10px', background:'rgba(99,102,241,0.1)'}}>
         <span style=${{fontSize:'14px'}}>🎬</span>
         <span style=${{flex:1, minWidth:0, fontSize:'12px', color:'var(--text-hi)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${media.title}</span>
-        <button type="button" onClick=${()=>openMediaInNewTab(media)} style=${{...btnGhost, padding:'6px 12px', fontSize:'11px', whiteSpace:'nowrap'}}>▶ Play</button>
-        <button type="button" onClick=${()=>onChange(null)} style=${{background:'transparent', border:'none', color:'var(--text-dim)', fontSize:'13px'}}>✕</button>
+        <button type="button" onClick=${()=>onChange(null)} title="Escolher outra música/vídeo" style=${{...btnGhost, padding:'6px 12px', fontSize:'11px', whiteSpace:'nowrap'}}>🔎 Trocar</button>
       </div>
     `;
   }
@@ -3796,9 +3803,7 @@ function ProjectButton({ churchId, media, itemKey, only, remote }) {
   const buttons = [
     { text:'🎧 Operador', title:'Projetar só na tela do operador, sem som', onClick:()=>projectTo('operador') },
     { text:'🔊 Projetor', title:'Projetar no projetor, com som', onClick:()=>projectTo('projetor') },
-    ...(routeScreens(churchId, 'video', loadEnabledScreens(churchId)) ? [{ text:'📡 Rota', title:'Projetar em todas as telas liberadas para Vídeo e música (som só no projetor) — veja Telas › Rotas de conteúdo', onClick:()=>projectTo('rota') }] : []),
     ...(loadEnabledScreens(churchId).some(s => s.isReturnScreen) ? [{ text:'📺 Retorno', title:'Projetar na tela de retorno (voltada pra quem está falando), sem som', onClick:()=>projectTo('retorno') }] : []),
-    ...screenQuickButtonDefs(churchId, (scr)=>send(scr, false)),
   ];
 
   // v.126: 'only' mostra só os botões cujo texto bate (ex.: só "Projetor" na aba Ensaios, pra ficar enxuto no celular).
@@ -3937,8 +3942,6 @@ function CronometroAtividadeButton({ churchId, itemKey, title, responsible, time
     { text:'🎧 Operador', title:'Mostrar o cronômetro só na tela do operador, sem som', onClick:()=>sendTo('operador') },
     { text:'🔊 Projetor', title:'Mostrar o cronômetro no projetor', onClick:()=>sendTo('projetor') },
     { text:'📺 Retorno', title:'Mostrar o cronômetro na tela de retorno (voltada pra quem está falando)', onClick:()=>sendTo('retorno') },
-    ...(routeScreens(churchId, 'cronometro', loadEnabledScreens(churchId)) ? [{ text:'📡 Rota', title:'Mostrar o cronômetro nas telas liberadas em Telas › Rotas de conteúdo', onClick:()=>sendTo('rota') }] : []),
-    ...screenQuickButtonDefs(churchId, (scr)=>sendToMany([scr])),
   ];
   const statusExtra = html`
     <${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />
@@ -4069,6 +4072,7 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
   const [time, setTime] = useState(act.time === '--:--' ? '' : act.time);
   const [media, setMedia] = useState(act.media || null);
   const [sermaoExpanded, setSermaoExpanded] = useState(false);
+  const [swapOpen, setSwapOpen] = useState(false); // v.169: trocar a música mesmo em etapa trancada/fixa semanal
   const [idleSeconds, setIdleSeconds] = useState(typeof act.idleSeconds === 'number' ? act.idleSeconds : '');
   // Mover de lugar (25/09, a pedido do Paulo): reaproveita o mesmo "antes de / depois de" que já existe
   // em Acrescentar Atividade, só que agora dentro do próprio Editar, pra reordenar sem apagar e recriar.
@@ -4151,10 +4155,15 @@ function ActivityCard({ act, onToggle, onDelete, onEdit, onToggleFix, onToggleWe
       ${(needsMedia || (media && media.title)) && html`
         <div style=${{marginLeft: isMobile ? '0' : '46px', display:'flex', flexDirection: isMobile ? 'column' : 'row', flexWrap: isMobile ? 'nowrap' : 'wrap', gap:'8px', alignItems: isMobile ? 'stretch' : 'flex-start'}}>
           <div style=${{flex: isMobile ? 1 : '1 1 240px', minWidth:0}}>
+            ${(act.fixed || act.weeklyFixed) && needsMedia && html`<div style=${{display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center'}}>
+              <button type="button" onClick=${()=>setSwapOpen(v=>!v)} style=${{...btnGhost, padding:'5px 10px', fontSize:'11px'}}>${swapOpen ? '▴ Fechar busca' : '🔎 Trocar música'}</button>
+              ${act.weeklyFixed && act.mediaOverride && html`<button type="button" onClick=${()=>onEdit({...act, mediaOverride:false})} style=${{...btnGhost, padding:'5px 10px', fontSize:'11px'}}>↩ Voltar ao fixo</button>`}
+            </div>`}
+            ${swapOpen && (act.fixed || act.weeklyFixed) && html`<div style=${{padding:'6px 0'}}><${MediaSearchField} key=${act.id} media=${null} searchKey=${'swap-' + act.id} onChange=${(m)=>{ if (m) { setMedia(m); onEdit({...act, media: m, ...(act.weeklyFixed ? { mediaOverride: true } : {})}); setSwapOpen(false); } }} /></div>`}
             ${act.fixed
               ? html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>${media && media.title ? '🎬 '+media.title : '🔒 trancado'}</div>`
               : act.weeklyFixed
-              ? html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>${weeklyTrack && weeklyTrack.videoId ? '📅 '+(media && media.title ? media.title : weeklyTrack.name)+' (fixo — editar em Gestão)' : '📅 Fixo semanal — cadastre a URL em Gestão › Trilhas Fixas ("'+act.name+'")'}</div>`
+              ? html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>${act.mediaOverride && media && media.title ? '🎬 '+media.title+' (trocada só desta vez)' : weeklyTrack && weeklyTrack.videoId ? '📅 '+(media && media.title ? media.title : weeklyTrack.name)+' (fixo — editar em Gestão)' : '📅 Fixo semanal — cadastre a URL em Gestão › Trilhas Fixas ("'+act.name+'")'}</div>`
               : needsMedia
               ? html`<${MediaSearchField} media=${media} onChange=${(m)=>{ setMedia(m); onEdit({...act, media: m || null}); }} searchKey=${act.id} />`
               : html`<div style=${{fontSize:'11px', color:'var(--text-mid)', padding:'6px 2px'}}>🎬 ${media.title}</div>`}
@@ -9965,7 +9974,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
     setActivities(list => {
       let changed = false;
       const next = list.map(a => {
-        if (!a.weeklyFixed) return a;
+        if (!a.weeklyFixed || a.mediaOverride) return a;
         const track = findFixedTrack(fixedTracks, a.name);
         if (!track || !track.videoId) {
           if (a.media && a.media.fromFixedTrack) { changed = true; return { ...a, media: null }; }
