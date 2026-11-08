@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.171';
+const APP_VERSION = '2026-11-08.172';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.172',
+    date: '08/11/2026',
+    items: [
+      "Celular: a troca de aba e de dia da Liturgia agora é enviada ao computador principal mesmo quando o sinal do computador está atrasado (app em segundo plano).",
+    ],
+  },
   {
     version: '2026-11-08.171',
     date: '08/11/2026',
@@ -9837,7 +9844,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   useEffect(() => {
     if (toolsOnly) return;
     if (!daySeen.current) { daySeen.current = true; return; }
-    if (gcPhoneRemote.on && gcPhoneRemote.online) gcRemoteSend('nav', { tab: 'liturgia', day });
+    if (gcPhoneRemote.on) gcRemoteSend('nav', { tab: 'liturgia', day });
   }, [day]);
   useEffect(() => {
     if (toolsOnly) return;
@@ -12393,7 +12400,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   const tabSeen = useRef(false);
   useEffect(() => {
     if (!tabSeen.current) { tabSeen.current = true; return; }
-    if (gcPhoneRemote.on && gcPhoneRemote.online) gcRemoteSend('nav', { tab });
+    if (gcPhoneRemote.on) gcRemoteSend('nav', { tab });
   }, [tab]);
   useEffect(() => {
     const f = (e) => { const t = e && e.detail && e.detail.tab; if (e && e.detail && e.detail.day) window.__gcPendingDay = e.detail.day; if (t) setTab(t); };
