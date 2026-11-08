@@ -140,11 +140,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.174';
+const APP_VERSION = '2026-11-08.175';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.175',
+    date: '08/11/2026',
+    items: [
+      "Nuvem por igreja: links do Hinário, Coletâneas (links, personalizadas e faixas), horário/\"fora do padrão\" da Liturgia, configuração das Telas (do computador principal), tempo de fade e atenuação passam a ser guardados na nuvem, separados por igreja/login, e aparecem em todos os aparelhos. Nada que já estava salvo é apagado: ao sincronizar pela primeira vez o app junta o que há no aparelho com o da nuvem e guarda cópia de segurança do que for substituído.",
+      "Avisos (imagens muito grandes) continuam só no aparelho, pelo limite de tamanho da nuvem.",
+    ],
+  },
   {
     version: '2026-11-08.174',
     date: '08/11/2026',
@@ -8888,6 +8896,108 @@ function gcCfgSet(k, v) {
   if (gcPhoneClient.on) { gcMainCfg[k] = v; gcMainCfg.__at = Date.now(); gcRemoteSend('cfg_set', { k, v }); try { window.dispatchEvent(new Event('gc-telas-changed')); } catch (e) {} return; }
   try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) {}
 }
+// ---- v.175: tudo que o Paulo coloca no app vai pra NUVEM, separado por igreja (campo kv.* do documento da igreja) ----
+// Cada chave local (links do Hinário, Coletâneas, horário da Liturgia, Telas, fade/atenuação...) é copiada pra nuvem quando muda e
+// restaurada nos outros aparelhos. Nada é apagado: o que for trocado por uma versão mais nova da nuvem fica de cópia em gc_kvbak_*.
+const GC_KV_PREFIXES = ['gc_hinario_links_', 'gc_coletaneas_links_', 'gc_coletaneas_custom_', 'gc_coletanea_tracks_', 'gc_anuncios_', 'gc_lit_hora_', 'gc_lit_fora_', 'gc_telas_habilitadas_', 'gc_telas_manuais_', 'gc_telas_nomes_', 'gc_telas_rotas_', 'gc_tela_pref_'];
+const GC_KV_EXACT = ['gc_fade_secs', 'gc_atten_db', 'gc_atten_key'];
+const gcKv = { churchId: '', docId: '', applying: false, timers: {}, installed: false, last: undefined };
+const gcKvOrig = { get: Storage.prototype.getItem, set: Storage.prototype.setItem, remove: Storage.prototype.removeItem };
+function gcKvMatch(k) {
+  if (!k || !gcKv.churchId || typeof k !== 'string') return false;
+  if (GC_KV_EXACT.indexOf(k) >= 0) return true;
+  for (let i = 0; i < GC_KV_PREFIXES.length; i++) { const p = GC_KV_PREFIXES[i]; if (k.indexOf(p) === 0) { const rest = k.slice(p.length); return rest === gcKv.churchId || rest.indexOf(gcKv.churchId + '_') === 0; } }
+  return false;
+}
+function gcKvIsTelas(k) { return k.indexOf('gc_telas_') === 0 || k.indexOf('gc_tela_pref_') === 0; }
+function gcKvEnc(k) { return k.replace(/[^A-Za-z0-9_-]/g, '_'); }
+function gcKvRead(k) { try { return gcKvOrig.get.call(localStorage, k) || ''; } catch (e) { return ''; } }
+function gcKvWrite(k, v) { try { if (v === '' || v == null) gcKvOrig.remove.call(localStorage, k); else gcKvOrig.set.call(localStorage, k, v); } catch (e) {} }
+function gcKvPush(k) {
+  if (!gcKv.docId) return;
+  if (gcKvIsTelas(k) && !window.__gcIsMain) return;
+  clearTimeout(gcKv.timers[k]);
+  gcKv.timers[k] = setTimeout(() => {
+    const v = gcKvRead(k);
+    if (v.length > 180000) { try { console.warn('gc: valor grande demais pra nuvem, fica só neste aparelho:', k); } catch (e) {} return; }
+    const t = Number(gcKvRead('gc_kvt_' + k)) || Date.now();
+    fbUpdateChurchFields(gcKv.docId, { ['kv.' + gcKvEnc(k)]: { k, v, t } });
+  }, 1200);
+}
+function gcKvMerge(local, cloud) {
+  try {
+    if (!cloud) return local;
+    const A = JSON.parse(local), B = JSON.parse(cloud);
+    if (Array.isArray(A) && Array.isArray(B)) {
+      const seen = new Set(B.map(x => JSON.stringify(x))); const ids = new Set(B.map(x => x && x.id).filter(Boolean));
+      const extra = A.filter(x => !seen.has(JSON.stringify(x)) && !(x && x.id && ids.has(x.id)));
+      return extra.length ? JSON.stringify([...B, ...extra]) : cloud;
+    }
+    if (A && B && typeof A === 'object' && typeof B === 'object' && !Array.isArray(A) && !Array.isArray(B)) {
+      const s = JSON.stringify({ ...A, ...B });
+      return s === JSON.stringify(B) ? cloud : s;
+    }
+  } catch (e) {}
+  return cloud;
+}
+function gcKvInstall(churchId, docId) {
+  gcKv.churchId = churchId || ''; gcKv.docId = docId || '';
+  if (gcKv.installed) return; gcKv.installed = true;
+  try {
+    Storage.prototype.setItem = function (k, v) { gcKvOrig.set.call(this, k, v); try { if (this === localStorage && !gcKv.applying && gcKvMatch(k)) { gcKvOrig.set.call(this, 'gc_kvt_' + k, String(Date.now())); gcKvPush(k); } } catch (e) {} };
+    Storage.prototype.removeItem = function (k) { gcKvOrig.remove.call(this, k); try { if (this === localStorage && !gcKv.applying && gcKvMatch(k)) { gcKvOrig.set.call(this, 'gc_kvt_' + k, String(Date.now())); gcKvPush(k); } } catch (e) {} };
+  } catch (e) {}
+}
+// Aplica o que veio da nuvem; devolve a lista de chaves que mudaram neste aparelho.
+function gcKvApply(kv) {
+  const changed = []; if (!gcKv.churchId) return changed;
+  kv = kv || {}; gcKv.applying = true;
+  try {
+    const seen = {};
+    Object.keys(kv).forEach(enc => {
+      const e = kv[enc]; if (!e || typeof e.k !== 'string' || !gcKvMatch(e.k)) return;
+      const k = e.k; seen[k] = 1;
+      const cv = e.v || '', ct = Number(e.t) || 0, local = gcKvRead(k), lt = Number(gcKvRead('gc_kvt_' + k)) || 0;
+      if (gcKvIsTelas(k) && !window.__gcIsMain) {
+        if (!local && cv) { gcKvWrite(k, cv); gcKvWrite('gc_kvt_' + k, String(ct)); changed.push(k); }
+        return;
+      }
+      if (cv === local) { if (lt !== ct) gcKvWrite('gc_kvt_' + k, String(ct)); return; }
+      if (lt === 0 && local) {
+        // primeira sincronização deste aparelho: junta o que tem aqui com o da nuvem, sem perder nada.
+        const m = gcKvMerge(local, cv);
+        if (m !== local) { gcKvWrite('gc_kvbak_' + k, local); gcKvWrite(k, m); changed.push(k); }
+        gcKvWrite('gc_kvt_' + k, String(Date.now()));
+        if (m !== cv) gcKvPush(k);
+      } else if (ct > lt) {
+        if (local) gcKvWrite('gc_kvbak_' + k, local);
+        gcKvWrite(k, cv); gcKvWrite('gc_kvt_' + k, String(ct)); changed.push(k);
+      } else if (lt > ct) gcKvPush(k);
+    });
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && !seen[k] && gcKvMatch(k) && gcKvRead(k)) { if (!gcKvRead('gc_kvt_' + k)) gcKvWrite('gc_kvt_' + k, String(Date.now())); gcKvPush(k); }
+    }
+  } catch (e) {}
+  gcKv.applying = false;
+  return changed;
+}
+function CloudKV({ churchId, church, onRev }) {
+  const docId = church && (church.fbDocId || church.docId);
+  const data = useChurchDoc(docId);
+  gcKvInstall(churchId, docId);
+  gcKv.last = data ? (data.kv || {}) : undefined;
+  useEffect(() => {
+    if (!data) return;
+    const ch = gcKvApply(data.kv);
+    if (ch.some(k => k.indexOf('gc_lit_') !== 0)) onRev();
+  }, [data]);
+  useEffect(() => {
+    const t = setInterval(() => { if (gcKv.last === undefined) return; const ch = gcKvApply(gcKv.last); if (ch.some(k => k.indexOf('gc_lit_') !== 0)) onRev(); }, 5000);
+    return () => clearInterval(t);
+  }, []);
+  return '';
+}
 function gcEnsaiosOf(churchId, church) { return (church && Array.isArray(church.rehearsals) && church.rehearsals.length) ? church.rehearsals : loadEnsaios(churchId); }
 function gcRemoteSend(type, arg) {
   if (!gcPhoneRemote.docId) return false;
@@ -12480,6 +12590,7 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
 
 function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   const [tab, setTab] = useState('liturgia');
+  const [kvRev, setKvRev] = useState(0);
   // v.124: ao trocar de aba principal volta pro topo — senão o cabeçalho fixo cobria o começo da aba nova.
   useEffect(() => { try { window.scrollTo(0, 0); } catch (e) {} }, [tab]);
   // v.170: o app do celular espelha no computador principal a troca de aba (e o principal obedece).
@@ -12591,20 +12702,21 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   return html`
     <div>
       <${ChurchHeader} church=${church} tab=${tab} setTab=${setTab} onLogout=${onLogout} badges=${{ chat: chatUnread }} />
-      ${tab === 'presenca' ? html`<${PresencaView} key="presenca" churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
+      ${tab === 'presenca' ? html`<${PresencaView} key=${"presenca" + kvRev} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       ${tab === 'liturgia' ? html`<${LiturgiaView} key="lit" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />` : ''}
-      ${tab === 'musicas' ? html`<${MusicasView} key="musicas" churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
-      ${tab === 'gestao' ? html`<${GestaoView} key="gestao" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
-      ${tab === 'telas' ? html`<${TelasView} key="telas" churchId=${church.id} />` : ''}
+      ${tab === 'musicas' ? html`<${MusicasView} key=${"musicas" + kvRev} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
+      ${tab === 'gestao' ? html`<${GestaoView} key=${"gestao" + kvRev} churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
+      ${tab === 'telas' ? html`<${TelasView} key=${"telas" + kvRev} churchId=${church.id} />` : ''}
       ${tab === 'mensagem' ? html`<${MensagemView} key="mensagem" churchId=${church.id} items=${mensagemItems} setItems=${setMensagemItems} current=${mensagemCurrent} setCurrent=${setMensagemCurrent} />` : ''}
-      ${tab === 'busca' ? html`<${BuscaGeralView} key="busca" />` : ''}
-      ${tab === 'buscas' ? html`<${BuscasSemanaisView} key="buscas" churchId=${church.id} />` : ''}
+      ${tab === 'busca' ? html`<${BuscaGeralView} key=${"busca" + kvRev} />` : ''}
+      ${tab === 'buscas' ? html`<${BuscasSemanaisView} key=${"buscas" + kvRev} churchId=${church.id} />` : ''}
       ${tab === 'chat' ? html`<${ChatView} key="chat" churchId=${church.id} church=${church} />` : ''}
-      ${tab === 'ferramentas' ? html`<${FerramentasView} key="ferramentas" churchName=${church.name} churchId=${church.id} churchLogo=${church.logoDataUrl || ''} />` : ''}
+      ${tab === 'ferramentas' ? html`<${FerramentasView} key=${"ferramentas" + kvRev} churchName=${church.name} churchId=${church.id} churchLogo=${church.logoDataUrl || ''} />` : ''}
       ${tab === 'sugestoes' ? html`<${SugestoesView} key="sugestoes" church=${church} />` : ''}
-      ${tab === 'config' ? html`<${ConfiguracoesView} key="config" church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
+      ${tab === 'config' ? html`<${ConfiguracoesView} key=${"config" + kvRev} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       <${GlobalMixerWidget} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />
       <${RemoteControl} churchId=${church.id} church=${church} />
+      <${CloudKV} churchId=${church.id} church=${church} onRev=${()=>setKvRev(n => n + 1)} />
       <${QuickSearchFab} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} tab=${tab} />
       <${StartupProjection} churchId=${church.id} church=${church} />
     </div>
