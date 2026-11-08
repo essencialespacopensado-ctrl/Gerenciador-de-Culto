@@ -140,11 +140,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.183';
+const APP_VERSION = '2026-11-08.184';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.184',
+    date: '08/11/2026',
+    items: [
+      "Busca r\u00e1pida simplificada: ficam 3 campos \u2014 \ud83d\udd0e Geral, \ud83d\udcd6 Hin\u00e1rio e \ud83d\udcbf Colet\u00e2neas (as colet\u00e2neas adventistas, com as m\u00fasicas dos \u00e1lbuns cadastrados e a busca na internet no mesmo campo). Sa\u00edram os campos Hin\u00e1rio antigo e o Colet\u00e2neas duplicado.",
+      "\ud83d\udd0e Achar v\u00eddeo: as op\u00e7\u00f5es ficam mais compactas (3 por m\u00fasica, bot\u00f5es menores).",
+    ],
+  },
   {
     version: '2026-11-08.183',
     date: '08/11/2026',
@@ -11127,8 +11135,8 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
   const [tslot, setTslot] = useState(null);
   useEffect(() => { if (!inTab) { setTslot(null); return; } const f = () => { const el = document.getElementById('gc-search-tab-slot'); setTslot(p => p === el ? p : el); }; f(); const iv = setInterval(f, 300); return () => clearInterval(iv); }, [inTab]);
   useEffect(() => { if (inTab && tslot) { const t = setTimeout(() => { try { inputRef.current && inputRef.current.focus(); } catch(e) {} }, 200); return () => clearTimeout(t); } }, [inTab, !!tslot]);
-  const MODES = [['geral','🔎 Geral'],['novo','📖 Novo Hinário'],['antigo','📜 Hinário antigo'],['colet','💿 Coletâneas'],['album','🎼 Coletâneas']];
-  const PH = { geral:'Digite música, cantor, playback, letra…', novo:'Número ou nome do hino (Novo Hinário)', antigo:'Número ou nome do hino (Hinário antigo)', colet:'Música ou álbum (Coletâneas e CD Jovem)', album:'Nome da música ou da coletânea' };
+  const MODES = [['geral','🔎 Geral'],['novo','📖 Hinário'],['colet','💿 Coletâneas']];
+  const PH = { geral:'Digite música, cantor, playback, letra…', novo:'Número ou nome do hino (Hinário)', antigo:'Número ou nome do hino (Hinário antigo)', colet:'Música ou coletânea adventista (todas)', album:'Nome da música ou da coletânea' };
   const setModeTab = (k) => { if (mode !== k) { modeTexts.current[mode] = q; setModeRaw(k); setQ(modeTexts.current[k] || ''); setYt(null); setAlbums(null); setErr(''); } try { inputRef.current && inputRef.current.focus(); } catch(e) {} };
   useEffect(() => { modeTexts.current[mode] = q; }, [q, mode]);
   const target = inTab ? tslot : slot;
@@ -11157,7 +11165,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
   const hymns = useMemo(() => (nq && mode === 'novo') ? NHA_HYMNS.filter(h => String(h.num) === nq || h.n === nq || hinoNormalize(h.t).includes(nq) || (!/^\d+$/.test(nq) && gcMatchAll(nq, h.t))) : [], [nq, mode]);
   // v.182: busca "🎼 Álbuns": procura pelo NOME da música ou do álbum no catálogo (sem internet) e mostra só os nomes.
   const albumHits = useMemo(() => {
-    if (!nq || mode !== 'album') return [];
+    if (!nq || (mode !== 'album' && mode !== 'colet')) return [];
     const out = [];
     gcAlbumCatalog(churchId).forEach(a => {
       const whole = gcMatchAll(nq, a.title + (a.year ? ' ' + a.year : ''));
@@ -11173,7 +11181,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
     setAv(m => ({ ...m, [key]: { loading: true } }));
     const list = await searchYoutubeServer(t.title + ' ' + a.title.replace(/ — .*$/, '') + (a.category === 'Cantores' ? ' ' + (a.title.split(' — ')[1] || '') : ''));
     if (!list) { setAv(m => ({ ...m, [key]: { err: 'Não consegui buscar agora. Tente de novo.' } })); return; }
-    setAv(m => ({ ...m, [key]: { list: list.slice(0, 5) } }));
+    setAv(m => ({ ...m, [key]: { list: list.slice(0, 3) } }));
   };
   const libHits = (nq && mode !== 'geral' && mode !== 'album') ? lib.filter(x => hinoNormalize(x.title + ' ' + (x.singer || '') + ' ' + x.cat).includes(nq)) : [];
   const inLib = (vid) => lib.some(x => x.videoId === vid);
@@ -11212,7 +11220,6 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
   }, [nq]);
   const doYoutube = async () => {
     const s = q.trim(); if (!s) return;
-    if (mode === 'album') return;
     if (mode === 'novo' && hymns.length > 0) return;
     setLoading(true); setErr(''); setYt(null); setYtQ(s);
     const isNum = /^\d{1,3}$/.test(s);
@@ -11264,8 +11271,9 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
     const isLit = lit && lit.key === o.key;
     const secs = isLit ? secsFor(lit.day) : null;
     const dayList = isLit ? readDay(lit.day).filter(a => lit.day === 'sabado' ? a.section === lit.section : true) : [];
+    const bt = o.mini ? { ...btn, padding:'3px 8px', fontSize:'10.5px' } : btn;
     return html`
-      <div key=${o.key} style=${{padding: o.compact ? '7px 12px' : '12px', borderRadius: o.compact ? '12px' : '16px', border:'1px solid ' + (o.compact ? 'rgba(56,189,248,0.38)' : 'rgba(56,189,248,0.22)'), background:'linear-gradient(135deg, rgba(56,189,248,0.07), rgba(139,92,246,0.06))', display:'grid', gap: o.compact ? '5px' : '10px', minWidth:0}}>
+      <div key=${o.key} style=${{padding: o.mini ? '4px 8px' : (o.compact ? '7px 12px' : '12px'), borderRadius: o.compact ? '12px' : '16px', border:'1px solid ' + (o.compact ? 'rgba(56,189,248,0.38)' : 'rgba(56,189,248,0.22)'), background:'linear-gradient(135deg, rgba(56,189,248,0.07), rgba(139,92,246,0.06))', display:'grid', gap: o.mini ? '3px' : (o.compact ? '5px' : '10px'), minWidth:0}}>
         <div style=${{display: o.compact ? 'none' : 'flex', gap:'12px', alignItems:'center', minWidth:0}}>
           ${o.badge
             ? html`<div style=${{flex:'0 0 auto', minWidth:'52px', height:'52px', padding:'0 6px', borderRadius:'14px', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:900, fontSize:'18px', color:'#fff', background:'linear-gradient(135deg,var(--accent-1),var(--accent-2))', boxShadow:'0 0 18px -4px var(--accent-1)'}}>${o.badge}</div>`
@@ -11275,14 +11283,14 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
             ${o.sub && html`<div style=${{fontSize:'11px', color:'var(--text-dim)', overflowWrap:'anywhere'}}>${o.sub}</div>`}
           </div>
         </div>
-        ${o.compact && html`<div style=${{minWidth:0, display:'flex', flexWrap:'wrap', alignItems:'baseline', gap:'2px 10px'}}><span style=${{fontWeight:700, fontSize:'14.5px', lineHeight:1.3, color:'#fff', overflowWrap:'anywhere'}}>${o.title}</span>${o.sub && html`<span style=${{fontSize:'12.5px', color:'var(--highlight)', fontWeight:600}}>${o.sub}</span>`}</div>`}
-        <div style=${{display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap'}}>
+        ${o.compact && html`<div style=${{minWidth:0, display:'flex', flexWrap:'wrap', alignItems:'baseline', gap:'2px 10px'}}><span style=${{fontWeight:700, fontSize: o.mini ? '12.5px' : '14.5px', lineHeight:1.25, color:'#fff', overflowWrap:'anywhere'}}>${o.title}</span>${o.sub && html`<span style=${{fontSize: o.mini ? '11px' : '12.5px', color:'var(--highlight)', fontWeight:600}}>${o.sub}</span>`}</div>`}
+        <div style=${{display:'flex', gap: o.mini ? '4px' : '6px', alignItems:'center', flexWrap:'wrap'}}>
           <${ProjectButton} churchId=${churchId} media=${media} itemKey=${o.remoteKey} remote=${{ type:'project_media', arg:{ videoId: o.vid, title: o.title, key: o.remoteKey } }} />
-          <button type="button" onClick=${()=>openLit(o.key, o.title, o.vid)} style=${{...btn, borderColor:'var(--accent-1)', color:'var(--highlight)'}}>➕ Enviar para a Liturgia</button>
-          <button type="button" onClick=${()=>setPlaying(isPlay ? null : o.key)} style=${btn}>${isPlay ? '⏹ Fechar' : '▶ Ver'}</button>
-          <a href=${media.url} target="_blank" rel="noopener" style=${{...btn, textDecoration:'none'}}>↗</a>
+          <button type="button" onClick=${()=>openLit(o.key, o.title, o.vid)} style=${{...bt, borderColor:'var(--accent-1)', color:'var(--highlight)'}}>${o.mini ? '➕ Liturgia' : '➕ Enviar para a Liturgia'}</button>
+          <button type="button" onClick=${()=>setPlaying(isPlay ? null : o.key)} style=${bt}>${o.mini ? (isPlay ? '⏹' : '▶') : (isPlay ? '⏹ Fechar' : '▶ Ver')}</button>
+          ${!o.mini && html`<a href=${media.url} target="_blank" rel="noopener" style=${{...bt, textDecoration:'none'}}>↗</a>`}
           ${o.hymnN && html`<button type="button" onClick=${()=>setLinking(linking === o.hymnN ? null : o.hymnN)} title="Trocar o link deste hino" style=${btn}>🔗</button>`}
-          ${o.libId
+          ${o.mini ? '' : o.libId
             ? html`<button type="button" onClick=${()=>{ if (confirm('Tirar da sua biblioteca?')) commitLib(l => l.filter(x => x.id !== o.libId)); }} style=${btn}>🗑</button>`
             : (o.yt && !inLib(o.vid) ? html`<button type="button" onClick=${()=>saveToLib(o.yt)} title="Salvar na minha biblioteca" style=${btn}>⭐</button>` : (o.yt ? html`<span style=${{fontSize:'11px', color:'var(--text-dim)'}}>⭐ salva</span>` : ''))}
         </div>
@@ -11347,7 +11355,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
               </div>
             </div>` : ''}
             <div style=${{flex:1, minWidth:0, display: inTab ? 'none' : 'grid', gridTemplateColumns:'repeat(auto-fit, minmax(170px, 1fr))', gap:'8px'}}>
-              ${[['geral','🔎 Busca geral no YouTube — música, cantor, playback…'],['novo','📖 Novo Hinário — nº ou nome'],['antigo','📜 Hinário antigo — nº ou nome'],['colet','💿 Coletâneas e CD Jovem'],['album','🎼 Coletâneas — música ou nome']].map(([k, ph], i) => html`<input key=${k} ref=${i === 0 ? inputRef : null} aria-label=${ph} value=${mode === k ? q : ''} onChange=${e=>typeIn(k, e.target.value)} onFocus=${()=>{ if (mode !== k) { setModeRaw(k); setQ(''); setYt(null); setErr(''); } }} placeholder=${ph.split(' — ')[0]} style=${{...inputStyle, minWidth:0, fontSize:'14px', padding:'12px 14px', borderRadius:'14px', border:'1px solid ' + (mode === k && q ? 'var(--highlight)' : 'rgba(56,189,248,0.5)'), boxShadow: mode === k && q ? '0 0 20px -8px rgba(56,189,248,0.9)' : 'none', ...(k === 'geral' ? { gridColumn:'1 / -1', fontSize:'15px', fontWeight:700, padding:'13px 18px', borderRadius:'999px', border:'1.5px solid rgba(56,189,248,0.85)', background:'linear-gradient(90deg, rgba(14,165,233,0.22), rgba(139,92,246,0.22))', boxShadow:'0 0 26px -4px rgba(56,189,248,0.9), inset 0 0 18px -6px rgba(56,189,248,0.7)', animation: (mode === k && q) ? 'none' : 'gcSearchGlow 2.4s ease-in-out infinite' } : {})}} />`)}
+              ${[['geral','🔎 Busca geral no YouTube — música, cantor, playback…'],['novo','📖 Hinário — nº ou nome'],['colet','💿 Coletâneas — música ou nome']].map(([k, ph], i) => html`<input key=${k} ref=${i === 0 ? inputRef : null} aria-label=${ph} value=${mode === k ? q : ''} onChange=${e=>typeIn(k, e.target.value)} onFocus=${()=>{ if (mode !== k) { setModeRaw(k); setQ(''); setYt(null); setErr(''); } }} placeholder=${ph.split(' — ')[0]} style=${{...inputStyle, minWidth:0, fontSize:'14px', padding:'12px 14px', borderRadius:'14px', border:'1px solid ' + (mode === k && q ? 'var(--highlight)' : 'rgba(56,189,248,0.5)'), boxShadow: mode === k && q ? '0 0 20px -8px rgba(56,189,248,0.9)' : 'none', ...(k === 'geral' ? { gridColumn:'1 / -1', fontSize:'15px', fontWeight:700, padding:'13px 18px', borderRadius:'999px', border:'1.5px solid rgba(56,189,248,0.85)', background:'linear-gradient(90deg, rgba(14,165,233,0.22), rgba(139,92,246,0.22))', boxShadow:'0 0 26px -4px rgba(56,189,248,0.9), inset 0 0 18px -6px rgba(56,189,248,0.7)', animation: (mode === k && q) ? 'none' : 'gcSearchGlow 2.4s ease-in-out infinite' } : {})}} />`)}
             </div>
           </form>
           ${nq && (inTab ? (x => x) : (x => ReactDOM.createPortal(html`<div id="gc-search-side" style=${{position:'fixed', top:'8px', right:'8px', bottom:'8px', width: isMobile ? 'calc(100vw - 16px)' : 'min(430px, 36vw)', minWidth: isMobile ? 0 : '340px', zIndex:150, display:'flex', flexDirection:'column', gap:'6px', padding:'10px', background:'rgba(8,18,40,0.98)', border:'1px solid rgba(56,189,248,0.45)', borderRadius:'16px', boxShadow:'0 10px 40px rgba(0,0,0,0.55)'}}><div style=${{display:'flex', alignItems:'center', gap:'8px'}}><div style=${{flex:1, fontSize:'12px', fontWeight:800, color:'var(--highlight)'}}>🔎 Resultados — ${mode === 'geral' ? 'Busca geral' : mode === 'novo' ? 'Novo Hinário' : mode === 'antigo' ? 'Hinário antigo' : mode === 'album' ? 'Coletâneas' : 'Coletâneas'}</div><button type="button" onClick=${() => { setQ(''); setYt(null); setAlbums(null); setErr(''); }} aria-label="Fechar resultados" style=${{...btnGhost, padding:'4px 10px', fontSize:'13px'}}>✕</button></div>${x}</div>`, document.body)))(html`<div style=${{overflowY:'auto', minHeight:0, flex:1, display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'10px', alignContent:'start', paddingRight:'2px'}}>
@@ -11355,8 +11363,8 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
             ${nq && hymns.length > 0 && secTitle('📖 Hinário Adventista · ' + hymns.length)}
             ${hymns.slice(0, limit).map(h => { const vid = links[h.n] || h.videoId; return row({ key:'h-'+h.n, vid, title: label(h) + ' — ' + h.t, sub: links[h.n] ? 'link trocado' : 'Vídeo oficial com letra', badge: String(h.num), hymnN: h.n, remoteKey: 'hino-' + h.n }); })}
             ${hymns.length > limit && html`<button type="button" onClick=${()=>setLimit(l=>l+12)} style=${{...btnGhost, justifySelf:'center', padding:'8px 16px', fontSize:'12px'}}>Mostrar mais (${hymns.length - limit})</button>`}
-            ${mode === 'album' && nq && albumHits.length === 0 && html`<div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.5}}>Não achei “${q.trim()}” nas coletâneas cadastradas. Se a coletânea ainda não tem a lista de músicas, abra Músicas › Coletâneas e complete.</div>`}
-            ${mode === 'album' && albumHits.slice(0, limit).map(({ a, tr, whole }) => html`<div key=${'al-' + a.id} style=${{display:'grid', gap:'4px'}}>
+            ${mode === 'colet' && nq && albumHits.length === 0 && html`<div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.5}}>Não achei “${q.trim()}” nas coletâneas cadastradas no app — procurando nas coletâneas adventistas da internet abaixo.</div>`}
+            ${mode === 'colet' && albumHits.slice(0, limit).map(({ a, tr, whole }) => html`<div key=${'al-' + a.id} style=${{display:'grid', gap:'4px'}}>
               ${secTitle('🎼 ' + a.title + (a.year ? ' (' + a.year + ')' : '') + ' · ' + (a.tracks.length ? a.tracks.length + ' música(s)' : 'sem lista de músicas ainda'))}
               ${tr.map((t, i) => {
                 const k = a.id + '|' + i; const st = av[k];
@@ -11366,13 +11374,13 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
                     <span style=${{fontWeight:700, fontSize:'14.5px', color:'#fff', overflowWrap:'anywhere', minWidth:0}}>${t.title}</span>
                     ${!mv && html`<button type="button" onClick=${() => findTrackVideo(a, t, k)} style=${{...btnGhost, padding:'6px 10px', fontSize:'11.5px', fontWeight:800}}>${st && st.loading ? '⏳ ' : ''}🔎 Achar vídeo</button>`}
                   </div>
-                  ${mv && row({ compact:true, key:'am-' + k, vid: mv, title: t.title, sub: a.title, remoteKey:'alb-' + k })}
+                  ${mv && row({ compact:true, mini:true, key:'am-' + k, vid: mv, title: t.title, sub: a.title, remoteKey:'alb-' + k })}
                   ${st && st.err && html`<div style=${{fontSize:'11.5px', color:'var(--danger)'}}>${st.err}</div>`}
                   ${st && st.list && st.list.length === 0 && html`<div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Não achei vídeo para esta música.</div>`}
-                  ${st && st.list && st.list.map(v => row({ compact:true, key:'av-' + k + v.videoId, vid:v.videoId, title:v.title, sub:[v.channel, v.duration].filter(Boolean).join(' • '), thumb:v.thumbnail, yt:v, remoteKey:'busca-' + v.videoId }))}
+                  ${st && st.list && st.list.map(v => row({ compact:true, mini:true, key:'av-' + k + v.videoId, vid:v.videoId, title:v.title, sub:[v.channel, v.duration].filter(Boolean).join(' • '), thumb:v.thumbnail, yt:v, remoteKey:'busca-' + v.videoId }))}
                 </div>`; })}
             </div>`)}
-            ${mode === 'album' && albumHits.length > limit && html`<button type="button" onClick=${()=>setLimit(l=>l+8)} style=${{...btnGhost, justifySelf:'center', padding:'8px 16px', fontSize:'12px'}}>Mostrar mais (${albumHits.length - limit})</button>`}
+            ${mode === 'colet' && albumHits.length > limit && html`<button type="button" onClick=${()=>setLimit(l=>l+8)} style=${{...btnGhost, justifySelf:'center', padding:'8px 16px', fontSize:'12px'}}>Mostrar mais (${albumHits.length - limit})</button>`}
             ${libHits.length > 0 && secTitle('⭐ Minha biblioteca · ' + libHits.length)}
             ${libHits.map(x => row({ key:'l-'+x.id, vid:x.videoId, title:x.title, sub:'👤 ' + (x.singer || x.channel || '—') + ' • ' + x.cat, libId:x.id, remoteKey:'busca-' + x.videoId }))}
             ${nq && mode === 'novo' && hymns.length === 0 && html`<button type="button" onClick=${doYoutube} style=${{...btnPrimary, width:'100%', padding:'11px', fontSize:'13px'}}>${loading ? 'Buscando…' : '🔎 Buscar “' + q.trim() + '” no YouTube (músicas, cantores, playbacks, letras)'}</button>`}
