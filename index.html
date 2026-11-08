@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.170';
+const APP_VERSION = '2026-11-08.171';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.171',
+    date: '08/11/2026',
+    items: [
+      "Liturgia: clicar fora da janela \"Hoje é ... de ...\" (ou do horário) fecha a janela.",
+    ],
+  },
   {
     version: '2026-11-08.170',
     date: '08/11/2026',
@@ -10347,7 +10354,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
       </div>
       ${adding && html`<${AddActivityForm} defaultSection=${sections[0]} activities=${activities} onAddAt=${addAt} onClose=${()=>setAdding(false)} fixedTracks=${fixedTracks} sectionLabels=${sectionLabels} />`}
       ${assistantOpen && html`<${LiturgyAssistantModal} onImportAll=${importFromAssistant} onClose=${()=>setAssistantOpen(false)} defaultSection=${sections[0]} sectionLabels=${sectionLabels} />`}`}
-      ${autoAsk && html`<div style=${{position:'fixed', inset:0, zIndex:9000, background:'rgba(0,0,0,.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:'16px'}}>
+      ${autoAsk && html`<div onPointerDown=${e=>{ if (e.target === e.currentTarget) setAutoAsk(null); }} style=${{position:'fixed', inset:0, zIndex:9000, background:'rgba(0,0,0,.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:'16px'}}>
         <div class="glass" style=${{maxWidth:'460px', width:'100%', padding:'22px', borderRadius:'18px', display:'grid', gap:'12px'}}>
           ${autoAsk.step === 'pergunta' ? html`
             <div style=${{fontWeight:800, fontSize:'16px'}}>📅 Hoje é ${liturgiaDayLabel(gcTodayKey)}, de ${gcTurno}.</div>
