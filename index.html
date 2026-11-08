@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.179';
+const APP_VERSION = '2026-11-08.180';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.180',
+    date: '08/11/2026',
+    items: [
+      "Celular \u2192 computador (geral): qualquer toque em bot\u00e3o/grupo, digita\u00e7\u00e3o em busca, Enter ou escolha de lista feito no celular que s\u00f3 mexe na tela agora \u00e9 repetido no computador principal. Projetar e salvar dados continuam pelos caminhos pr\u00f3prios (n\u00e3o duplicam).",
+    ],
+  },
   {
     version: '2026-11-08.179',
     date: '08/11/2026',
@@ -1092,6 +1099,7 @@ async function fbUpdateChurchPassword(docId, passwordHash) {
 // Atualiza campos administrativos da igreja no banco compartilhado (senha, pausada, removida).
 // Nunca manda senha em texto puro — só os campos passados explicitamente.
 async function fbUpdateChurchFields(docId, fields) {
+  window.__gcOut = Date.now();
   if (!fbIsReady() || !docId) return false;
   try {
     const { doc, updateDoc } = window.__fb.helpers;
@@ -9004,7 +9012,7 @@ function gcKvInstall(churchId, docId) {
   gcKv.churchId = churchId || ''; gcKv.docId = docId || '';
   if (gcKv.installed) return; gcKv.installed = true;
   try {
-    Storage.prototype.setItem = function (k, v) { gcKvOrig.set.call(this, k, v); try { if (this === localStorage && !gcKv.applying && gcKvMatch(k)) { gcKvOrig.set.call(this, 'gc_kvt_' + k, String(Date.now())); gcKvPush(k); } } catch (e) {} };
+    Storage.prototype.setItem = function (k, v) { gcKvOrig.set.call(this, k, v); try { if (this === localStorage && k !== 'gc_remote_dev_v1' && String(k).indexOf('gc_kvt_') !== 0) window.__gcOut = Date.now(); } catch (e) {} try { if (this === localStorage && !gcKv.applying && gcKvMatch(k)) { gcKvOrig.set.call(this, 'gc_kvt_' + k, String(Date.now())); gcKvPush(k); } } catch (e) {} };
     Storage.prototype.removeItem = function (k) { gcKvOrig.remove.call(this, k); try { if (this === localStorage && !gcKv.applying && gcKvMatch(k)) { gcKvOrig.set.call(this, 'gc_kvt_' + k, String(Date.now())); gcKvPush(k); } } catch (e) {} };
   } catch (e) {}
 }
@@ -9075,6 +9083,94 @@ function gcApplyTile(key, want, n) {
   if (!els.length) { if ((n || 0) < 15) setTimeout(() => gcApplyTile(key, want, (n || 0) + 1), 200); return; }
   if (els[0].getAttribute('data-gc-active') !== want) els[0].click();
 }
+
+// v.180: espelhamento geral. Qualquer toque, digitação (busca), Enter ou escolha feita no celular que só mexe na TELA
+// (abrir, expandir, buscar, trocar) é repetido no computador principal. O que já viaja por outro caminho (projetar,
+// salvar dados na nuvem) não é repetido, para não duplicar. O botão é achado pelo texto + posição entre os iguais.
+function gcClickable(el) {
+  if (!el || el.nodeType !== 1) return false;
+  const t = el.tagName;
+  if (t === 'BUTTON' || t === 'A' || t === 'SUMMARY' || t === 'SELECT' || t === 'TEXTAREA' || t === 'LABEL') return true;
+  if (t === 'INPUT') return true;
+  if (el.getAttribute('role') === 'button') return true;
+  try { return el.style && el.style.cursor === 'pointer'; } catch (e) { return false; }
+}
+function gcSigOf(el) {
+  const t = el.tagName;
+  let x = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+  if (!x && (t === 'INPUT' || t === 'TEXTAREA')) x = el.getAttribute('placeholder') || el.getAttribute('name') || '';
+  if (!x && t !== 'INPUT' && t !== 'TEXTAREA') x = el.innerText || '';
+  return t + '|' + (el.type || '') + '|' + String(x).replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+function gcSigList(sig) {
+  return Array.prototype.filter.call(document.querySelectorAll('button,a,summary,select,textarea,label,input,[role=button],[style*="cursor"]'), x => gcClickable(x) && gcSigOf(x) === sig);
+}
+function gcSkipMirror(el) {
+  if (!el) return true;
+  if (el.hasAttribute('data-gc-tile') || el.closest('[data-gc-tile],[data-gc-nomirror],#gc-audio-host')) return true;
+  const ty = el.type || '';
+  if (ty === 'password' || ty === 'file' || ty === 'hidden') return true;
+  const txt = (gcSigOf(el).split('|')[2] || '');
+  if (/^(sair|.*atualizar app|.*instalar app)$/i.test(txt)) return true;
+  return false;
+}
+function gcMirrorSend(el, extra) {
+  const sig = gcSigOf(el); const idx = gcSigList(sig).indexOf(el);
+  if (idx < 0) return;
+  const t0 = Date.now();
+  setTimeout(() => {
+    if ((window.__gcOut || 0) >= t0 - 20) return;
+    const prev = window.__gcOut;
+    try { gcRemoteSend('nav', Object.assign({ tab: window.__gcCurTab || '', gk: extra.k, sig, idx }, extra)); } catch (e) {}
+    window.__gcOut = prev;
+  }, extra.k === 'i' ? 450 : 600);
+}
+function gcApplyGeneric(a, n) {
+  if (gcPhoneRemote.on) return;
+  const el = gcSigList(String(a.sig || ''))[Number(a.idx) || 0];
+  if (!el) { if ((n || 0) < 15) setTimeout(() => gcApplyGeneric(a, (n || 0) + 1), 200); return; }
+  try {
+    if (a.gk === 'c') el.click();
+    else if (a.gk === 'i') {
+      const proto = el.tagName === 'SELECT' ? HTMLSelectElement.prototype : (el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype);
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+      setter.call(el, String(a.v == null ? '' : a.v));
+      el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+    } else if (a.gk === 'e') {
+      ['keydown', 'keypress', 'keyup'].forEach(ev => el.dispatchEvent(new KeyboardEvent(ev, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true })));
+    }
+  } catch (e) {}
+}
+(function gcInstallGenericMirror() {
+  if (window.__gcGenMirror) return; window.__gcGenMirror = true;
+  const resolve = (t) => { let el = t && t.nodeType === 1 ? t : (t && t.parentElement); for (let i = 0; el && i < 7; i++, el = el.parentElement) if (gcClickable(el)) return el; return null; };
+  const timers = new WeakMap();
+  document.addEventListener('click', (e) => {
+    if (!gcPhoneRemote.on || !e.isTrusted) return;
+    const el = resolve(e.target); if (!el || gcSkipMirror(el)) return;
+    const ty = el.type || '';
+    if ((el.tagName === 'INPUT' && ty !== 'checkbox' && ty !== 'radio' && ty !== 'button' && ty !== 'submit') || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return;
+    gcMirrorSend(el, { k: 'c' });
+  }, true);
+  document.addEventListener('input', (e) => {
+    if (!gcPhoneRemote.on || !e.isTrusted) return;
+    const el = e.target; if (!el || !el.tagName) return; const ty = el.type || '';
+    if (!((el.tagName === 'INPUT' && ty !== 'checkbox' && ty !== 'radio') || el.tagName === 'TEXTAREA')) return;
+    if (gcSkipMirror(el)) return;
+    clearTimeout(timers.get(el));
+    timers.set(el, setTimeout(() => gcMirrorSend(el, { k: 'i', v: el.value }), 350));
+  }, true);
+  document.addEventListener('change', (e) => {
+    if (!gcPhoneRemote.on || !e.isTrusted) return;
+    const el = e.target; if (!el || el.tagName !== 'SELECT' || gcSkipMirror(el)) return;
+    gcMirrorSend(el, { k: 'i', v: el.value });
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (!gcPhoneRemote.on || !e.isTrusted || e.key !== 'Enter') return;
+    const el = e.target; if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') || gcSkipMirror(el)) return;
+    gcMirrorSend(el, { k: 'e' });
+  }, true);
+})();
 function remotePhoneOn(ph) { return !!(ph && ph.status === 'registered' && (ph.enabled === true || (ph.enabled === undefined && ph.enabledDay))); }
 function remoteDeviceId() {
   try {
@@ -9164,7 +9260,7 @@ function remoteExecute(churchId, church, cmd, onErr) {
       try { sendToScreenObj(scr0, String(a.kind || ''), a.payload === undefined ? null : a.payload, { ...(a.opts || {}), quiet: true }).then(er => { if (er && onErr) onErr(er); }); } catch (e) { return String((e && e.message) || e); }
       return '';
     }
-    case 'nav': try { window.dispatchEvent(new CustomEvent('gc-remote-nav', { detail: { tab: String(a.tab || ''), day: String(a.day || ''), tile: String(a.tile || ''), want: String(a.want || '') } })); } catch (e) {} return '';
+    case 'nav': try { if (a.gk) gcApplyGeneric(a, 0); window.dispatchEvent(new CustomEvent('gc-remote-nav', { detail: { tab: String(a.tab || ''), day: String(a.day || ''), tile: String(a.tile || ''), want: String(a.want || '') } })); } catch (e) {} return '';
     case 'reload': setTimeout(() => { try { gcForceUpdateApp(); } catch (e) { window.location.reload(); } }, 400); return '';
     case 'close': Object.keys(gcBlockedQueue).forEach(k => delete gcBlockedQueue[k]); setProjectionFrozen(false); stopAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); return '';
     case 'screen': {
