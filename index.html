@@ -140,11 +140,20 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.184';
+const APP_VERSION = '2026-11-08.185';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.185',
+    date: '08/11/2026',
+    items: [
+      "Busca r\u00e1pida com 5 campos: \ud83d\udd0e Geral, \ud83d\udcd6 Hin\u00e1rio novo, \ud83d\udcdc Hin\u00e1rio antigo, \ud83d\udcbf Colet\u00e2neas (todas, incluindo Adoradores, Est\u00e1 Escrito e as dos prints) e \ud83c\udfa7 CDs Jovens (CDs oficiais por ano). Embaixo de Colet\u00e2neas e CDs Jovens h\u00e1 o bot\u00e3o \ud83d\udcc2 Abrir lista de \u00e1lbuns.",
+      "Aba M\u00fasicas: novo bot\u00e3o \ud83d\udcbf Colet\u00e2neas e campo de busca dentro das listas de \u00e1lbuns \u2014 procura pelo t\u00edtulo do \u00e1lbum e depois pelo nome da m\u00fasica.",
+      "Adoradores 1, 2 e 3 e Est\u00e1 Escrito agora t\u00eam as m\u00fasicas; anos dos Adoradores corrigidos (2014, 2015, 2017, 2019, 2024).",
+    ],
+  },
   {
     version: '2026-11-08.184',
     date: '08/11/2026',
@@ -6505,7 +6514,17 @@ const gcSelStore = {};
 function useGcSel(key) {
   const [v, setV] = useState(gcSelStore[key] === undefined ? null : gcSelStore[key]);
   const set = (f) => setV(prev => { const n = typeof f === 'function' ? f(prev) : f; gcSelStore[key] = n; return n; });
+  useEffect(() => { const on = (e) => { if (e && e.detail && e.detail.key === key) setV(e.detail.val); }; window.addEventListener('gc-sel-set', on); return () => window.removeEventListener('gc-sel-set', on); }, [key]);
   return [v, set];
+}
+// v.185: abre a aba Músicas já na lista de álbuns (Coletâneas ou CDs Jovens) — usado pelos botões da busca rápida.
+function gcOpenAlbumList(cat, churchId) {
+  try {
+    const key = 'musicas:' + churchId, val = 'col:' + cat;
+    gcSelStore[key] = val;
+    window.dispatchEvent(new CustomEvent('gc-remote-nav', { detail: { tab: 'musicas' } }));
+    setTimeout(() => { try { window.dispatchEvent(new CustomEvent('gc-sel-set', { detail: { key, val } })); } catch (e) {} }, 60);
+  } catch (e) {}
 }
 function MusicasView({ churchId, church, onUpdateChurch }) {
   const [selected, setSelected] = useGcSel('musicas:' + churchId);
@@ -6520,6 +6539,7 @@ function MusicasView({ churchId, church, onUpdateChurch }) {
     { key:'mensagens', label:'🎙️ Mensagens Musicais' },
     { key:'ensaios', label:'🎼 Ensaios' },
     { key:'catalogo', label:'📚 Catálogo de Músicas' },
+    { key:'col:Coletâneas', label:'💿 Coletâneas' },
     { key:'col:CDs Oficiais/Ano', label:'📀 CDs Oficiais/Ano' },
     { key:'col:Adoradores', label:'🙌 Adoradores' },
     { key:'col:Cantores', label:'🎙️ Cantores' },
@@ -6625,8 +6645,8 @@ const COLETANEAS_SEED = [
 // menos 5 volumes e que o volume 2 saiu em 2016; não achei o ano confirmado dos outros, então fica em
 // branco pra não inventar data errada.
 const COLETANEAS_ADORADORES = [
-  {title:'Adoradores 1', year:null},{title:'Adoradores 2', year:2016},{title:'Adoradores 3', year:null},
-  {title:'Adoradores 4', year:null},{title:'Adoradores 5', year:null},
+  {title:'Adoradores 1', year:2014},{title:'Adoradores 2', year:2015},{title:'Adoradores 3', year:2017},
+  {title:'Adoradores 4', year:2019},{title:'Adoradores 5', year:2024},
 ].map((c,i) => ({ id:'seed-ad-'+i, category:'Adoradores', title:c.title, year:c.year, custom:false }));
 
 // Cantores e grupos musicais adventistas conhecidos no Brasil (solo e conjuntos vocais).
@@ -6796,6 +6816,10 @@ const COLETANEA_COVERS_SEED = {
 // v.182: faixas confirmadas (Letras.mus.br, nov/2026) — só os nomes. Álbuns sem lista confirmada ficam de fora (a igreja completa).
 (function () {
   const add = (id, names) => { if (!COLETANEA_TRACKS_SEED[id] && names && names.length) COLETANEA_TRACKS_SEED[id] = names.map(t => ({ title: t })); };
+  add('seed-ad-0', ["Teu Santo Nome","Seja Louvado","Não Há o Que Temer","Lá no Céu","Eu Sou Feliz","Ao Olhar pra Cruz","Santo Somente É o Senhor","Jesus Tu És a Minha Vida","Entrego Minha Vida","Somente Teu","Deus É Refúgio","Escuta Meu Clamor"]);
+  add('seed-ad-1', ["Abertura (Pai Nosso)","Adorá-Lo","Grande Deus","Verei Jesus","O Alto Clamor","Ele Vive em Mim","Conversar Com Deus","Em Ti","Ele Vem","Um Milagre","Digno de Louvor","Eis-Me Aqui","Tua Vontade"]);
+  add('seed-ad-2', ["Flua em Mim","Nossa Oração","Nas Mãos do Oleiro","Tua Palavra","Cópia de Jesus","Fé e Ação","Bem Junto a Cristo / Mais Perto Quero Estar / Tal Qual Estou","Santuário no Tempo","Declaração","Eu Vou","Milagres","Em Tua Presença","Restaurado","Tua Casa, Tua Morada"]);
+  add('hin-9', ["Chuvas de Bênçãos / Dia de Chuva","Traz-me Junto a Ti","Confiei No Meu Senhor","O Senhor É Meu Pastor","Nada Poderá","O Céu É Meu Lugar","Lindo País","A Glória de Deus","Vem Sentir","O Céu É Jesus","Maior Que Tudo","Nosso Maravilhoso Deus","Medley"]);
   add('seed-ad-3', ["Eu Pertenço à Luz","Meu Pastor","Confie","Levanto a Cruz","Estou Aqui","Missão","Volta pra Mim","Habita em Mim","Seja o Centro","Teu Amor"]);
   add('seed-ad-4', ["Jesus","Pra Teu Louvor","Graça","Usa-Me","Vitória","Carta de Amor","És o Ar Que Eu Respiro","Intensamente","Nossa Missão","Caminho","Ele Vai Agir","Santo Espirito","Digno"]);
   add('seed-sp-0', ["Ao Pé da Cruz","Somos o Amor","Eu Sou Teu","Não Mais Eu","Em Meu Lugar","Mais Que Paixão","Doxologia","Jesus Cristo Mudou Meu Viver"]);
@@ -7176,8 +7200,13 @@ function ColetaneasCategoryGrid({ churchId, category }) {
   useEffect(() => saveColetaneasLinks(churchId, links), [links, churchId]);
 
   const all = [...COLETANEAS_SEED_RECENTES, ...COLETANEAS_SEED, ...COLETANEAS_ADORADORES, ...COLETANEAS_CANTORES, ...COLETANEAS_CELEBRASP, ...COLETANEAS_HINARIO, ...custom];
-  const isTodas = category === 'Todas';
-  const shown = isTodas ? all : all.filter(c => c.category === category);
+  const isTodas = category === 'Todas' || category === 'Coletâneas';
+  const [fq, setFq] = useState('');
+  const catTracks = useMemo(() => { const m = {}; gcAlbumCatalog(churchId).forEach(a => { m[a.id] = a.tracks.map(x => x.title); }); return m; }, [churchId, tracksCounts]);
+  const base = category === 'Todas' ? all : category === 'Coletâneas' ? all.filter(c => c.category !== 'CDs Oficiais/Ano') : all.filter(c => c.category === category);
+  const nfq = hinoNormalize(fq).trim();
+  const trackHits = (c) => nfq ? (catTracks[c.id] || []).filter(x => gcMatchAll(nfq, x)) : [];
+  const shown = nfq ? base.filter(c => gcMatchAll(nfq, c.title + (c.year ? ' ' + c.year : '')) || trackHits(c).length) : base;
 
   const addItem = (e) => {
     e.preventDefault();
@@ -7192,9 +7221,10 @@ function ColetaneasCategoryGrid({ churchId, category }) {
   return html`
     <div class="glass fade-up" style=${{borderRadius:'16px', padding:'14px'}}>
       <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px'}}>
-        <div style=${{fontWeight:800, fontSize:'13px'}}>${isTodas ? '📚 Todas as Coletâneas' : category} <span style=${{fontWeight:500, fontSize:'11px', color:'var(--text-dim)'}}>• ${shown.length} coletânea${shown.length===1?'':'s'}</span></div>
+        <div style=${{fontWeight:800, fontSize:'13px'}}>${category === 'Todas' ? '📚 Todas as Coletâneas' : category === 'Coletâneas' ? '💿 Coletâneas' : category} <span style=${{fontWeight:500, fontSize:'11px', color:'var(--text-dim)'}}>• ${shown.length} coletânea${shown.length===1?'':'s'}</span></div>
         <button onClick=${()=>setAdding(v=>!v)} style=${{...btnGhost, padding:'6px 10px', fontSize:'11px'}}>${adding ? 'Cancelar' : '+ Adicionar'}</button>
       </div>
+      <input value=${fq} onChange=${e=>setFq(e.target.value)} aria-label="Buscar álbum ou música" placeholder="🔎 Buscar pelo título do álbum ou pelo nome da música" style=${{...inputStyle, fontSize:'13px', width:'100%', boxSizing:'border-box', marginBottom:'10px'}} />
       ${adding && html`
         <form onSubmit=${addItem} style=${{display:'flex', gap:'6px', marginBottom:'12px', flexWrap:'wrap'}}>
           <input placeholder="Nome da coletânea" value=${newTitle} onChange=${e=>setNewTitle(e.target.value)} style=${{...inputStyle, fontSize:'12px', flex:1, minWidth:'140px'}} autoFocus />
@@ -7220,6 +7250,7 @@ function ColetaneasCategoryGrid({ churchId, category }) {
                 <div style=${{fontWeight:800, fontSize:'12.5px', lineHeight:1.25}}>${c.title}</div>
                 ${c.year && html`<div style=${{fontSize:'11px', opacity:0.85, marginTop:'2px'}}>${c.year}</div>`}
                 ${isTodas && html`<div style=${{fontSize:'9.5px', opacity:0.7, marginTop:'2px'}}>${c.category}</div>`}
+                ${nfq && trackHits(c).length > 0 && html`<div style=${{fontSize:'10.5px', opacity:0.95, marginTop:'4px', lineHeight:1.3}}>🎵 ${trackHits(c).slice(0, 4).join(' • ')}</div>`}
               </div>
             </div>
             <button onClick=${()=>setTracksOpenId(id => id===c.id ? null : c.id)} style=${{fontSize:'10.5px', fontWeight:700, color:'#fff', background: tracksOpenId===c.id ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.2)', border:'none', padding:'4px 8px', borderRadius:'7px', textAlign:'left'}}>🎵 Faixas${tracksCounts[c.id] ? ' ('+tracksCounts[c.id]+')' : ''}</button>
@@ -11135,8 +11166,10 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
   const [tslot, setTslot] = useState(null);
   useEffect(() => { if (!inTab) { setTslot(null); return; } const f = () => { const el = document.getElementById('gc-search-tab-slot'); setTslot(p => p === el ? p : el); }; f(); const iv = setInterval(f, 300); return () => clearInterval(iv); }, [inTab]);
   useEffect(() => { if (inTab && tslot) { const t = setTimeout(() => { try { inputRef.current && inputRef.current.focus(); } catch(e) {} }, 200); return () => clearTimeout(t); } }, [inTab, !!tslot]);
-  const MODES = [['geral','🔎 Geral'],['novo','📖 Hinário'],['colet','💿 Coletâneas']];
-  const PH = { geral:'Digite música, cantor, playback, letra…', novo:'Número ou nome do hino (Hinário)', antigo:'Número ou nome do hino (Hinário antigo)', colet:'Música ou coletânea adventista (todas)', album:'Nome da música ou da coletânea' };
+  const MODES = [['geral','🔎 Geral'],['novo','📖 Hinário novo'],['antigo','📜 Hinário antigo'],['colet','💿 Coletâneas'],['jov','🎧 CDs Jovens']];
+  const isCol = mode === 'colet' || mode === 'jov';
+  const boxWrap = (k, inp) => (k === 'colet' || k === 'jov') ? html`<div key=${'w-' + k} style=${{display:'grid', gap:'4px', minWidth:0, alignContent:'start'}}>${inp}<button type="button" onClick=${() => gcOpenAlbumList(k === 'jov' ? 'CDs Oficiais/Ano' : 'Coletâneas', churchId)} style=${{...btnGhost, padding:'7px 10px', fontSize:'11.5px'}}>📂 Abrir lista de álbuns</button></div>` : inp;
+  const PH = { geral:'Digite música, cantor, playback, letra…', novo:'Número ou nome do hino (Hinário)', antigo:'Número ou nome do hino (Hinário antigo)', colet:'Música ou coletânea adventista (todas)', jov:'Música ou CD Jovem (oficiais por ano)', album:'Nome da música ou da coletânea' };
   const setModeTab = (k) => { if (mode !== k) { modeTexts.current[mode] = q; setModeRaw(k); setQ(modeTexts.current[k] || ''); setYt(null); setAlbums(null); setErr(''); } try { inputRef.current && inputRef.current.focus(); } catch(e) {} };
   useEffect(() => { modeTexts.current[mode] = q; }, [q, mode]);
   const target = inTab ? tslot : slot;
@@ -11165,9 +11198,11 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
   const hymns = useMemo(() => (nq && mode === 'novo') ? NHA_HYMNS.filter(h => String(h.num) === nq || h.n === nq || hinoNormalize(h.t).includes(nq) || (!/^\d+$/.test(nq) && gcMatchAll(nq, h.t))) : [], [nq, mode]);
   // v.182: busca "🎼 Álbuns": procura pelo NOME da música ou do álbum no catálogo (sem internet) e mostra só os nomes.
   const albumHits = useMemo(() => {
-    if (!nq || (mode !== 'album' && mode !== 'colet')) return [];
+    if (!nq || (mode !== 'album' && !isCol)) return [];
     const out = [];
     gcAlbumCatalog(churchId).forEach(a => {
+      if (mode === 'jov' && a.category !== 'CDs Oficiais/Ano') return;
+      if (mode === 'colet' && a.category === 'CDs Oficiais/Ano') return;
       const whole = gcMatchAll(nq, a.title + (a.year ? ' ' + a.year : ''));
       const tr = whole ? a.tracks : a.tracks.filter(t => gcMatchAll(nq, t.title));
       if (whole || tr.length) out.push({ a, tr, whole });
@@ -11226,9 +11261,10 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
     let queries;
     if (mode === 'geral') queries = [s];
     else if (mode === 'antigo') queries = ['hinário adventista ' + s + (isNum ? ' antigo' : '')];
-    else if (mode === 'colet') queries = [s + ' CD Jovem adventista', s + ' coletânea adventista álbum oficial', s + ' CD Jovem músicas oficial'];
+    else if (mode === 'jov') queries = [s + ' CD Jovem adventista', s + ' CD Jovem músicas oficial'];
+    else if (mode === 'colet') queries = [s + ' coletânea adventista álbum oficial', s + ' Novo Tempo álbum oficial', s + ' adventista louvor álbum oficial'];
     else queries = ['novo hinário adventista ' + s];
-    const albP = mode === 'colet' ? gcLoadAlbums(s) : Promise.resolve(null);
+    const albP = isCol ? gcLoadAlbums(s) : Promise.resolve(null);
     const lists = await Promise.all(queries.map(x => gcSearchLyrics(x)));
     const alb = await albP;
     setLoading(false);
@@ -11241,9 +11277,9 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
       if (inAlb.has(v.videoId)) return false;
       const n = hinoNormalize(v.title);
       if (mode === 'geral') return true; // v.159: busca GERAL mostra tudo que o YouTube achou (os que batem com todas as palavras vêm primeiro, abaixo)
-      if (!gcMatchAll(s, v.title + (mode === 'colet' ? ' ' + (v.channel || '') : ''))) return false;
+      if (!gcMatchAll(s, v.title + (isCol ? ' ' + (v.channel || '') : ''))) return false;
       if (mode === 'antigo') return !/novo hin/.test(n) && /hinario|hino/.test(n);
-      if (mode === 'colet' && /hinario adventista|\bhino \d/.test(n)) return false; // coletâneas/CD Jovem não misturam com hinário
+      if (isCol && /hinario adventista|\bhino \d/.test(n)) return false; // coletâneas/CD Jovem não misturam com hinário
       if (mode === 'novo' && !/(hinario|hino)/.test(n)) return false;
       return isOfficialCh(v.channel);
     });
@@ -11355,16 +11391,16 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
               </div>
             </div>` : ''}
             <div style=${{flex:1, minWidth:0, display: inTab ? 'none' : 'grid', gridTemplateColumns:'repeat(auto-fit, minmax(170px, 1fr))', gap:'8px'}}>
-              ${[['geral','🔎 Busca geral no YouTube — música, cantor, playback…'],['novo','📖 Hinário — nº ou nome'],['colet','💿 Coletâneas — música ou nome']].map(([k, ph], i) => html`<input key=${k} ref=${i === 0 ? inputRef : null} aria-label=${ph} value=${mode === k ? q : ''} onChange=${e=>typeIn(k, e.target.value)} onFocus=${()=>{ if (mode !== k) { setModeRaw(k); setQ(''); setYt(null); setErr(''); } }} placeholder=${ph.split(' — ')[0]} style=${{...inputStyle, minWidth:0, fontSize:'14px', padding:'12px 14px', borderRadius:'14px', border:'1px solid ' + (mode === k && q ? 'var(--highlight)' : 'rgba(56,189,248,0.5)'), boxShadow: mode === k && q ? '0 0 20px -8px rgba(56,189,248,0.9)' : 'none', ...(k === 'geral' ? { gridColumn:'1 / -1', fontSize:'15px', fontWeight:700, padding:'13px 18px', borderRadius:'999px', border:'1.5px solid rgba(56,189,248,0.85)', background:'linear-gradient(90deg, rgba(14,165,233,0.22), rgba(139,92,246,0.22))', boxShadow:'0 0 26px -4px rgba(56,189,248,0.9), inset 0 0 18px -6px rgba(56,189,248,0.7)', animation: (mode === k && q) ? 'none' : 'gcSearchGlow 2.4s ease-in-out infinite' } : {})}} />`)}
+              ${[['geral','🔎 Busca geral no YouTube — música, cantor, playback…'],['novo','📖 Hinário novo — nº ou nome'],['antigo','📜 Hinário antigo — nº ou nome'],['colet','💿 Coletâneas — música ou nome'],['jov','🎧 CDs Jovens — música ou nome']].map(([k, ph], i) => boxWrap(k, html`<input key=${k} ref=${i === 0 ? inputRef : null} aria-label=${ph} value=${mode === k ? q : ''} onChange=${e=>typeIn(k, e.target.value)} onFocus=${()=>{ if (mode !== k) { setModeRaw(k); setQ(''); setYt(null); setErr(''); } }} placeholder=${ph.split(' — ')[0]} style=${{...inputStyle, minWidth:0, fontSize:'14px', padding:'12px 14px', borderRadius:'14px', border:'1px solid ' + (mode === k && q ? 'var(--highlight)' : 'rgba(56,189,248,0.5)'), boxShadow: mode === k && q ? '0 0 20px -8px rgba(56,189,248,0.9)' : 'none', ...(k === 'geral' ? { gridColumn:'1 / -1', fontSize:'15px', fontWeight:700, padding:'13px 18px', borderRadius:'999px', border:'1.5px solid rgba(56,189,248,0.85)', background:'linear-gradient(90deg, rgba(14,165,233,0.22), rgba(139,92,246,0.22))', boxShadow:'0 0 26px -4px rgba(56,189,248,0.9), inset 0 0 18px -6px rgba(56,189,248,0.7)', animation: (mode === k && q) ? 'none' : 'gcSearchGlow 2.4s ease-in-out infinite' } : {})}} />`))}
             </div>
           </form>
-          ${nq && (inTab ? (x => x) : (x => ReactDOM.createPortal(html`<div id="gc-search-side" style=${{position:'fixed', top:'8px', right:'8px', bottom:'8px', width: isMobile ? 'calc(100vw - 16px)' : 'min(430px, 36vw)', minWidth: isMobile ? 0 : '340px', zIndex:150, display:'flex', flexDirection:'column', gap:'6px', padding:'10px', background:'rgba(8,18,40,0.98)', border:'1px solid rgba(56,189,248,0.45)', borderRadius:'16px', boxShadow:'0 10px 40px rgba(0,0,0,0.55)'}}><div style=${{display:'flex', alignItems:'center', gap:'8px'}}><div style=${{flex:1, fontSize:'12px', fontWeight:800, color:'var(--highlight)'}}>🔎 Resultados — ${mode === 'geral' ? 'Busca geral' : mode === 'novo' ? 'Novo Hinário' : mode === 'antigo' ? 'Hinário antigo' : mode === 'album' ? 'Coletâneas' : 'Coletâneas'}</div><button type="button" onClick=${() => { setQ(''); setYt(null); setAlbums(null); setErr(''); }} aria-label="Fechar resultados" style=${{...btnGhost, padding:'4px 10px', fontSize:'13px'}}>✕</button></div>${x}</div>`, document.body)))(html`<div style=${{overflowY:'auto', minHeight:0, flex:1, display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'10px', alignContent:'start', paddingRight:'2px'}}>
+          ${nq && (inTab ? (x => x) : (x => ReactDOM.createPortal(html`<div id="gc-search-side" style=${{position:'fixed', top:'8px', right:'8px', bottom:'8px', width: isMobile ? 'calc(100vw - 16px)' : 'min(430px, 36vw)', minWidth: isMobile ? 0 : '340px', zIndex:150, display:'flex', flexDirection:'column', gap:'6px', padding:'10px', background:'rgba(8,18,40,0.98)', border:'1px solid rgba(56,189,248,0.45)', borderRadius:'16px', boxShadow:'0 10px 40px rgba(0,0,0,0.55)'}}><div style=${{display:'flex', alignItems:'center', gap:'8px'}}><div style=${{flex:1, fontSize:'12px', fontWeight:800, color:'var(--highlight)'}}>🔎 Resultados — ${mode === 'geral' ? 'Busca geral' : mode === 'novo' ? 'Novo Hinário' : mode === 'antigo' ? 'Hinário antigo' : mode === 'jov' ? 'CDs Jovens' : 'Coletâneas'}</div><button type="button" onClick=${() => { setQ(''); setYt(null); setAlbums(null); setErr(''); }} aria-label="Fechar resultados" style=${{...btnGhost, padding:'4px 10px', fontSize:'13px'}}>✕</button></div>${x}</div>`, document.body)))(html`<div style=${{overflowY:'auto', minHeight:0, flex:1, display:'grid', gridTemplateColumns:'minmax(0,1fr)', gap:'10px', alignContent:'start', paddingRight:'2px'}}>
             
             ${nq && hymns.length > 0 && secTitle('📖 Hinário Adventista · ' + hymns.length)}
             ${hymns.slice(0, limit).map(h => { const vid = links[h.n] || h.videoId; return row({ key:'h-'+h.n, vid, title: label(h) + ' — ' + h.t, sub: links[h.n] ? 'link trocado' : 'Vídeo oficial com letra', badge: String(h.num), hymnN: h.n, remoteKey: 'hino-' + h.n }); })}
             ${hymns.length > limit && html`<button type="button" onClick=${()=>setLimit(l=>l+12)} style=${{...btnGhost, justifySelf:'center', padding:'8px 16px', fontSize:'12px'}}>Mostrar mais (${hymns.length - limit})</button>`}
-            ${mode === 'colet' && nq && albumHits.length === 0 && html`<div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.5}}>Não achei “${q.trim()}” nas coletâneas cadastradas no app — procurando nas coletâneas adventistas da internet abaixo.</div>`}
-            ${mode === 'colet' && albumHits.slice(0, limit).map(({ a, tr, whole }) => html`<div key=${'al-' + a.id} style=${{display:'grid', gap:'4px'}}>
+            ${isCol && nq && albumHits.length === 0 && html`<div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.5}}>Não achei “${q.trim()}” nas coletâneas cadastradas no app — procurando nas coletâneas adventistas da internet abaixo.</div>`}
+            ${isCol && albumHits.slice(0, limit).map(({ a, tr, whole }) => html`<div key=${'al-' + a.id} style=${{display:'grid', gap:'4px'}}>
               ${secTitle('🎼 ' + a.title + (a.year ? ' (' + a.year + ')' : '') + ' · ' + (a.tracks.length ? a.tracks.length + ' música(s)' : 'sem lista de músicas ainda'))}
               ${tr.map((t, i) => {
                 const k = a.id + '|' + i; const st = av[k];
@@ -11380,7 +11416,7 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
                   ${st && st.list && st.list.map(v => row({ compact:true, mini:true, key:'av-' + k + v.videoId, vid:v.videoId, title:v.title, sub:[v.channel, v.duration].filter(Boolean).join(' • '), thumb:v.thumbnail, yt:v, remoteKey:'busca-' + v.videoId }))}
                 </div>`; })}
             </div>`)}
-            ${mode === 'colet' && albumHits.length > limit && html`<button type="button" onClick=${()=>setLimit(l=>l+8)} style=${{...btnGhost, justifySelf:'center', padding:'8px 16px', fontSize:'12px'}}>Mostrar mais (${albumHits.length - limit})</button>`}
+            ${isCol && albumHits.length > limit && html`<button type="button" onClick=${()=>setLimit(l=>l+8)} style=${{...btnGhost, justifySelf:'center', padding:'8px 16px', fontSize:'12px'}}>Mostrar mais (${albumHits.length - limit})</button>`}
             ${libHits.length > 0 && secTitle('⭐ Minha biblioteca · ' + libHits.length)}
             ${libHits.map(x => row({ key:'l-'+x.id, vid:x.videoId, title:x.title, sub:'👤 ' + (x.singer || x.channel || '—') + ' • ' + x.cat, libId:x.id, remoteKey:'busca-' + x.videoId }))}
             ${nq && mode === 'novo' && hymns.length === 0 && html`<button type="button" onClick=${doYoutube} style=${{...btnPrimary, width:'100%', padding:'11px', fontSize:'13px'}}>${loading ? 'Buscando…' : '🔎 Buscar “' + q.trim() + '” no YouTube (músicas, cantores, playbacks, letras)'}</button>`}
@@ -11391,8 +11427,8 @@ function QuickSearchFab({ churchId, church, onUpdateChurch, tab }) {
               ${a.tracks.map(t => row({ compact:true, key:'a-' + a.playlistId + t.videoId, vid:t.videoId, title:t.title, sub:[t.duration, a.hit.includes(t.videoId) ? '← a música que você digitou' : ''].filter(Boolean).join(' • '), remoteKey:'busca-' + t.videoId }))}
             </div>`)}
             ${yt && yt.length === 0 && !(albums && albums.length) && html`<div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.5}}>Não achei nada ${mode === 'antigo' ? '' : 'oficial '}para “${ytQ}”.</div>`}
-            ${yt && yt.length > 0 && secTitle('▶ ' + (mode === 'antigo' ? 'Hinário antigo' : mode === 'colet' ? 'Coletâneas e CD Jovem' : 'YouTube') + ' · ' + yt.length + ' resultado(s) para “' + ytQ + '”')}
-            ${yt && yt.map(r => row({ compact: mode === 'colet', key:'y-'+r.videoId, vid:r.videoId, title:r.title, sub:[r.channel, r.duration, r.published].filter(Boolean).join(' • '), thumb:r.thumbnail, yt:r, remoteKey:'busca-' + r.videoId }))}
+            ${yt && yt.length > 0 && secTitle('▶ ' + (mode === 'antigo' ? 'Hinário antigo' : mode === 'jov' ? 'CDs Jovens' : isCol ? 'Coletâneas' : 'YouTube') + ' · ' + yt.length + ' resultado(s) para “' + ytQ + '”')}
+            ${yt && yt.map(r => row({ compact: isCol, key:'y-'+r.videoId, vid:r.videoId, title:r.title, sub:[r.channel, r.duration, r.published].filter(Boolean).join(' • '), thumb:r.thumbnail, yt:r, remoteKey:'busca-' + r.videoId }))}
           </div>`)}
         </div>
       </div>`, target)}
