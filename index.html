@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.175';
+const APP_VERSION = '2026-11-08.176';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.176',
+    date: '08/11/2026',
+    items: [
+      "Ensaios: nova função ▶ Play nas músicas — só OUVE a música (projeção invisível que toca o áudio no computador, sem mostrar nada nas telas). O 🔊 Projetor continua projetando tudo. Funciona também pelo celular (toca no computador principal).",
+    ],
+  },
   {
     version: '2026-11-08.175',
     date: '08/11/2026',
@@ -1489,7 +1496,7 @@ function UpdateAppButton({ style }) {
   const [busy, setBusy] = useState(false);
   const go = () => {
     let busyProj = false;
-    try { busyProj = Object.keys(projectionWindows).some(k => projectionWindows[k] && !projectionWindows[k].closed) || !!projectionAudio.playing; } catch (e) {}
+    try { busyProj = Object.keys(projectionWindows).some(k => k !== GC_AUDIO_KEY && projectionWindows[k] && !projectionWindows[k].closed) || !!projectionAudio.playing; } catch (e) {}
     if (busyProj && !confirm('Tem projeção aberta ou som tocando. Atualizar agora recarrega o app (a projeção pode piscar). Atualizar mesmo assim?')) return;
     setBusy(true); gcForceUpdateApp();
   };
@@ -3808,6 +3815,7 @@ function ProjectButton({ churchId, media, itemKey, only, remote }) {
         setSent(which); setTimeout(() => setSent(''), 2500);
         return;
       }
+      if (which === 'audio') { const er = gcPlayAudioOnly(media); if (er) alert(er); else { setSent('audio'); setTimeout(() => setSent(''), 2500); } return; }
       const enabled = loadEnabledScreens(churchId);
       if (enabled.length === 0 && which !== 'operador') {
         alert('Nenhuma tela habilitada ainda. Vá na aba "Telas" e habilite pelo menos uma.');
@@ -3847,12 +3855,13 @@ function ProjectButton({ churchId, media, itemKey, only, remote }) {
   const buttons = [
     { text:'🎧 Operador', title:'Projetar só na tela do operador, sem som', onClick:()=>projectTo('operador') },
     { text:'🔊 Projetor', title:'Projetar no projetor, com som', onClick:()=>projectTo('projetor') },
+    ...((only && String(only).indexOf('Play') >= 0) ? [{ text:'▶ Play', title:'Só ouvir a música (sem projetar nada): toca o áudio no computador', onClick:()=>projectTo('audio') }] : []),
     ...(loadEnabledScreens(churchId).some(s => s.isReturnScreen) ? [{ text:'📺 Retorno', title:'Projetar na tela de retorno (voltada pra quem está falando), sem som', onClick:()=>projectTo('retorno') }] : []),
   ];
 
   // v.126: 'only' mostra só os botões cujo texto bate (ex.: só "Projetor" na aba Ensaios, pra ficar enxuto no celular).
-  const shown0 = only ? buttons.filter(b => String(b.text).includes(only)) : buttons;
-  const shown = sent ? shown0.map(b => String(b.text).includes('Projetor') ? { ...b, text: '✅ Enviado ao computador' } : b) : shown0;
+  const shown0 = only ? buttons.filter(b => String(only).split('|').some(o => String(b.text).includes(o))) : buttons;
+  const shown = sent ? shown0.map(b => (sent === 'audio' ? String(b.text).includes('Play') : String(b.text).includes('Projetor')) ? { ...b, text: sent === 'audio' ? '✅ Tocando no computador' : '✅ Enviado ao computador' } : b) : shown0;
   return html`<${ScreenSendRow} isMobile=${isMobile} buttons=${shown} extra=${!only && itemKey && html`<${ScreenPickerButton} churchId=${churchId} itemKey=${itemKey} />`} />`;
 }
 
@@ -5296,7 +5305,7 @@ function projectionShellHtml(openerActive) {
       + 'var overlay=document.getElementById("gc-overlay");'
       + 'var overlayTimer=null,overlayClearTimer=null;'
       + 'var ytPlayer=null,fading=false;var localVideoEl=null;var lastMute=false;var projVol=100,projMuted=false;var gcSoundPending=false;var gcUserPaused=false;var frozenCanvas=null,frozenYt=false,frozenWanted=false,capVideo=null,capBtn=null,gcAutoTried=false;'
-      + 'function gcNotify(o){try{if(window.opener)window.opener.postMessage(o,"*");}catch(e){}}'
+      + 'function gcNotify(o){try{var op=window.opener||(window.parent&&window.parent!==window?window.parent:null);if(op)op.postMessage(o,"*");}catch(e){}}'
       + 'function gcYtCmd(f,a){try{var fr=document.getElementById("gc-player");if(fr&&fr.contentWindow)fr.contentWindow.postMessage(JSON.stringify({event:"command",func:f,args:a||[]}),"*");}catch(e){}}'
       + 'var cronoInterval=null,cronoItem=null;'
       + 'function tryFullscreen(){'
@@ -5356,7 +5365,7 @@ function projectionShellHtml(openerActive) {
       // Avisa a janela principal (opener) quando o vídeo/música termina de verdade — usado pela
       // Programação Automática do Modo Ao Vivo pra nunca cortar um vídeo no meio, esperando o fim de
       // verdade em vez de um tempo fixo "no chute".
-      + 'function notifyMediaEnded(){try{if(window.opener&&!window.opener.closed)window.opener.postMessage({gcType:"gc_media_ended"},"*");}catch(e){}}'
+      + 'function notifyMediaEnded(){try{var op=window.opener||(window.parent&&window.parent!==window?window.parent:null);if(op&&!op.closed)op.postMessage({gcType:"gc_media_ended"},"*");}catch(e){}}'
       + 'function renderLocalVideo(item,mute){if(!mute&&!projMuted&&!gcCanSound()){projMuted=true;gcSoundPending=true;gcHint(true);gcNotify({gcEvt:"sound_blocked"});}stage.innerHTML="";fading=false;ytPlayer=null;clearCronoInterval();var v=document.createElement("video");v.src=(item&&item.url)||"";v.autoplay=true;v.playsInline=true;v.controls=false;v.muted=!!mute||projMuted;v.volume=projVol/100;v.addEventListener("ended",function(){gcNotify({gcEvt:"state",s:0});notifyMediaEnded();});v.addEventListener("playing",function(){gcNotify({gcEvt:"state",s:1});});v.addEventListener("pause",function(){gcNotify({gcEvt:"state",s:2});});gcUserPaused=false;stage.appendChild(v);localVideoEl=v;v.play().catch(function(){});}'
       // Play/Pause explícitos (botões separados, pedido do Paulo 25/09) do vídeo (local ou do
       // YouTube) que estiver tocando agora — usado pelo controle miniatura na janela principal.
@@ -5532,6 +5541,29 @@ function gcFlushBlocked() {
   jobs.filter(j => Date.now() - j.ts < 10 * 60 * 1000).forEach(j => { try { sendToScreenObj(j.scr, j.kind, j.payload, j.opts); } catch (e) {} });
 }
 // opts.quiet (v.96): não mostra alert (comando vindo do celular) — devolve a mensagem de erro ('' = ok).
+// v.176: "Play" das músicas do Ensaio = só o ÁUDIO, sem projetar nada: abre uma projeção INVISÍVEL (janelinha escondida dentro do
+// próprio app) que toca a música. Entra na lista de janelas de projeção, então Pause / Fade out / Fechar / volume do Console valem pra ela.
+const GC_AUDIO_KEY = 'audio-oculto';
+function gcPlayAudioOnly(media) {
+  try {
+    let fr = document.getElementById('gc-audio-host');
+    let fresh = false;
+    if (!fr) {
+      fr = document.createElement('iframe'); fr.id = 'gc-audio-host';
+      fr.setAttribute('allow', 'autoplay; encrypted-media'); fr.setAttribute('aria-hidden', 'true'); fr.tabIndex = -1;
+      fr.style.cssText = 'position:fixed;left:-20px;top:-20px;width:4px;height:4px;border:0;opacity:0;pointer-events:none;';
+      document.body.appendChild(fr);
+      const d = fr.contentWindow.document; d.open(); d.write(projectionShellHtml(true)); d.close();
+      fresh = true;
+    }
+    const w = fr.contentWindow;
+    projectionWindows[GC_AUDIO_KEY] = w;
+    try { gcInjectSeekPatch(w); } catch (e) {}
+    const post = () => { try { w.postMessage({ gcType: 'media', media: (media && typeof media === 'object') ? media : { url: media }, mute: false, vol: projectionAudio.volume, pmute: false }, '*'); } catch (e) {} };
+    if (fresh) setTimeout(post, 400); else post();
+    return '';
+  } catch (e) { return 'Erro ao tocar o áudio: ' + ((e && e.message) || e); }
+}
 async function sendToScreenObj(scr, kind, payload, opts) {
   const quiet = !!(opts && opts.quiet);
   const fail = (msg) => { if (!quiet) alert(msg); return msg; };
@@ -6343,7 +6375,7 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
     </div>
     ${media && media.title && html`<div style=${{fontSize:'10.5px', color:'var(--text-mid)', lineHeight:1.25, wordBreak:'break-word'}}>${media.title}</div>`}
     ${!(media && media.title) && html`<${MediaSearchField} media=${media} onChange=${onChange} searchKey=${searchKey} />`}
-    ${media && media.title && html`<${ProjectButton} churchId=${churchId} media=${media} itemKey=${itemKey} only="Projetor" remote=${remoteArg} />`}
+    ${media && media.title && html`<${ProjectButton} churchId=${churchId} media=${media} itemKey=${itemKey} only="Play|Projetor" remote=${remoteArg} />`}
   </div>`;
   const subList = (g, sg, field, title, icon, ph) => html`<div style=${{display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'5px'}}>
     <div style=${{fontWeight:800, fontSize:'11px'}}>${icon} ${title} <span style=${{fontWeight:600, color:'var(--text-dim)'}}>(${(sg[field] || []).length})</span></div>
@@ -9166,6 +9198,7 @@ function remoteExecute(churchId, church, cmd, onErr) {
       const sg = g && (g.songs || []).find(x => x.id === a.sid);
       const it = sg && ensaioItems(sg).find(x => x.key === (a.item || 'orig'));
       if (!it) return 'Esse item do ensaio não tem vídeo/link.';
+      if (a.which === 'audio') return gcPlayAudioOnly(it.media) || '';
       return remoteProjectMedia(churchId, it.media, 'ensaio-' + sg.id + '-' + it.key, a.which === 'operador' ? 'operador' : (a.which === 'retorno' ? 'retorno' : 'projetor'), onErr);
     }
   }
@@ -9423,7 +9456,7 @@ function RemoteControl({ churchId, church }) {
       try { const ch0 = churchRef.current; LITURGIA_DAYS.forEach(dd => { if (dd.key === 'sabado') return; const l = (gcDayActivities(churchId, ch0, dd.key) || []).map(a => ({ id: a.id, name: a.name, time: a.time || '', media: !!(a.media && a.media.title), done: !!a.done })); if (l.some(a => a.media)) actsByDay[dd.key] = l; }); } catch (e) {}
       try { acts = (gcDayActivities(churchId, churchRef.current, 'sabado') || []).map(a => ({ id: a.id, name: a.name, time: a.time || '', media: !!(a.media && a.media.title), done: !!a.done })); } catch (e) {}
       let ens = []; try { ens = gcEnsaiosOf(churchId, churchRef.current).map(g => ({ id: g.id, name: g.name, songs: (g.songs || []).map(sg => ({ id: sg.id, name: ensaioSongName(sg), items: ensaioItems(sg).map(it => ({ key: it.key, label: it.label })) })).filter(x => x.items.length) })).filter(g => g.songs.length); } catch (e) {}
-      let wins = 0; try { wins = Object.keys(projectionWindows).filter(k => projectionWindows[k] && !projectionWindows[k].closed).length; } catch (e) {}
+      let wins = 0; try { wins = Object.keys(projectionWindows).filter(k => k !== GC_AUDIO_KEY && projectionWindows[k] && !projectionWindows[k].closed).length; } catch (e) {}
       let cfg = {};
       try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && (k.indexOf('gc_telas_') === 0 || k.indexOf('gc_tela_pref_') === 0) && k.indexOf(churchId) >= 0) { const v = localStorage.getItem(k); if (v && v.length < 20000) cfg[k] = v; } } } catch (e) {}
       const s = { v: APP_VERSION, wins, cfg, blocked: !!window.__gcSoundBlocked, pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, actsByDay, ens, err: lastErr.current || '' };
@@ -9493,7 +9526,7 @@ function RemoteControl({ churchId, church }) {
       <span>📱 O celular pediu uma projeção, mas o Chrome barrou a janela. Clique em qualquer lugar (ou aqui) pra abrir.</span>
       <button type="button" onClick=${gcFlushBlocked} style=${{...btnPrimary, width:'auto', padding:'6px 14px', background:'#0f172a', boxShadow:'none'}}>Abrir projeção agora</button>
     </div>`}
-    ${!(isMobile && !isMain) && html`<button type="button" onClick=${()=>setOpen(true)} title="Controle Remoto: comandar o computador principal pelo celular" style=${{position:'fixed', right: btnRight+'px', bottom:'calc(76px + env(safe-area-inset-bottom,0px))', zIndex:151, width:'46px', height:'46px', borderRadius:'50%', border:'1px solid var(--border-soft)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', color:'#fff', background:'#0f172a', boxShadow:'0 10px 24px -10px rgba(0,0,0,0.55)'}}>📱${isMain && !Object.keys(projectionWindows).some(k => projectionWindows[k] && !projectionWindows[k].closed) && html`<span title="Projeção fechada: toque aqui e em Preparar projeção e som" style=${{position:'absolute', top:'2px', right:'2px', width:'11px', height:'11px', borderRadius:'50%', background:'#ef4444', border:'2px solid #0f172a'}}></span>`}</button>`}
+    ${!(isMobile && !isMain) && html`<button type="button" onClick=${()=>setOpen(true)} title="Controle Remoto: comandar o computador principal pelo celular" style=${{position:'fixed', right: btnRight+'px', bottom:'calc(76px + env(safe-area-inset-bottom,0px))', zIndex:151, width:'46px', height:'46px', borderRadius:'50%', border:'1px solid var(--border-soft)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', color:'#fff', background:'#0f172a', boxShadow:'0 10px 24px -10px rgba(0,0,0,0.55)'}}>📱${isMain && !Object.keys(projectionWindows).some(k => k !== GC_AUDIO_KEY && projectionWindows[k] && !projectionWindows[k].closed) && html`<span title="Projeção fechada: toque aqui e em Preparar projeção e som" style=${{position:'absolute', top:'2px', right:'2px', width:'11px', height:'11px', borderRadius:'50%', background:'#ef4444', border:'2px solid #0f172a'}}></span>`}</button>`}
     ${open && html`
       <div style=${{position:'fixed', inset:0, background:'rgba(2,6,23,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:220, padding:'12px'}} onClick=${()=>setOpen(false)}>
         <div class="glass fade-up" style=${{maxWidth:'520px', width:'100%', padding:'18px', borderRadius:'20px', display:'grid', gap:'12px', maxHeight:'90vh', overflowY:'auto'}} onClick=${e=>e.stopPropagation()}>
