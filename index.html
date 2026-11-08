@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-07.169';
+const APP_VERSION = '2026-11-08.170';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.170',
+    date: '08/11/2026',
+    items: [
+      "Celular: o botão/janela \"📱 Controle Remoto\" não aparece mais no celular. O celular continua sendo o app normal e se liga sozinho ao computador principal (sem cadastro). Cada troca de aba e de dia da Liturgia feita no celular acontece também no computador principal, além dos comandos de projetar, volume etc. que já iam pra lá.",
+    ],
+  },
   {
     version: '2026-11-07.169',
     date: '07/11/2026',
@@ -8901,6 +8908,7 @@ function remoteExecute(churchId, church, cmd, onErr) {
     case 'atten': try { window.__gcAtten && window.__gcAtten(!!a.on); } catch(e) {} return '';
     case 'background': return sendBackgroundToAllScreens(churchId, church, true, onErr) || '';
     case 'freeze': setProjectionFrozen(!isProjectionFrozen()); return '';
+    case 'nav': try { window.dispatchEvent(new CustomEvent('gc-remote-nav', { detail: { tab: String(a.tab || ''), day: String(a.day || '') } })); } catch (e) {} return '';
     case 'reload': setTimeout(() => { try { gcForceUpdateApp(); } catch (e) { window.location.reload(); } }, 400); return '';
     case 'close': Object.keys(gcBlockedQueue).forEach(k => delete gcBlockedQueue[k]); setProjectionFrozen(false); stopAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); return '';
     case 'screen': {
@@ -9235,6 +9243,14 @@ function RemoteControl({ churchId, church }) {
   const askRegister = () => { const n = phoneName.trim(); if (!n) { alert('Escreva um nome pra esse celular (ex: Celular do Paulo).'); return; } w({ ['remotePhones.' + devId]: { name: n, status: 'pending', requestedAt: Date.now() } }); };
   // v.152: ligar/desligar direto no celular — sem aprovação no computador principal; fica ligado até desligar.
   const turnOnRemote = () => { const n = (phoneName || (me && me.name) || '').trim(); if (!n) { alert('Escreva um nome pra esse celular (ex: Celular do Paulo).'); return; } w({ ['remotePhones.' + devId]: { name: n, status: 'registered', enabled: true, enabledDay: remoteToday(), requestedAt: Date.now() } }); };
+  // v.170: no celular não abre mais janela de controle: ele se cadastra sozinho e o app do celular passa a mandar tudo pro principal.
+  const autoOnTried = useRef(false);
+  useEffect(() => {
+    if (!isMobile || isMain || !data || !mainInfo || meOk || autoOnTried.current) return;
+    autoOnTried.current = true;
+    const n = ((me && me.name) || phoneName || ('Celular ' + devId.slice(-4))).trim();
+    w({ ['remotePhones.' + devId]: { name: n, status: 'registered', enabled: true, enabledDay: remoteToday(), requestedAt: Date.now() } });
+  }, [isMobile, isMain, !!data, !!mainInfo, meOk]);
   const turnOffRemote = () => { w({ ['remotePhones.' + devId + '.enabled']: false, ['remotePhones.' + devId + '.enabledDay']: '' }); };
   const approve = (id) => w({ ['remotePhones.' + id + '.status']: 'registered' });
   const refuse = (id) => w({ ['remotePhones.' + id + '.status']: 'removed', ['remotePhones.' + id + '.enabled']: false, ['remotePhones.' + id + '.enabledDay']: '' });
@@ -9267,7 +9283,7 @@ function RemoteControl({ churchId, church }) {
       <span>📱 O celular pediu uma projeção, mas o Chrome barrou a janela. Clique em qualquer lugar (ou aqui) pra abrir.</span>
       <button type="button" onClick=${gcFlushBlocked} style=${{...btnPrimary, width:'auto', padding:'6px 14px', background:'#0f172a', boxShadow:'none'}}>Abrir projeção agora</button>
     </div>`}
-    <button type="button" onClick=${()=>setOpen(true)} title="Controle Remoto: comandar o computador principal pelo celular" style=${{position:'fixed', right: btnRight+'px', bottom:'calc(76px + env(safe-area-inset-bottom,0px))', zIndex:151, width:'46px', height:'46px', borderRadius:'50%', border:'1px solid var(--border-soft)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', color:'#fff', background:'#0f172a', boxShadow:'0 10px 24px -10px rgba(0,0,0,0.55)'}}>📱${isMain && !Object.keys(projectionWindows).some(k => projectionWindows[k] && !projectionWindows[k].closed) && html`<span title="Projeção fechada: toque aqui e em Preparar projeção e som" style=${{position:'absolute', top:'2px', right:'2px', width:'11px', height:'11px', borderRadius:'50%', background:'#ef4444', border:'2px solid #0f172a'}}></span>`}</button>
+    ${!(isMobile && !isMain) && html`<button type="button" onClick=${()=>setOpen(true)} title="Controle Remoto: comandar o computador principal pelo celular" style=${{position:'fixed', right: btnRight+'px', bottom:'calc(76px + env(safe-area-inset-bottom,0px))', zIndex:151, width:'46px', height:'46px', borderRadius:'50%', border:'1px solid var(--border-soft)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', color:'#fff', background:'#0f172a', boxShadow:'0 10px 24px -10px rgba(0,0,0,0.55)'}}>📱${isMain && !Object.keys(projectionWindows).some(k => projectionWindows[k] && !projectionWindows[k].closed) && html`<span title="Projeção fechada: toque aqui e em Preparar projeção e som" style=${{position:'absolute', top:'2px', right:'2px', width:'11px', height:'11px', borderRadius:'50%', background:'#ef4444', border:'2px solid #0f172a'}}></span>`}</button>`}
     ${open && html`
       <div style=${{position:'fixed', inset:0, background:'rgba(2,6,23,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:220, padding:'12px'}} onClick=${()=>setOpen(false)}>
         <div class="glass fade-up" style=${{maxWidth:'520px', width:'100%', padding:'18px', borderRadius:'20px', display:'grid', gap:'12px', maxHeight:'90vh', overflowY:'auto'}} onClick=${e=>e.stopPropagation()}>
@@ -9787,7 +9803,7 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   const gcTurno = gcHr < 12 ? 'manhã' : gcHr < 18 ? 'tarde' : 'noite';
   const gcEhPadrao = (gcTodayKey === 'sabado' && gcTurno === 'manhã') || (gcTodayKey === 'domingo' && gcTurno === 'noite') || (gcTodayKey === 'quarta' && gcTurno === 'noite');
   const gcDateStr = gcNow.getFullYear() + '-' + (gcNow.getMonth()+1) + '-' + gcNow.getDate();
-  const [day, setDay] = useState(toolsOnly ? 'sabado' : gcTodayKey);
+  const [day, setDay] = useState(() => { if (toolsOnly) return 'sabado'; const pd = window.__gcPendingDay; window.__gcPendingDay = ''; return (pd && LITURGIA_DAYS.some(x => x.key === pd)) ? pd : gcTodayKey; });
   const isSabado = day === 'sabado';
   const horaKey = (d) => 'gc_lit_hora_' + churchId + '_' + d;
   const loadHora = (d) => { try { const o = JSON.parse(localStorage.getItem(horaKey(d)) || 'null'); return (o && o.date === gcDateStr) ? o.time : ''; } catch (e) { return ''; } };
@@ -9809,6 +9825,19 @@ function LiturgiaView({ churchId, churchName, church, onUpdateChurch, mensagemIt
   useEffect(() => { if (!toolsOnly) setForaInfo(loadFora(day)); }, [day]);
   const saveHora = (d, t) => { try { localStorage.setItem(horaKey(d), JSON.stringify({ date: gcDateStr, time: t })); } catch (e) {} setHoraIni(t); };
   useEffect(() => { if (!toolsOnly) setHoraIni(loadHora(day)); }, [day]);
+  // v.170: troca de dia da Liturgia no celular acontece também no computador principal.
+  const daySeen = useRef(false);
+  useEffect(() => {
+    if (toolsOnly) return;
+    if (!daySeen.current) { daySeen.current = true; return; }
+    if (gcPhoneRemote.on && gcPhoneRemote.online) gcRemoteSend('nav', { tab: 'liturgia', day });
+  }, [day]);
+  useEffect(() => {
+    if (toolsOnly) return;
+    const f = (e) => { const d = e && e.detail && e.detail.day; if (d && LITURGIA_DAYS.some(x => x.key === d)) setDay(d); };
+    window.addEventListener('gc-remote-nav', f);
+    return () => window.removeEventListener('gc-remote-nav', f);
+  }, []);
   const readActivitiesFor = (d, churchObj) => {
     if (actIsDirty(churchId, d)) return loadActivities(churchId, d); // alteração local ainda não confirmada na nuvem: vale a deste aparelho
     if (d === 'sabado') return (churchObj && churchObj.activities) ? churchObj.activities : loadActivities(churchId);
@@ -12353,6 +12382,17 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   const [tab, setTab] = useState('liturgia');
   // v.124: ao trocar de aba principal volta pro topo — senão o cabeçalho fixo cobria o começo da aba nova.
   useEffect(() => { try { window.scrollTo(0, 0); } catch (e) {} }, [tab]);
+  // v.170: o app do celular espelha no computador principal a troca de aba (e o principal obedece).
+  const tabSeen = useRef(false);
+  useEffect(() => {
+    if (!tabSeen.current) { tabSeen.current = true; return; }
+    if (gcPhoneRemote.on && gcPhoneRemote.online) gcRemoteSend('nav', { tab });
+  }, [tab]);
+  useEffect(() => {
+    const f = (e) => { const t = e && e.detail && e.detail.tab; if (e && e.detail && e.detail.day) window.__gcPendingDay = e.detail.day; if (t) setTab(t); };
+    window.addEventListener('gc-remote-nav', f);
+    return () => window.removeEventListener('gc-remote-nav', f);
+  }, []);
   // Fica aqui (não dentro da aba Mensagem) de propósito: assim, os arquivos carregados do pendrive
   // continuam disponíveis mesmo trocando de aba (ex: voltar pra Liturgia pra ver a atividade do
   // sermão). Ainda assim NÃO é salvo em disco/nuvem — some se recarregar a página, como sempre foi.
