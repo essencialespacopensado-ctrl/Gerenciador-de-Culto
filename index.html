@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.178';
+const APP_VERSION = '2026-11-08.179';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.179',
+    date: '08/11/2026',
+    items: [
+      "Ensaios: abrir/fechar um grupo (\u25b6) ou uma m\u00fasica no celular agora abre/fecha o mesmo no computador principal.",
+    ],
+  },
   {
     version: '2026-11-08.178',
     date: '08/11/2026',
@@ -6414,7 +6421,7 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
       ${groups.map(g => html`
         <div key=${g.id} class="glass" style=${{padding:'8px', borderRadius:'12px', border:'1px solid var(--border-soft)', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'6px'}}>
           <div style=${{display:'flex', gap:'6px', alignItems:'center'}}>
-            <button type="button" onClick=${()=>setOpenId(o => o === g.id ? null : g.id)} style=${mini}>${openId === g.id ? '▼' : '▶'}</button>
+            <button type="button" data-gc-tile=${'ens:g:' + g.id} data-gc-active=${openId === g.id ? '1' : '0'} onClick=${(e)=>{ const b = e.currentTarget; setOpenId(o => o === g.id ? null : g.id); gcMirrorTile(b, 'ens:g:' + g.id); }} style=${mini}>${openId === g.id ? '▼' : '▶'}</button>
             <input value=${g.name} onInput=${e=>rename(g.id, e.target.value)} style=${{...small, flex:1, minWidth:0, fontWeight:800}} />
             <span style=${{fontSize:'10px', color:'var(--text-dim)', whiteSpace:'nowrap'}}>${(g.songs || []).length} 🎵</span>
             <button type="button" onClick=${()=>removeGroup(g)} title="Apagar grupo" style=${{...mini, color:'var(--danger)'}}>🗑️</button>
@@ -6424,7 +6431,7 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
               ${(g.songs || []).length === 0 && html`<div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Nenhuma música no repertório ainda.</div>`}
               ${(g.songs || []).map((sg, i) => html`
                 <div key=${sg.id} style=${{borderRadius:'10px', background:'rgba(2,6,23,0.25)', border:'1px solid var(--border-soft)', overflow:'hidden'}}>
-                  <div style=${{display:'flex', gap:'4px', alignItems:'center', padding:'6px 8px', cursor:'pointer'}} onClick=${()=>setOpenSong(o => o === sg.id ? null : sg.id)}>
+                  <div data-gc-tile=${'ens:s:' + sg.id} data-gc-active=${openSong === sg.id ? '1' : '0'} style=${{display:'flex', gap:'4px', alignItems:'center', padding:'6px 8px', cursor:'pointer'}} onClick=${(e)=>{ const b = e.currentTarget; setOpenSong(o => o === sg.id ? null : sg.id); gcMirrorTile(b, 'ens:s:' + sg.id); }}>
                     <span style=${{fontSize:'10px'}}>${openSong === sg.id ? '▼' : '▶'}</span>
                     <div style=${{flex:1, minWidth:0, fontSize:'11.5px', fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>${i + 1}. ${ensaioSongName(sg)}</div>
                     <span style=${{fontSize:'10px', color:'var(--text-dim)', whiteSpace:'nowrap'}}>${busy[sg.id] ? '⏳ buscando…' : ensaioItems(sg).length + ' it.'}</span>
