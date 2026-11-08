@@ -140,11 +140,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.173';
+const APP_VERSION = '2026-11-08.174';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.174',
+    date: '08/11/2026',
+    items: [
+      "Celular ligado ao computador principal: a aba Telas mostra e altera a configuração das telas DO COMPUTADOR PRINCIPAL (habilitar, Projetor, Retorno, nomes, rotas); o celular não detecta nem abre telas nele mesmo. Tudo que o celular manda projetar (vídeo, Bíblia, cronômetro, relógio, texto) vai para as telas do computador principal.",
+      "Ensaios: o play pelo celular agora encontra as músicas do ensaio no computador principal.",
+    ],
+  },
   {
     version: '2026-11-08.173',
     date: '08/11/2026',
@@ -4874,11 +4882,11 @@ function setProjectionFrozen(value) {
 
 function screensEnabledKey(churchId) { return 'gc_telas_habilitadas_' + churchId; }
 function loadEnabledScreens(churchId) {
-  try { const raw = localStorage.getItem(screensEnabledKey(churchId)); if (raw) return JSON.parse(raw); } catch(e) {}
+  try { const raw = gcCfgGet(screensEnabledKey(churchId)); if (raw) return JSON.parse(raw); } catch(e) {}
   return [];
 }
 function saveEnabledScreens(churchId, list) {
-  try { localStorage.setItem(screensEnabledKey(churchId), JSON.stringify(list)); } catch(e) {}
+  try { gcCfgSet(screensEnabledKey(churchId), JSON.stringify(list)); } catch(e) {}
 }
 function screenSig(s) { return s.width+'x'+s.height+'@'+s.left+','+s.top; }
 // v.163: o app RECONHECE as telas sozinho pelo NOME que o Windows dá (ex.: "SONY TV"). Antes a tela era guardada só pela posição/tamanho
@@ -4893,6 +4901,7 @@ function gcScreenItem(s, i) {
 }
 function gcWinName(e) { if (!e) return ''; if (e.winName) return String(e.winName).trim(); const p = String(e.label || '').split(' — '); return p.length >= 3 ? p[1].trim() : ''; }
 function gcReconcileScreens(churchId, detected) {
+  try { if (detected && detected.length) localStorage.setItem('gc_telas_detectadas_' + churchId, JSON.stringify(detected)); } catch (e) {}
   try {
     const enabled = loadEnabledScreens(churchId);
     if (!enabled.length || !detected || !detected.length) return false;
@@ -4955,11 +4964,11 @@ function gcOperatorScreens(enabled) {
 // telas detectadas automaticamente, e entram no mesmo fluxo de habilitar/Projetor/Operador.
 function manualScreensKey(churchId) { return 'gc_telas_manuais_' + churchId; }
 function loadManualScreens(churchId) {
-  try { const raw = localStorage.getItem(manualScreensKey(churchId)); if (raw) return JSON.parse(raw); } catch(e) {}
+  try { const raw = gcCfgGet(manualScreensKey(churchId)); if (raw) return JSON.parse(raw); } catch(e) {}
   return [];
 }
 function saveManualScreens(churchId, list) {
-  try { localStorage.setItem(manualScreensKey(churchId), JSON.stringify(list)); } catch(e) {}
+  try { gcCfgSet(manualScreensKey(churchId), JSON.stringify(list)); } catch(e) {}
 }
 function getProjectorScreen(churchId) {
   const list = loadEnabledScreens(churchId);
@@ -4980,7 +4989,7 @@ function getReturnScreen(churchId) {
 // distingue HDMI de DisplayPort). Se o Windows não der pista, ele escolhe o tipo na mão.
 function screenNamesKey(churchId) { return 'gc_telas_nomes_' + churchId; }
 function loadScreenNames(churchId) {
-  try { const raw = localStorage.getItem(screenNamesKey(churchId)); if (raw) { const o = JSON.parse(raw); if (o && typeof o === 'object') return o; } } catch (e) {}
+  try { const raw = gcCfgGet(screenNamesKey(churchId)); if (raw) { const o = JSON.parse(raw); if (o && typeof o === 'object') return o; } } catch (e) {}
   return {};
 }
 function saveScreenMeta(churchId, sig, patch) {
@@ -4990,7 +4999,7 @@ function saveScreenMeta(churchId, sig, patch) {
     if (!next.name) delete next.name;
     if (!next.kind) delete next.kind;
     if (Object.keys(next).length === 0) delete all[sig]; else all[sig] = next;
-    localStorage.setItem(screenNamesKey(churchId), JSON.stringify(all));
+    gcCfgSet(screenNamesKey(churchId), JSON.stringify(all));
   } catch (e) {}
 }
 const SCREEN_KINDS = {
@@ -5057,13 +5066,12 @@ function ScreenMetaEditor({ churchId, scr, isManual, onChange }) {
 function screenPrefKey(churchId, itemKey) { return 'gc_tela_pref_' + churchId + '_' + itemKey; }
 function loadScreenPref(churchId, itemKey) {
   if (!itemKey) return '';
-  try { return localStorage.getItem(screenPrefKey(churchId, itemKey)) || ''; } catch(e) { return ''; }
+  try { return gcCfgGet(screenPrefKey(churchId, itemKey)) || ''; } catch(e) { return ''; }
 }
 function saveScreenPref(churchId, itemKey, sig) {
   if (!itemKey) return;
   try {
-    if (sig) localStorage.setItem(screenPrefKey(churchId, itemKey), sig);
-    else localStorage.removeItem(screenPrefKey(churchId, itemKey));
+    gcCfgSet(screenPrefKey(churchId, itemKey), sig || '');
   } catch(e) {}
 }
 // Escolhe pra qual(is) tela(s) mandar: se tiver uma preferência salva pra esse item e a tela ainda
@@ -5088,9 +5096,9 @@ const CONTENT_ROUTES = [
 ];
 function routesKey(churchId) { return 'gc_telas_rotas_' + churchId; }
 function loadRoutes(churchId) {
-  try { const o = JSON.parse(localStorage.getItem(routesKey(churchId)) || '{}'); return (o && typeof o === 'object') ? o : {}; } catch (e) { return {}; }
+  try { const o = JSON.parse(gcCfgGet(routesKey(churchId)) || '{}'); return (o && typeof o === 'object') ? o : {}; } catch (e) { return {}; }
 }
-function saveRoutes(churchId, o) { try { localStorage.setItem(routesKey(churchId), JSON.stringify(o)); } catch (e) {} }
+function saveRoutes(churchId, o) { try { gcCfgSet(routesKey(churchId), JSON.stringify(o)); } catch (e) {} }
 function routeKeyOfItem(itemKey) {
   const k = String(itemKey || '');
   if (k === 'biblia-overlay') return 'biblia';
@@ -5526,8 +5534,10 @@ async function sendToScreenObj(scr, kind, payload, opts) {
       if (gcPhoneLast.key !== key || Date.now() - gcPhoneLast.at > 1200) { gcPhoneLast.key = key; gcPhoneLast.at = Date.now(); gcViaPhone('screen', { kind, text: typeof payload === 'string' ? payload.slice(0, 4000) : '' }); }
       return '';
     }
-    if (kind === 'media') return '';
-    return fail('Pelo celular esse tipo de conteúdo só pode ser enviado pelo computador principal.');
+    let pj = ''; try { pj = JSON.stringify(payload === undefined ? null : payload); } catch (e) {}
+    if (pj.length > 200000) return fail('Esse conteúdo é grande demais para mandar pelo celular. Envie pelo computador principal.');
+    gcViaPhone('screen_send', { sig: screenSig(scr), kind, payload: payload === undefined ? null : payload, opts: { mute: !!(opts && opts.mute) } });
+    return '';
   }
   try {
     const sig = screenSig(scr);
@@ -5634,6 +5644,7 @@ async function sendToScreenObj(scr, kind, payload, opts) {
 // v.143: o ✖ "Fechar" do console só tira o vídeo/imagem (deixa a tela preta) e NÃO fecha a janela de projeção —
 // assim o som não trava de novo quando a janela precisa ser reaberta. Pra fechar mesmo: "Encerrar em Todas as Telas".
 function stopAllProjectionScreens() {
+  if (gcPhoneRemote.on) { gcViaPhone('close'); return; }
   Object.keys(projectionWindows).forEach(sig => {
     const win = projectionWindows[sig];
     try { if (win && !win.closed) { win.postMessage({ gcType:'overlay_limpar' }, '*'); win.postMessage({ gcType:'blank' }, '*'); } } catch(e) {}
@@ -5656,6 +5667,7 @@ function closeAllProjectionScreens() {
 // útil pra manter algo bonito na tela nos momentos em que não há nada específico sendo projetado,
 // em vez de ficar preto.
 function sendBackgroundToAllScreens(churchId, church, quiet, onErr) {
+  if (gcPhoneRemote.on) { gcViaPhone('background'); return ''; }
   const url = gcGetBackground(church);
   const fail = (m) => { if (!quiet) alert(m); return m; };
   if (!url) return fail('Nenhuma imagem de plano de fundo cadastrada ainda. Cadastre em Configurações > Dados da Igreja.');
@@ -5669,6 +5681,7 @@ function sendBackgroundToAllScreens(churchId, church, quiet, onErr) {
 // (25/09): botões separados e diretos, agindo só nas janelas de projeção que já estiverem abertas
 // (não abre uma janela nova só por apertar Play/Pause).
 function playAllScreens(churchId) {
+  if (gcPhoneRemote.on) { gcViaPhone('play'); return; }
   Object.keys(projectionWindows).forEach(sig => {
     const win = projectionWindows[sig];
     try { if (win && !win.closed) win.postMessage({ gcType:'media_play' }, '*'); } catch(e) {}
@@ -5676,6 +5689,7 @@ function playAllScreens(churchId) {
 }
 function gcFadeMs() { try { const v = Number(localStorage.getItem('gc_fade_secs')); return (v >= 0.5 && v <= 30 ? v : 2) * 1000; } catch(e) { return 2000; } }
 function fadeOutAllScreens(churchId) {
+  if (gcPhoneRemote.on) { gcViaPhone('fadeout'); return; }
   Object.keys(projectionWindows).forEach(sig => {
     const win = projectionWindows[sig];
     try { if (win && !win.closed) win.postMessage({ gcType:'media_fadeout', ms: gcFadeMs() }, '*'); } catch(e) {}
@@ -5694,6 +5708,7 @@ function fadeOutAllScreens(churchId) {
   }, gcFadeMs() + 450);
 }
 function pauseAllScreens(churchId) {
+  if (gcPhoneRemote.on) { gcViaPhone('pause'); return; }
   Object.keys(projectionWindows).forEach(sig => {
     const win = projectionWindows[sig];
     try { if (win && !win.closed) win.postMessage({ gcType:'media_pause' }, '*'); } catch(e) {}
@@ -7600,6 +7615,13 @@ function TelasView({ churchId }) {
   const detectScreens = async (deep) => {
     const isDeep = deep === true;
     setPermissionMsg('');
+    // v.174: no celular, a lista de telas é a do computador principal (o celular não detecta telas dele).
+    if (gcPhoneClient.on) {
+      let l = []; try { l = JSON.parse(gcCfgGet('gc_telas_detectadas_' + churchId) || '[]'); } catch (e) {}
+      setScreens(Array.isArray(l) ? l : []);
+      if (isDeep) setDetectNote('📡 Telas lidas do computador principal.');
+      return;
+    }
     if (isDeep) setDetectNote('');
     if (!('getScreenDetails' in window)) {
       setPermissionMsg('Seu navegador não suporta detectar múltiplas telas automaticamente (funciona no Chrome/Edge no computador). Você ainda pode abrir uma janela e arrastar manualmente pra outra tela, ou adicionar a tela manualmente.');
@@ -7642,6 +7664,11 @@ function TelasView({ churchId }) {
   };
   detectRef.current = (deep, fromEvent) => { detectScreens(deep).then(() => { if (fromEvent) setDetectNote('🔌 As telas do computador mudaram — a lista foi atualizada sozinha.'); }); };
 
+  useEffect(() => {
+    const f = () => { setEnabled(loadEnabledScreens(churchId)); setManualScreens(loadManualScreens(churchId)); metaTick(n => n + 1); if (gcPhoneClient.on && detectRef.current) detectRef.current(false); };
+    window.addEventListener('gc-telas-changed', f);
+    return () => window.removeEventListener('gc-telas-changed', f);
+  }, []);
   useEffect(() => { detectScreens(false); return () => { try { if (detailsRef.current) detailsRef.current.onscreenschange = null; } catch (e) {} }; }, []);
 
   // Lista combinada — detectadas automaticamente + as que o Paulo cadastrar na mão — usada em toda
@@ -8849,6 +8876,19 @@ function remoteToday() { const d = new Date(); return d.getFullYear() + '-' + St
 // manda o pedido pro computador principal em vez de abrir a projeção no próprio celular.
 const gcPhoneRemote = { on: false, docId: '', online: false };
 const gcPhoneLast = { key: '', at: 0 };
+// v.174: celular LIGADO a um computador principal NÃO tem configuração própria de telas: lê e grava a do computador principal
+// (o principal publica as chaves gc_telas_* / gc_tela_pref_* e o celular manda as alterações de volta: comando 'cfg_set').
+const gcPhoneClient = { on: false };
+const gcMainCfg = {};
+function gcCfgGet(k) {
+  if (gcPhoneClient.on) { const v = gcMainCfg[k]; return (v === undefined || v === '') ? null : v; }
+  try { return localStorage.getItem(k); } catch (e) { return null; }
+}
+function gcCfgSet(k, v) {
+  if (gcPhoneClient.on) { gcMainCfg[k] = v; gcMainCfg.__at = Date.now(); gcRemoteSend('cfg_set', { k, v }); try { window.dispatchEvent(new Event('gc-telas-changed')); } catch (e) {} return; }
+  try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) {}
+}
+function gcEnsaiosOf(churchId, church) { return (church && Array.isArray(church.rehearsals) && church.rehearsals.length) ? church.rehearsals : loadEnsaios(churchId); }
 function gcRemoteSend(type, arg) {
   if (!gcPhoneRemote.docId) return false;
   fbUpdateChurchFields(gcPhoneRemote.docId, { ['remoteCmds.' + remoteDeviceId()]: { id: Date.now() + '-' + Math.random().toString(36).slice(2,6), type, arg: arg || null, ts: Date.now() } });
@@ -8940,6 +8980,20 @@ function remoteExecute(churchId, church, cmd, onErr) {
     case 'atten': try { window.__gcAtten && window.__gcAtten(!!a.on); } catch(e) {} return '';
     case 'background': return sendBackgroundToAllScreens(churchId, church, true, onErr) || '';
     case 'freeze': setProjectionFrozen(!isProjectionFrozen()); return '';
+    case 'cfg_set': {
+      const k = String(a.k || '');
+      if (!(k.indexOf('gc_telas_') === 0 || k.indexOf('gc_tela_pref_') === 0) || k.indexOf(churchId) < 0) return 'Configuração inválida.';
+      try { if (a.v) localStorage.setItem(k, String(a.v)); else localStorage.removeItem(k); } catch (e) {}
+      try { window.dispatchEvent(new Event('gc-telas-changed')); } catch (e) {}
+      return '';
+    }
+    case 'screen_send': {
+      const allScr = [...loadEnabledScreens(churchId), ...loadManualScreens(churchId)];
+      const scr0 = allScr.find(x => screenSig(x) === String(a.sig || ''));
+      if (!scr0) return 'Tela não encontrada no computador principal.';
+      try { sendToScreenObj(scr0, String(a.kind || ''), a.payload === undefined ? null : a.payload, { ...(a.opts || {}), quiet: true }).then(er => { if (er && onErr) onErr(er); }); } catch (e) { return String((e && e.message) || e); }
+      return '';
+    }
     case 'nav': try { window.dispatchEvent(new CustomEvent('gc-remote-nav', { detail: { tab: String(a.tab || ''), day: String(a.day || ''), tile: String(a.tile || ''), want: String(a.want || '') } })); } catch (e) {} return '';
     case 'reload': setTimeout(() => { try { gcForceUpdateApp(); } catch (e) { window.location.reload(); } }, 400); return '';
     case 'close': Object.keys(gcBlockedQueue).forEach(k => delete gcBlockedQueue[k]); setProjectionFrozen(false); stopAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); return '';
@@ -8998,7 +9052,7 @@ function remoteExecute(churchId, church, cmd, onErr) {
       return remoteProjectMedia(churchId, media, a.key ? String(a.key).slice(0, 60) : 'rapida-' + vid, a.which === 'operador' ? 'operador' : (a.which === 'retorno' ? 'retorno' : 'projetor'), onErr);
     }
     case 'project_ens': {
-      const g = loadEnsaios(churchId).find(x => x.id === a.gid);
+      const g = gcEnsaiosOf(churchId, church).find(x => x.id === a.gid);
       const sg = g && (g.songs || []).find(x => x.id === a.sid);
       const it = sg && ensaioItems(sg).find(x => x.key === (a.item || 'orig'));
       if (!it) return 'Esse item do ensaio não tem vídeo/link.';
@@ -9105,7 +9159,7 @@ function gcArmFullscreenOnFirstClick(churchId) {
 function StartupProjection({ churchId, church }) {
   const isMobile = useIsMobile();
   useEffect(() => {
-    if (isMobile || window.__gcStartupDone) return;
+    if (isMobile || gcPhoneClient.on || window.__gcStartupDone) return;
     let details = null;
     const openStart = (connectedSigs) => {
       const enabled = loadEnabledScreens(churchId);
@@ -9190,7 +9244,19 @@ function RemoteControl({ churchId, church }) {
     return () => { window.removeEventListener('gc-blocked-changed', f); document.removeEventListener('click', flush, true); document.removeEventListener('keydown', flush, true); };
   }, []);
   const blockedCount = isMain ? Object.keys(gcBlockedQueue).length : 0;
-  gcPhoneRemote.on = !!(!isMain && meOk); gcPhoneRemote.docId = docId || ''; gcPhoneRemote.online = online;
+  const phoneClient = !!(isMobile && !isMain && mainInfo);
+  gcPhoneClient.on = phoneClient;
+  window.__gcIsMain = !!isMain;
+  gcPhoneRemote.on = !!(!isMain && (meOk || phoneClient)); gcPhoneRemote.docId = docId || ''; gcPhoneRemote.online = online;
+  // v.174: celular lê a configuração de telas do computador principal.
+  const cfgJson = (st && st.cfg) ? JSON.stringify(st.cfg) : '';
+  useEffect(() => {
+    if (!phoneClient || !st || !st.cfg) return;
+    if (Date.now() - (gcMainCfg.__at || 0) < 4000) return;
+    Object.keys(gcMainCfg).forEach(k => { if (k !== '__at') delete gcMainCfg[k]; });
+    Object.assign(gcMainCfg, st.cfg);
+    try { window.dispatchEvent(new Event('gc-telas-changed')); } catch (e) {}
+  }, [cfgJson, phoneClient]);
   // v.153: no celular, o volume do Projetor acompanha o do computador principal (que é quem manda).
   useEffect(() => {
     if (!gcPhoneRemote.on || !online || !st || typeof st.pvol !== 'number') return;
@@ -9246,9 +9312,11 @@ function RemoteControl({ churchId, church }) {
       let acts = [], actsByDay = {};
       try { const ch0 = churchRef.current; LITURGIA_DAYS.forEach(dd => { if (dd.key === 'sabado') return; const l = (gcDayActivities(churchId, ch0, dd.key) || []).map(a => ({ id: a.id, name: a.name, time: a.time || '', media: !!(a.media && a.media.title), done: !!a.done })); if (l.some(a => a.media)) actsByDay[dd.key] = l; }); } catch (e) {}
       try { acts = (gcDayActivities(churchId, churchRef.current, 'sabado') || []).map(a => ({ id: a.id, name: a.name, time: a.time || '', media: !!(a.media && a.media.title), done: !!a.done })); } catch (e) {}
-      let ens = []; try { ens = loadEnsaios(churchId).map(g => ({ id: g.id, name: g.name, songs: (g.songs || []).map(sg => ({ id: sg.id, name: ensaioSongName(sg), items: ensaioItems(sg).map(it => ({ key: it.key, label: it.label })) })).filter(x => x.items.length) })).filter(g => g.songs.length); } catch (e) {}
+      let ens = []; try { ens = gcEnsaiosOf(churchId, churchRef.current).map(g => ({ id: g.id, name: g.name, songs: (g.songs || []).map(sg => ({ id: sg.id, name: ensaioSongName(sg), items: ensaioItems(sg).map(it => ({ key: it.key, label: it.label })) })).filter(x => x.items.length) })).filter(g => g.songs.length); } catch (e) {}
       let wins = 0; try { wins = Object.keys(projectionWindows).filter(k => projectionWindows[k] && !projectionWindows[k].closed).length; } catch (e) {}
-      const s = { v: APP_VERSION, wins, blocked: !!window.__gcSoundBlocked, pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, actsByDay, ens, err: lastErr.current || '' };
+      let cfg = {};
+      try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && (k.indexOf('gc_telas_') === 0 || k.indexOf('gc_tela_pref_') === 0) && k.indexOf(churchId) >= 0) { const v = localStorage.getItem(k); if (v && v.length < 20000) cfg[k] = v; } } } catch (e) {}
+      const s = { v: APP_VERSION, wins, cfg, blocked: !!window.__gcSoundBlocked, pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, actsByDay, ens, err: lastErr.current || '' };
       const json = JSON.stringify(s);
       if (json === lastJson && Date.now() - lastAt < 35000) return;
       fbUpdateChurchFields(docId, { remoteState: { ...s, ts: Date.now() } }).then(ok => { if (ok) { lastJson = json; lastAt = Date.now(); } });
