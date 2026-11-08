@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.180';
+const APP_VERSION = '2026-11-08.181';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.181',
+    date: '08/11/2026',
+    items: [
+      "Celular: barra fixa embaixo da tela com o progresso de qualquer \u00e1udio/v\u00eddeo que esteja tocando no computador principal (\u23ea10s, 10s\u23e9, play/pause). Tocando em \u25b2 abre o painel completo: barra de tempo, In\u00edcio, Trecho, Repetir, Estrofes/Refr\u00e3o/Ponte e Modo marcar \u2014 tudo controla o computador principal.",
+    ],
+  },
   {
     version: '2026-11-08.180',
     date: '08/11/2026',
@@ -4838,6 +4845,7 @@ function gcInjectSeekPatch(win) {
   } catch (e) {}
 }
 function seekAllScreens(t) { Object.keys(projectionWindows).forEach(sig => { const w = projectionWindows[sig]; try { if (w && !w.closed) w.postMessage({ gcType:'media_seek', t }, '*'); } catch (e) {} }); }
+window.__gcSeekAll = (t) => seekAllScreens(t); window.__gcSeekRel = (dt) => seekRelAllScreens(dt);
 function seekRelAllScreens(dt) { Object.keys(projectionWindows).forEach(sig => { const w = projectionWindows[sig]; try { if (w && !w.closed) w.postMessage({ gcType:'media_seekrel', dt }, '*'); } catch (e) {} }); }
 // v.158: trecho da música (início/fim/loop) marcado na barra de progresso. Vale mesmo com o Console fechado: a cada aviso de
 // tempo da projeção (500 ms) confere se chegou no FIM — repete do INÍCIO (loop) ou faz fade out (igual ao botão Fade out).
@@ -8812,27 +8820,45 @@ function gcParseTime(txt) {
   const parts = t.split(':').map(x => parseFloat(x)); if (parts.some(x => isNaN(x) || x < 0)) return -1;
   return parts.reduce((acc, x) => acc * 60 + x, 0);
 }
+// v.181: no celular a barra é a mesma, mas lê o tempo que o computador principal publica (window.__gcRemotePt) e manda
+// os comandos (ir para, pular, marcar pontos/trecho) para o computador principal.
+function gcCurPt() {
+  if (gcPhoneClient.on) { const r = window.__gcRemotePt; if (!r || !(r.d > 0)) return null; return { id: r.id, d: r.d, t: Math.min(r.d, r.t + (r.playing ? (Date.now() - r.recv) / 1000 : 0)), at: Date.now() }; }
+  return gcProjTime;
+}
 function ProjectionSeekBar({ church }) {
-  const [pt, setPt] = useState(gcProjTime);
+  const phone = !!gcPhoneClient.on;
+  const seekAllScreens = (t) => { if (phone) gcRemoteSend('seek', { t }); else window.__gcSeekAll(t); };
+  const seekRelAllScreens = (dt) => { if (phone) gcRemoteSend('seekrel', { dt }); else window.__gcSeekRel(dt); };
+  const marksAt = useRef(0);
+  const [pt, setPt] = useState(gcCurPt);
   const [, force] = useState(0);
   const [mark, setMark] = useState(false);
   const [drag, setDrag] = useState(null);
   const dragRef = useRef(null);
   const [marks, setMarks] = useState({});
   useEffect(() => {
-    const on = () => setPt(gcProjTime ? { ...gcProjTime } : null);
-    window.addEventListener('gc-proj-time', on);
-    const iv = setInterval(() => force(n => n + 1), 1000);
-    return () => { window.removeEventListener('gc-proj-time', on); clearInterval(iv); };
+    const on = () => { const c = gcCurPt(); setPt(c ? { ...c } : null); };
+    window.addEventListener('gc-proj-time', on); window.addEventListener('gc-remote-pt', on);
+    const iv = setInterval(() => { if (gcPhoneClient.on) on(); else force(n => n + 1); }, 1000);
+    return () => { window.removeEventListener('gc-proj-time', on); window.removeEventListener('gc-remote-pt', on); clearInterval(iv); };
   }, []);
   const fresh = !!(pt && Date.now() - pt.at < 2500 && pt.d > 0);
   const id = fresh ? pt.id : '';
   const docId = church && (church.fbDocId || church.docId);
   const cloud = id && church && church.videoMarks && church.videoMarks[gcMarkId(id)];
   const cloudKey = JSON.stringify(cloud || null);
-  useEffect(() => { if (!id) { setMarks({}); return; } setMarks(gcMarksLoad(id) || cloud || {}); }, [id, cloudKey]);
+  const rpm = phone && window.__gcRemotePt ? window.__gcRemotePt.pm : null;
+  const rpmKey = JSON.stringify(rpm || null);
+  useEffect(() => {
+    if (!id) { setMarks({}); return; }
+    if (phone) { if (Date.now() - marksAt.current < 4500) return; setMarks(rpm || cloud || {}); return; }
+    setMarks(gcMarksLoad(id) || cloud || {});
+  }, [id, cloudKey, rpmKey]);
   const saveMarks = (next) => {
-    setMarks(next); gcMarksSave(id, next);
+    setMarks(next);
+    if (phone) { marksAt.current = Date.now(); gcRemoteSend('marks', { id, marks: next }); return; }
+    gcMarksSave(id, next);
     if (docId) { try { fbUpdateChurchFields(docId, { ['videoMarks.' + gcMarkId(id)]: next }); } catch (e) {} }
   };
   if (!fresh) return html`<div style=${{fontSize:'10.5px', color:'var(--text-dim)', textAlign:'center', padding:'2px 0'}}>⏱️ A barra de progresso e os pontos da música aparecem aqui quando um vídeo estiver tocando na projeção.</div>`;
@@ -8895,6 +8921,53 @@ function ProjectionSeekBar({ church }) {
         ${entries.length > 0 && html`<button type="button" onClick=${() => { if (confirm('Apagar os pontos marcados desta música?')) saveMarks({}); }} style=${{...btnGhost, padding:'5px 9px', fontSize:'11px'}}>🗑 Limpar pontos</button>`}
       </div>
       <div style=${{fontSize:'10.5px', color:'var(--text-dim)'}}>Botão tracejado = ainda não marcado: toque nele quando a música chegar nesse trecho. Depois é só tocar para voltar ali. O trecho atual fica aceso.</div>
+    </div>`;
+}
+
+
+// v.181: barra fixa no celular (embaixo da tela) com o progresso e os controles de qualquer áudio/vídeo que esteja tocando no
+// computador principal. Fechada mostra o essencial; aberta mostra o painel completo (trecho, estrofes, modo marcar).
+function PhoneSeekDock({ church }) {
+  const [rp, setRp] = useState(() => window.__gcRemotePt || null);
+  const [open, setOpen] = useState(false);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const f = () => setRp(window.__gcRemotePt ? { ...window.__gcRemotePt } : null);
+    window.addEventListener('gc-remote-pt', f);
+    const iv = setInterval(() => tick(n => n + 1), 1000);
+    return () => { window.removeEventListener('gc-remote-pt', f); clearInterval(iv); };
+  }, []);
+  const show = !!(gcPhoneClient.on && rp);
+  useEffect(() => {
+    try { document.body.style.paddingBottom = show ? (open ? '60vh' : '78px') : ''; } catch (e) {}
+    return () => { try { document.body.style.paddingBottom = ''; } catch (e) {} };
+  }, [show, open]);
+  if (!show) return '';
+  const cur = Math.min(rp.d, rp.t + (rp.playing ? (Date.now() - rp.recv) / 1000 : 0));
+  const b = { ...btnGhost, padding:'8px 12px', fontSize:'13px', fontWeight:800 };
+  return html`
+    <div data-gc-nomirror="1" style=${{position:'fixed', left:0, right:0, bottom:0, zIndex:8500, background:'rgba(4,10,22,0.97)', borderTop:'1px solid var(--accent-1)', padding:'8px 10px calc(8px + env(safe-area-inset-bottom))', maxHeight:'62vh', overflowY:'auto', boxShadow:'0 -8px 24px rgba(0,0,0,0.5)'}}>
+      ${open ? html`
+        <div style=${{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px'}}>
+          <div style=${{display:'flex', gap:'6px'}}>
+            <button type="button" onClick=${() => gcRemoteSend('play')} style=${b}>▶️</button>
+            <button type="button" onClick=${() => gcRemoteSend('pause')} style=${b}>⏸️</button>
+            <button type="button" onClick=${() => gcRemoteSend('fadeout')} style=${b}>🔉 Fade</button>
+          </div>
+          <button type="button" onClick=${() => setOpen(false)} style=${b}>▼ Fechar</button>
+        </div>
+        <${ProjectionSeekBar} church=${church} />
+      ` : html`
+        <div style=${{display:'flex', alignItems:'center', gap:'6px'}}>
+          <button type="button" onClick=${() => gcRemoteSend('pause')} style=${b}>⏸️</button>
+          <button type="button" onClick=${() => gcRemoteSend('play')} style=${b}>▶️</button>
+          <button type="button" onClick=${() => gcRemoteSend('seekrel', { dt: -10 })} style=${b}>⏪10</button>
+          <div style=${{flex:1, textAlign:'center', fontSize:'13px', fontWeight:800, color:'#fff'}}>${gcFmtTime(cur)} / ${gcFmtTime(rp.d)}</div>
+          <button type="button" onClick=${() => gcRemoteSend('seekrel', { dt: 10 })} style=${b}>10⏩</button>
+          <button type="button" onClick=${() => setOpen(true)} style=${b}>▲</button>
+        </div>
+        <div style=${{height:'4px', borderRadius:'2px', background:'rgba(255,255,255,0.12)', marginTop:'6px', overflow:'hidden'}}><div style=${{width:(rp.d > 0 ? Math.min(100, cur / rp.d * 100) : 0) + '%', height:'100%', background:'#00ff9d'}}></div></div>
+      `}
     </div>`;
 }
 
@@ -9246,6 +9319,17 @@ function remoteExecute(churchId, church, cmd, onErr) {
     case 'atten': try { window.__gcAtten && window.__gcAtten(!!a.on); } catch(e) {} return '';
     case 'background': return sendBackgroundToAllScreens(churchId, church, true, onErr) || '';
     case 'freeze': setProjectionFrozen(!isProjectionFrozen()); return '';
+    case 'seek': seekAllScreens(Math.max(0, Number(a.t) || 0)); return '';
+    case 'seekrel': seekRelAllScreens(Number(a.dt) || 0); return '';
+    case 'marks': {
+      const mid = String(a.id || ''); if (!mid) return 'Sem música tocando.';
+      const mk = (a.marks && typeof a.marks === 'object') ? a.marks : {};
+      gcMarksSave(mid, mk);
+      const dId = church && (church.fbDocId || church.docId);
+      if (dId) { try { fbUpdateChurchFields(dId, { ['videoMarks.' + gcMarkId(mid)]: mk }); } catch (e) {} }
+      try { window.dispatchEvent(new Event('gc-proj-time')); } catch (e) {}
+      return '';
+    }
     case 'cfg_set': {
       const k = String(a.k || '');
       if (!(k.indexOf('gc_telas_') === 0 || k.indexOf('gc_tela_pref_') === 0) || k.indexOf(churchId) < 0) return 'Configuração inválida.';
@@ -9524,6 +9608,12 @@ function RemoteControl({ churchId, church }) {
     Object.assign(gcMainCfg, st.cfg);
     try { window.dispatchEvent(new Event('gc-telas-changed')); } catch (e) {}
   }, [cfgJson, phoneClient]);
+  // v.181: o celular guarda o tempo/pontos que o principal publica, pra barra fixa de progresso.
+  const ptJson = st && st.pt ? JSON.stringify([st.pt, st.pm || null]) : '';
+  useEffect(() => {
+    window.__gcRemotePt = (gcPhoneClient.on && st && st.pt && online) ? { ...st.pt, pm: st.pm || null, playing: !!st.playing, recv: Date.now() } : null;
+    try { window.dispatchEvent(new Event('gc-remote-pt')); } catch (e) {}
+  }, [ptJson, !!(st && st.playing), phoneClient, online]);
   // v.153: no celular, o volume do Projetor acompanha o do computador principal (que é quem manda).
   useEffect(() => {
     if (!gcPhoneRemote.on || !online || !st || typeof st.pvol !== 'number') return;
@@ -9583,7 +9673,9 @@ function RemoteControl({ churchId, church }) {
       let wins = 0; try { wins = Object.keys(projectionWindows).filter(k => k !== GC_AUDIO_KEY && projectionWindows[k] && !projectionWindows[k].closed).length; } catch (e) {}
       let cfg = {};
       try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && (k.indexOf('gc_telas_') === 0 || k.indexOf('gc_tela_pref_') === 0) && k.indexOf(churchId) >= 0) { const v = localStorage.getItem(k); if (v && v.length < 20000) cfg[k] = v; } } } catch (e) {}
-      const s = { v: APP_VERSION, wins, cfg, blocked: !!window.__gcSoundBlocked, pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, actsByDay, ens, err: lastErr.current || '' };
+      let pt = null, pm = null;
+      try { const p = gcProjTime; if (p && p.id && p.d > 0 && Date.now() - p.at < 2500) { pt = { id: p.id, t: Math.round(p.t * 2) / 2, d: Math.round(p.d) }; const ch1 = churchRef.current; pm = gcMarksLoad(p.id) || (ch1 && ch1.videoMarks && ch1.videoMarks[gcMarkId(p.id)]) || null; } } catch (e) {}
+      const s = { v: APP_VERSION, pt, pm, wins, cfg, blocked: !!window.__gcSoundBlocked, pvol: projectionAudio.volume, pmuted: !!projectionAudio.muted, playing: !!projectionAudio.playing, frozen: isProjectionFrozen(), bg: gcBgState.tracks, acts, actsByDay, ens, err: lastErr.current || '' };
       const json = JSON.stringify(s);
       if (json === lastJson && Date.now() - lastAt < 35000) return;
       fbUpdateChurchFields(docId, { remoteState: { ...s, ts: Date.now() } }).then(ok => { if (ok) { lastJson = json; lastAt = Date.now(); } });
@@ -12875,6 +12967,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
       <${GlobalMixerWidget} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />
       <${RemoteControl} churchId=${church.id} church=${church} />
       <${CloudKV} churchId=${church.id} church=${church} onRev=${()=>setKvRev(n => n + 1)} />
+      <${PhoneSeekDock} church=${church} />
       <${QuickSearchFab} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} tab=${tab} />
       <${StartupProjection} churchId=${church.id} church=${church} />
     </div>
