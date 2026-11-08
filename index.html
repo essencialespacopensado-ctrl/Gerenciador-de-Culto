@@ -140,11 +140,19 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.177';
+const APP_VERSION = '2026-11-08.178';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.178',
+    date: '08/11/2026',
+    items: [
+      "Celular \u2192 computador: ao tocar em um botão (ex.: \ud83c\udfbc Ensaios) o celular agora manda também em qual aba está, então o computador abre a aba e o botão mesmo que o aviso anterior tenha se perdido.",
+      "Músicas e Ferramentas: o botão aberto (ex.: Ensaios) não fecha mais sozinho quando uma sincronização em nuvem recarrega a tela.",
+    ],
+  },
   {
     version: '2026-11-08.177',
     date: '08/11/2026',
@@ -6446,8 +6454,15 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
   `;
 }
 
+// v.178: o botão escolhido (ex.: Ensaios) fica guardado fora da tela — se a tela for recarregada por uma sincronização em nuvem, não fecha sozinha.
+const gcSelStore = {};
+function useGcSel(key) {
+  const [v, setV] = useState(gcSelStore[key] === undefined ? null : gcSelStore[key]);
+  const set = (f) => setV(prev => { const n = typeof f === 'function' ? f(prev) : f; gcSelStore[key] = n; return n; });
+  return [v, set];
+}
 function MusicasView({ churchId, church, onUpdateChurch }) {
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useGcSel('musicas:' + churchId);
   // Links públicos (sem login) pra mandar direto pros regentes da equipe de louvor e pra quem vai
   // cantar a mensagem musical — cada um só vê e edita o campo da música dele, nada do resto do app.
   const docId = church && (church.fbDocId || church.docId);
@@ -7266,7 +7281,7 @@ function ManualTool() {
 }
 
 function FerramentasView({ churchName, churchId, churchLogo }) {
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useGcSel('ferramentas:' + churchId);
   const tools = [
     { key:'biblia', label:'📖 Bíblia Sagrada' },
     { key:'cronometro', label:'⏱️ Cronômetro' },
@@ -9046,7 +9061,7 @@ function gcRemoteSend(type, arg) {
 // o computador principal procura o mesmo botão e só clica se estiver diferente (assim nunca "desfaz" por clicar duas vezes).
 function gcMirrorTile(btn, key) {
   if (!gcPhoneRemote.on || !btn) return;
-  setTimeout(() => { try { gcRemoteSend('nav', { tile: String(key), want: btn.getAttribute('data-gc-active') === '1' ? '1' : '0' }); } catch (e) {} }, 90);
+  setTimeout(() => { try { gcRemoteSend('nav', { tab: window.__gcCurTab || '', tile: String(key), want: btn.getAttribute('data-gc-active') === '1' ? '1' : '0' }); } catch (e) {} }, 90);
 }
 function gcApplyTile(key, want, n) {
   const els = Array.prototype.filter.call(document.querySelectorAll('[data-gc-tile]'), x => x.getAttribute('data-gc-tile') === key);
@@ -12630,6 +12645,7 @@ function ConfiguracoesView({ church, onUpdateChurch }) {
 function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   const [tab, setTab] = useState('liturgia');
   const [kvRev, setKvRev] = useState(0);
+  window.__gcCurTab = tab;
   // v.124: ao trocar de aba principal volta pro topo — senão o cabeçalho fixo cobria o começo da aba nova.
   useEffect(() => { try { window.scrollTo(0, 0); } catch (e) {} }, [tab]);
   // v.170: o app do celular espelha no computador principal a troca de aba (e o principal obedece).
