@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.172';
+const APP_VERSION = '2026-11-08.173';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.173',
+    date: '08/11/2026',
+    items: [
+      "Celular: as sub-abas dentro de cada aba (Gestão, Ferramentas, Músicas, Config. etc.) também são abertas no computador principal quando você toca no celular.",
+    ],
+  },
   {
     version: '2026-11-08.172',
     date: '08/11/2026',
@@ -3564,7 +3571,7 @@ function TabTile({ text, active, onClick, idx, delay }) {
   const [icon, label] = splitIconLabel(text);
   const [c1, c2] = TILE_PALETTE[idx % TILE_PALETTE.length];
   return html`
-    <button type="button" onClick=${onClick} class="nav-tile fade-up" style=${{
+    <button type="button" data-gc-tile=${text} data-gc-active=${active ? '1' : '0'} onClick=${(e)=>{ const b = e.currentTarget; onClick(e); gcMirrorTile(b, text); }} class="nav-tile fade-up" style=${{
       '--tc1':c1, '--tc2':c2, animationDelay:(delay*0.03)+'s',
       display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'4px',
       minWidth:'82px', maxWidth:'128px', flex:'1 1 82px', padding:'11px 8px', borderRadius:'16px',
@@ -8847,6 +8854,17 @@ function gcRemoteSend(type, arg) {
   fbUpdateChurchFields(gcPhoneRemote.docId, { ['remoteCmds.' + remoteDeviceId()]: { id: Date.now() + '-' + Math.random().toString(36).slice(2,6), type, arg: arg || null, ts: Date.now() } });
   return true;
 }
+// v.173: sub-abas (grupos de botões dentro de cada aba): o celular manda qual botão foi tocado e como ficou (ativo ou não);
+// o computador principal procura o mesmo botão e só clica se estiver diferente (assim nunca "desfaz" por clicar duas vezes).
+function gcMirrorTile(btn, key) {
+  if (!gcPhoneRemote.on || !btn) return;
+  setTimeout(() => { try { gcRemoteSend('nav', { tile: String(key), want: btn.getAttribute('data-gc-active') === '1' ? '1' : '0' }); } catch (e) {} }, 90);
+}
+function gcApplyTile(key, want, n) {
+  const els = Array.prototype.filter.call(document.querySelectorAll('[data-gc-tile]'), x => x.getAttribute('data-gc-tile') === key);
+  if (!els.length) { if ((n || 0) < 15) setTimeout(() => gcApplyTile(key, want, (n || 0) + 1), 200); return; }
+  if (els[0].getAttribute('data-gc-active') !== want) els[0].click();
+}
 function remotePhoneOn(ph) { return !!(ph && ph.status === 'registered' && (ph.enabled === true || (ph.enabled === undefined && ph.enabledDay))); }
 function remoteDeviceId() {
   try {
@@ -8922,7 +8940,7 @@ function remoteExecute(churchId, church, cmd, onErr) {
     case 'atten': try { window.__gcAtten && window.__gcAtten(!!a.on); } catch(e) {} return '';
     case 'background': return sendBackgroundToAllScreens(churchId, church, true, onErr) || '';
     case 'freeze': setProjectionFrozen(!isProjectionFrozen()); return '';
-    case 'nav': try { window.dispatchEvent(new CustomEvent('gc-remote-nav', { detail: { tab: String(a.tab || ''), day: String(a.day || '') } })); } catch (e) {} return '';
+    case 'nav': try { window.dispatchEvent(new CustomEvent('gc-remote-nav', { detail: { tab: String(a.tab || ''), day: String(a.day || ''), tile: String(a.tile || ''), want: String(a.want || '') } })); } catch (e) {} return '';
     case 'reload': setTimeout(() => { try { gcForceUpdateApp(); } catch (e) { window.location.reload(); } }, 400); return '';
     case 'close': Object.keys(gcBlockedQueue).forEach(k => delete gcBlockedQueue[k]); setProjectionFrozen(false); stopAllProjectionScreens(); projectionAudio.playing = false; projectionAudioNotify(); return '';
     case 'screen': {
@@ -11665,8 +11683,8 @@ function GestaoView({ churchId, churchName, church, onUpdateChurch }) {
   const [subView, setSubView] = useState('membros');
   const SubTabs = () => html`
     <div style=${{display:'flex', gap:'6px'}}>
-      <button onClick=${()=>setSubView('membros')} style=${{padding:'6px 13px', borderRadius:'999px', fontSize:'11px', fontWeight:700, border:'1px solid var(--border-soft)', background: subView==='membros' ? 'var(--glass-bg)' : 'transparent', color: subView==='membros' ? 'var(--text-hi)' : 'var(--text-dim)'}}>👥 Membros</button>
-      <button onClick=${()=>setSubView('escala')} style=${{padding:'6px 13px', borderRadius:'999px', fontSize:'11px', fontWeight:700, border:'1px solid var(--border-soft)', background: subView==='escala' ? 'var(--glass-bg)' : 'transparent', color: subView==='escala' ? 'var(--text-hi)' : 'var(--text-dim)'}}>📅 Escala Automática</button>
+      <button data-gc-tile="subview:membros" data-gc-active=${subView==='membros' ? '1' : '0'} onClick=${(e)=>{ const b = e.currentTarget; setSubView('membros'); gcMirrorTile(b, 'subview:membros'); }} style=${{padding:'6px 13px', borderRadius:'999px', fontSize:'11px', fontWeight:700, border:'1px solid var(--border-soft)', background: subView==='membros' ? 'var(--glass-bg)' : 'transparent', color: subView==='membros' ? 'var(--text-hi)' : 'var(--text-dim)'}}>👥 Membros</button>
+      <button data-gc-tile="subview:escala" data-gc-active=${subView==='escala' ? '1' : '0'} onClick=${(e)=>{ const b = e.currentTarget; setSubView('escala'); gcMirrorTile(b, 'subview:escala'); }} style=${{padding:'6px 13px', borderRadius:'999px', fontSize:'11px', fontWeight:700, border:'1px solid var(--border-soft)', background: subView==='escala' ? 'var(--glass-bg)' : 'transparent', color: subView==='escala' ? 'var(--text-hi)' : 'var(--text-dim)'}}>📅 Escala Automática</button>
     </div>
   `;
 
@@ -12403,7 +12421,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
     if (gcPhoneRemote.on) gcRemoteSend('nav', { tab });
   }, [tab]);
   useEffect(() => {
-    const f = (e) => { const t = e && e.detail && e.detail.tab; if (e && e.detail && e.detail.day) window.__gcPendingDay = e.detail.day; if (t) setTab(t); };
+    const f = (e) => { const t = e && e.detail && e.detail.tab; if (e && e.detail && e.detail.day) window.__gcPendingDay = e.detail.day; if (t) setTab(t); if (e && e.detail && e.detail.tile) gcApplyTile(e.detail.tile, e.detail.want, 0); };
     window.addEventListener('gc-remote-nav', f);
     return () => window.removeEventListener('gc-remote-nav', f);
   }, []);
