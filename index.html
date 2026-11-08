@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.176';
+const APP_VERSION = '2026-11-08.177';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-08.177',
+    date: '08/11/2026',
+    items: [
+      "Ensaios: tirado o ▶ pequeno antigo (que abria o vídeo no navegador) ao lado do ✕. Ficam o ▶ Play (só áudio) e o 🔊 Projetor.",
+    ],
+  },
   {
     version: '2026-11-08.176',
     date: '08/11/2026',
@@ -6369,8 +6376,7 @@ function EnsaiosTool({ churchId, church, onUpdateChurch }) {
   const itemRow = (label, searchKey, media, onChange, itemKey, onDelete, labelNode, remoteArg) => html`<div style=${{padding:'6px 8px', borderRadius:'8px', background:'rgba(2,6,23,0.3)', border:'1px solid var(--border-soft)', display:'grid', gridTemplateColumns:'minmax(0,1fr)', minWidth:0, gap:'4px'}}>
     <div style=${{display:'flex', alignItems:'center', gap:'6px', minWidth:0}}>
       ${labelNode || html`<span style=${{fontWeight:800, fontSize:'11px', flex:1, minWidth:0}}>${label}</span>`}
-      ${media && media.title && html`<button type="button" onClick=${()=>openMediaInNewTab(media)} style=${mini}>▶</button>
-        <button type="button" title="Trocar vídeo" onClick=${()=>onChange(null)} style=${{...mini, color:'var(--text-dim)'}}>✕</button>`}
+      ${media && media.title && html`<button type="button" title="Trocar vídeo" onClick=${()=>onChange(null)} style=${{...mini, color:'var(--text-dim)'}}>✕</button>`}
       ${onDelete && html`<button type="button" onClick=${onDelete} style=${{...mini, color:'var(--danger)'}}>🗑️</button>`}
     </div>
     ${media && media.title && html`<div style=${{fontSize:'10.5px', color:'var(--text-mid)', lineHeight:1.25, wordBreak:'break-word'}}>${media.title}</div>`}
