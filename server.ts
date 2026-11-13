@@ -818,7 +818,7 @@ async function radioLookup(videoId: string, UA: string, hintD = 0) {
   try {
     // 1) pode ser incorporado? (oEmbed responde 401/404 quando o dono bloqueou o vídeo fora do YouTube)
     let embOk = true;
-    try { const o = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`, { headers: { "User-Agent": UA } }); embOk = o.ok; } catch { embOk = true; }
+    try { const o = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`, { headers: { "User-Agent": UA } }); embOk = !(o.status === 401 || o.status === 404); } catch { embOk = true; }
     if (embOk) {
       // 2) duração: página do vídeo; se não vier, API interna do player; por último, a duração que a busca já mostrou.
       let d = 0;
