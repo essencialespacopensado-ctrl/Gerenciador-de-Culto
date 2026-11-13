@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-13.187';
+const APP_VERSION = '2026-11-13.188';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-13.188',
+    date: '13/11/2026',
+    items: [
+      "\ud83d\udcfb R\u00e1dio 24h no topo do app: uma barra fina (fora do grupo M\u00fasicas) que j\u00e1 carrega tocando, com bot\u00e3o de pausar/tocar e barra de volume. Se o navegador bloquear o som autom\u00e1tico, ela toca muda e liga o som no primeiro toque na tela.",
+    ],
+  },
   {
     version: '2026-11-13.187',
     date: '13/11/2026',
@@ -6606,6 +6613,93 @@ function gcLoadYtApi() {
     const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s);
   });
   return gcYtApiP;
+}
+// v.188: barra da Rádio 24h no topo do app (fora do grupo Músicas) — toca sozinha, com play/pause e volume.
+function RadioTopBar({ church }) {
+  const radio = church && church.radio;
+  const has = !!(radio && radio.tracks && radio.tracks.length);
+  const live = !!(radio && radio.live);
+  const [paused, setPaused] = useState(false);
+  const [needTap, setNeedTap] = useState(false);
+  const [vol, setVol] = useState(() => { try { const s = localStorage.getItem('gc_radio_vol'); const v = Number(s); return (s !== null && v >= 0 && v <= 100) ? v : 80; } catch (e) { return 80; } });
+  const [, tick] = useState(0);
+  const radioRef = useRef(null); radioRef.current = radio;
+  const pausedRef = useRef(false); pausedRef.current = paused;
+  const volRef = useRef(80); volRef.current = vol;
+  const offRef = useRef(0);
+  const playerRef = useRef(null);
+  const curRef = useRef('');
+  const timerRef = useRef(null);
+  const tapRef = useRef(false);
+  const nowMs = () => Date.now() + offRef.current;
+  useEffect(() => { fetch('/api/health', { cache: 'no-store' }).then(r => { const d = r.headers.get('date'); if (d) offRef.current = Date.parse(d) - Date.now(); }).catch(() => {}); }, []);
+  const sync = () => {
+    clearTimeout(timerRef.current);
+    const r = radioRef.current, p = playerRef.current;
+    if (!p || !p.loadVideoById) return;
+    if (!r || !r.tracks || !r.tracks.length || r.live || pausedRef.current) { try { p.pauseVideo && p.pauseVideo(); } catch (e) {} curRef.current = ''; return; }
+    const pos = gcRadioPos(r, nowMs());
+    if (!pos) return;
+    try {
+      if (curRef.current !== pos.tr.v) { p.loadVideoById({ videoId: pos.tr.v, startSeconds: Math.floor(pos.off) }); curRef.current = pos.tr.v; }
+      else { const ct = p.getCurrentTime ? p.getCurrentTime() : pos.off; if (Math.abs(ct - pos.off) > 4) p.seekTo(pos.off, true); const st = p.getPlayerState ? p.getPlayerState() : 1; if (st !== 1 && st !== 3) p.playVideo(); }
+    } catch (e) {}
+    timerRef.current = setTimeout(sync, Math.min(20000, Math.max(800, pos.left * 1000 + 300)));
+  };
+  const armTap = () => {
+    if (tapRef.current) return; tapRef.current = true; setNeedTap(true);
+    const go = () => {
+      ['pointerdown', 'touchstart', 'keydown'].forEach(ev => document.removeEventListener(ev, go, true));
+      tapRef.current = false; setNeedTap(false);
+      try { const p = playerRef.current; p.unMute(); p.setVolume(volRef.current); } catch (e) {}
+    };
+    ['pointerdown', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, go, true));
+  };
+  useEffect(() => {
+    if (!has || playerRef.current) return;
+    let dead = false;
+    gcLoadYtApi().then(YT => {
+      if (dead || playerRef.current || !document.getElementById('gc-radio-top-player')) return;
+      playerRef.current = new YT.Player('gc-radio-top-player', {
+        width: '200', height: '200', playerVars: { playsinline: 1, controls: 0, rel: 0, disablekb: 1, autoplay: 1 },
+        events: {
+          onReady: (e) => {
+            try { e.target.setVolume(volRef.current); } catch (er) {}
+            sync();
+            // Navegador pode bloquear som automático: se não começou em 2,5 s, toca mudo e liga o som no 1º toque.
+            setTimeout(() => {
+              try {
+                const r = radioRef.current;
+                if (!r || r.live || pausedRef.current) return;
+                const st = e.target.getPlayerState();
+                if (st !== 1) { e.target.mute(); e.target.playVideo(); armTap(); }
+              } catch (er) {}
+            }, 2500);
+          },
+          onStateChange: (e) => { if (e.data === 0) { curRef.current = ''; sync(); } },
+          onError: () => { curRef.current = ''; setTimeout(sync, 1500); },
+        },
+      });
+    });
+    return () => { dead = true; };
+  }, [has]);
+  useEffect(() => { sync(); }, [radio && radio.epoch, radio && radio.live, radio && radio.tracks && radio.tracks.length, paused]);
+  useEffect(() => { try { playerRef.current && playerRef.current.setVolume && playerRef.current.setVolume(vol); localStorage.setItem('gc_radio_vol', String(vol)); } catch (e) {} }, [vol]);
+  useEffect(() => { if (!has) return; const iv = setInterval(() => tick(n => n + 1), 5000); return () => clearInterval(iv); }, [has]);
+  useEffect(() => () => { clearTimeout(timerRef.current); }, []);
+  const pos = (has && !live && !paused) ? gcRadioPos(radio, nowMs()) : null;
+  const title = live ? 'Culto ao vivo — rádio parada' : paused ? 'Rádio pausada' : (pos ? pos.tr.t : '');
+  return html`
+    <div data-gc-nomirror="1">
+      <div style=${{position:'fixed', left:'-300px', top:0, width:'200px', height:'200px', opacity:0.01, pointerEvents:'none'}}><div id="gc-radio-top-player"></div></div>
+      ${has && html`
+        <div style=${{display:'flex', alignItems:'center', gap:'8px', padding:'4px 10px', minHeight:'36px', background:'rgba(0,0,0,0.35)', borderBottom:'1px solid rgba(255,255,255,0.08)', fontSize:'12px'}}>
+          <span style=${{flexShrink:0}}>${live ? '🔴' : '📻'}</span>
+          <span style=${{flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:700}}>${needTap && !paused && !live ? '🔊 Toque na tela para ligar o som' : title}</span>
+          ${!live && html`<button type="button" aria-label=${paused ? 'Tocar rádio' : 'Pausar rádio'} onClick=${() => setPaused(p => !p)} style=${{flexShrink:0, width:'34px', height:'28px', borderRadius:'8px', border:'1px solid rgba(255,255,255,0.2)', background:'rgba(255,255,255,0.1)', color:'inherit', fontSize:'14px', padding:0, cursor:'pointer'}}>${paused ? '▶' : '⏸'}</button>`}
+          <input type="range" min="0" max="100" value=${vol} aria-label="Volume da rádio" onInput=${e => setVol(Number(e.target.value))} style=${{width:'72px', flexShrink:0}} />
+        </div>`}
+    </div>`;
 }
 // Página pública da rádio (?radio=1&id=<docId>) — sem login.
 function RadioPublicPage({ docId }) {
@@ -13324,6 +13418,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
   const chatUnread = useMemo(() => gcChatUnread(church.id, chatDoc && chatDoc.chat), [chatDoc && chatDoc.chat, tab]);
   return html`
     <div>
+      <${RadioTopBar} church=${church} />
       <${ChurchHeader} church=${church} tab=${tab} setTab=${setTab} onLogout=${onLogout} badges=${{ chat: chatUnread }} />
       ${tab === 'presenca' ? html`<${PresencaView} key=${"presenca" + kvRev} churchId=${church.id} church=${church} onUpdateChurch=${onUpdateChurch} />` : ''}
       ${tab === 'liturgia' ? html`<${LiturgiaView} key="lit" churchId=${church.id} churchName=${church.name} church=${church} onUpdateChurch=${onUpdateChurch} mensagemItems=${mensagemItems} mensagemCurrent=${mensagemCurrent} setMensagemCurrent=${setMensagemCurrent} />` : ''}
