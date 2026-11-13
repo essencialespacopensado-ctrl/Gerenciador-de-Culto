@@ -846,7 +846,7 @@ app.post("/api/radio-build", async (req, res) => {
     const items: { q: string; title: string }[] = Array.isArray(req.body && req.body.items) ? req.body.items.slice(0, 30) : [];
     const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
     const parseDur = (s: string) => { const p = String(s || "").split(":").map(x => parseInt(x, 10)); if (p.some(isNaN)) return 0; return p.reduce((a, x) => a * 60 + x, 0); };
-    const BAD = /cifra|aula|tutorial|reaction|karaok|instrumental|playback|cover|violao|piano|letra|lyrics?\b|legendado|\bmix\b|hora de|horas de|completo|full album|album completo/;
+    const BAD = /cifra|aula|tutorial|reaction|karaok|instrumental|playback|menos um|minus one|sem voz|cover|violao|piano|letra|lyrics?\b|legendado|\bmix\b|hora de|horas de|completo|full album|album completo/;
     const out: any[] = [];
     let next = 0;
     const work = async () => {
