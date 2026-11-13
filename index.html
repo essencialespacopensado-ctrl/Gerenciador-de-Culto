@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-13.188';
+const APP_VERSION = '2026-11-13.189';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-13.189',
+    date: '13/11/2026',
+    items: [
+      "\ud83d\udcfb R\u00e1dio 24h: enquanto a r\u00e1dio n\u00e3o foi montada, a barra do topo aparece avisando e leva direto para montar.",
+    ],
+  },
   {
     version: '2026-11-13.188',
     date: '13/11/2026',
@@ -6699,6 +6706,10 @@ function RadioTopBar({ church }) {
           ${!live && html`<button type="button" aria-label=${paused ? 'Tocar rádio' : 'Pausar rádio'} onClick=${() => setPaused(p => !p)} style=${{flexShrink:0, width:'34px', height:'28px', borderRadius:'8px', border:'1px solid rgba(255,255,255,0.2)', background:'rgba(255,255,255,0.1)', color:'inherit', fontSize:'14px', padding:0, cursor:'pointer'}}>${paused ? '▶' : '⏸'}</button>`}
           <input type="range" min="0" max="100" value=${vol} aria-label="Volume da rádio" onInput=${e => setVol(Number(e.target.value))} style=${{width:'72px', flexShrink:0}} />
         </div>`}
+      ${!has && html`
+        <button type="button" onClick=${() => { try { const key = 'musicas:' + church.id, val = 'radio'; gcSelStore[key] = val; window.dispatchEvent(new CustomEvent('gc-remote-nav', { detail: { tab: 'musicas' } })); setTimeout(() => { try { window.dispatchEvent(new CustomEvent('gc-sel-set', { detail: { key, val } })); } catch (e) {} }, 60); } catch (e) {} }} style=${{display:'flex', alignItems:'center', gap:'8px', width:'100%', padding:'4px 10px', minHeight:'36px', background:'rgba(0,0,0,0.35)', border:'none', borderBottom:'1px solid rgba(255,255,255,0.08)', color:'inherit', fontSize:'12px', fontWeight:700, textAlign:'left', cursor:'pointer', borderRadius:0}}>
+          <span>📻</span><span style=${{flex:1}}>Rádio 24h — ainda não montada. Toque aqui para montar.</span><span>›</span>
+        </button>`}
     </div>`;
 }
 // Página pública da rádio (?radio=1&id=<docId>) — sem login.
