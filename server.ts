@@ -811,21 +811,32 @@ app.get("/api/latest-from-playlist", async (req, res) => {
 // está tocando agora; todo mundo ouve a mesma coisa ao mesmo tempo). Só entram vídeos que abrem (OK) e podem ser incorporados.
 const radioDurCache = new Map<string, { d: number; ok: boolean; ts: number }>();
 const RADIO_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-async function radioLookup(videoId: string, UA: string) {
+async function radioLookup(videoId: string, UA: string, hintD = 0) {
   const c = radioDurCache.get(videoId);
   if (c && Date.now() - c.ts < 12 * 3600 * 1000) return c;
   let r = { d: 0, ok: false, ts: Date.now() };
   try {
-    const w = await fetch(`https://www.youtube.com/watch?v=${videoId}`, { headers: { "User-Agent": UA, "Accept-Language": "pt-BR,pt;q=0.9", "Cookie": "CONSENT=YES+1; SOCS=CAI" } });
-    if (w.ok) {
-      const html = await w.text();
-      const st = /"playabilityStatus":\{"status":"([A-Z_]+)"/.exec(html);
-      const ln = /"lengthSeconds":"(\d+)"/.exec(html);
-      const emb = !/"playableInEmbed":false/.test(html);
-      if (ln && (!st || st[1] === "OK") && emb) r = { d: parseInt(ln[1], 10), ok: parseInt(ln[1], 10) >= 20, ts: Date.now() };
+    // 1) pode ser incorporado? (oEmbed responde 401/404 quando o dono bloqueou o vídeo fora do YouTube)
+    let embOk = true;
+    try { const o = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`, { headers: { "User-Agent": UA } }); embOk = o.ok; } catch { embOk = true; }
+    if (embOk) {
+      // 2) duração: página do vídeo; se não vier, API interna do player; por último, a duração que a busca já mostrou.
+      let d = 0;
+      try {
+        const w = await fetch(`https://www.youtube.com/watch?v=${videoId}`, { headers: { "User-Agent": UA, "Accept-Language": "pt-BR,pt;q=0.9", "Cookie": "CONSENT=YES+1; SOCS=CAI" } });
+        if (w.ok) { const html = await w.text(); const ln = /"lengthSeconds":"(\d+)"/.exec(html); if (ln) d = parseInt(ln[1], 10); }
+      } catch { /* tenta o próximo */ }
+      if (!d) {
+        try {
+          const pr = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", { method: "POST", headers: { "User-Agent": UA, "Content-Type": "application/json", "Origin": "https://www.youtube.com" }, body: JSON.stringify({ context: { client: { clientName: "ANDROID", clientVersion: "19.09.37", androidSdkVersion: 30, hl: "pt", gl: "BR" } }, videoId }) });
+          if (pr.ok) { const j: any = await pr.json(); const ls = j && j.videoDetails && parseInt(j.videoDetails.lengthSeconds, 10); if (ls) d = ls; }
+        } catch { /* tenta o próximo */ }
+      }
+      if (!d && hintD) d = hintD;
+      if (d >= 20) r = { d, ok: true, ts: Date.now() };
     }
   } catch { /* sem rede: fica de fora */ }
-  radioDurCache.set(videoId, r);
+  if (r.ok) radioDurCache.set(videoId, r);
   return r;
 }
 // Rádio 24h — "Montar sozinho": recebe uma lista de músicas (nome + álbum), acha o vídeo de cada uma no YouTube e devolve com a duração.
@@ -850,7 +861,7 @@ app.post("/api/radio-build", async (req, res) => {
             const d = parseDur(v.duration);
             if (d < 90 || d > 600 || BAD.test(tn)) continue;
             if (words.length && !words.every(w => tn.includes(w))) continue;
-            const r = await radioLookup(v.videoId, RADIO_UA);
+            const r = await radioLookup(v.videoId, RADIO_UA, d);
             if (!r.ok) continue;
             pick = { i, videoId: v.videoId, d: r.d, ytTitle: v.title }; break;
           }
