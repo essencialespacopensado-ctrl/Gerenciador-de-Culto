@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-13.192';
+const APP_VERSION = '2026-11-13.193';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-13.193',
+    date: '13/11/2026',
+    items: [
+      "\ud83d\udcfb R\u00e1dio 24h: s\u00f3 uma aba por aparelho toca a r\u00e1dio (acaba o \u00e1udio em dobro), m\u00fasica bloqueada sai da lista para TODOS os aparelhos ao mesmo tempo, e o sincronismo ficou mais apertado (celular, PC e link p\u00fablico tocam a mesma m\u00fasica).",
+    ],
+  },
   {
     version: '2026-11-13.192',
     date: '13/11/2026',
@@ -6679,13 +6686,13 @@ async function gcRadioAutoBuild(church, getRadio) {
     const got = [], used = new Set();
     (Array.isArray(base.tracks) ? base.tracks : []).forEach(x => { got.push(x); used.add(x.v); });
     const done = new Set(got.map(x => x.t)); items = items.filter(x => !done.has(x.title + ' — ' + x.album));
-    const saveP = (building, extra) => fbUpdateChurchFields(docId, { radio: { ...(getRadio() || {}), playlist: 'auto', tracks: got.slice(), epoch: epoch0, updated: Date.now(), building, ...(extra || {}) } });
+    const saveP = (building, extra) => { const cur = getRadio() || {}; const bad = new Set(cur.bad || []); return fbUpdateChurchFields(docId, { radio: { ...cur, playlist: 'auto', tracks: got.filter(x => !bad.has(x.v)), epoch: cur.epoch || epoch0, updated: Date.now(), building, ...(extra || {}) } }); };
     for (let s = 0; s < items.length; s += 24) {
       const batch = items.slice(s, s + 24);
       try {
         const r = await fetch('/api/radio-build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: batch.map(x => ({ q: x.q, title: x.title })) }) });
         const j = await r.json();
-        (j.found || []).forEach(f => { const it = batch[f.i]; if (it && !used.has(f.videoId)) { used.add(f.videoId); got.push({ v: f.videoId, t: it.title + ' — ' + it.album, d: f.d }); } });
+        (j.found || []).forEach(f => { const it = batch[f.i]; if (it && !used.has(f.videoId) && !((getRadio() || {}).bad || []).includes(f.videoId)) { used.add(f.videoId); got.push({ v: f.videoId, t: it.title + ' — ' + it.album, d: f.d }); } });
       } catch (e) {}
       const b = s / 24;
       if ((b === 0 && got.length >= 5) || b % 3 === 2) { try { await saveP(true); } catch (e) {} }
@@ -6693,6 +6700,23 @@ async function gcRadioAutoBuild(church, getRadio) {
     if (got.length < 5) { try { await saveP(false, { failedAt: Date.now(), tracks: [] }); } catch (e) {} return; }
     await saveP(false, { failedAt: null });
   } catch (e) {} finally { gcRadioBuildBusy = false; }
+}
+// v.193: música bloqueada = tirada da lista PARA TODOS (transação), mantendo o relógio — assim todo mundo continua tocando a mesma coisa.
+async function gcRadioDropTrack(docId, vid, now) {
+  try {
+    const H = window.__fb && window.__fb.helpers;
+    if (!docId || !vid || !H || !H.runTransaction) return;
+    await H.runTransaction(window.__fb.db, async (tx) => {
+      const ref = H.doc(window.__fb.db, 'igrejas', docId);
+      const snap = await tx.get(ref); const d = snap.exists() ? snap.data() : null; const r = d && d.radio;
+      const tr = (r && r.tracks) || [];
+      const idx = tr.findIndex(x => x.v === vid);
+      if (idx < 0 || tr.length < 6) return;
+      const startIdx = tr.slice(0, idx).reduce((a, x) => a + (x.d || 0), 0);
+      const nt = tr.filter(x => x.v !== vid);
+      tx.update(ref, { radio: { ...r, tracks: nt, bad: [...(r.bad || []), vid].slice(-300), epoch: now - startIdx, updated: Date.now() } });
+    });
+  } catch (e) {}
 }
 // v.192: detecta se OUTRA música/vídeo do app está tocando (prévia, mixer, console/projeção) — a rádio espera, pra não tocar duas ao mesmo tempo.
 function gcOtherAudioActive() {
@@ -6731,13 +6755,25 @@ function RadioTopBar({ church }) {
   const badRef = useRef(new Set());
   const otherRef = useRef(false);
   const [other, setOther] = useState(false);
+  const myId = useRef(Math.random().toString(36).slice(2));
+  const leaderRef = useRef(null);
+  const [leader, setLeader] = useState(true);
+  // Só UMA aba/janela por aparelho toca a rádio (senão toca em dobro). Quem tocar por último "manda"; a outra espera.
+  const checkLeader = () => {
+    try {
+      const raw = localStorage.getItem('gc_radio_leader'); const o = raw ? JSON.parse(raw) : null; const now = Date.now();
+      if (!o || o.id === myId.current || now - o.t > 15000) { localStorage.setItem('gc_radio_leader', JSON.stringify({ id: myId.current, t: now })); return true; }
+      return false;
+    } catch (e) { return true; }
+  };
   const nowMs = () => Date.now() + offRef.current;
   useEffect(() => { fetch('/api/health', { cache: 'no-store' }).then(r => { const d = r.headers.get('date'); if (d) offRef.current = Date.parse(d) - Date.now(); }).catch(() => {}); }, []);
   const sync = () => {
     clearTimeout(timerRef.current);
     const r = radioRef.current, p = playerRef.current;
     if (!p || !p.loadVideoById) return;
-    if (!r || !r.tracks || !r.tracks.length || r.live || pausedRef.current || otherRef.current) { try { p.pauseVideo && p.pauseVideo(); } catch (e) {} curRef.current = ''; return; }
+    if (leaderRef.current === null) leaderRef.current = checkLeader();
+    if (!r || !r.tracks || !r.tracks.length || r.live || pausedRef.current || otherRef.current || !leaderRef.current) { try { p.pauseVideo && p.pauseVideo(); } catch (e) {} curRef.current = ''; return; }
     const pos = gcRadioPos(r, nowMs());
     if (!pos) return;
     try {
@@ -6754,7 +6790,7 @@ function RadioTopBar({ church }) {
         const st = p.getPlayerState ? p.getPlayerState() : 1;
         const ct = p.getCurrentTime ? p.getCurrentTime() : pos.off;
         // só corrige o ponto da música se estiver MUITO fora (e não enquanto carrega) — evita "pulos" no celular
-        if (st !== 3 && Math.abs(ct - pos.off) > 12) p.seekTo(pos.off, true);
+        if (st === 1 && Math.abs(ct - pos.off) > 5) p.seekTo(pos.off, true);
         if (st !== 1 && st !== 3) p.playVideo();
       }
     } catch (e) {}
@@ -6784,14 +6820,14 @@ function RadioTopBar({ church }) {
             setTimeout(() => {
               try {
                 const r = radioRef.current;
-                if (!r || r.live || pausedRef.current || otherRef.current) return;
+                if (!r || r.live || pausedRef.current || otherRef.current || !leaderRef.current) return;
                 const st = e.target.getPlayerState();
                 if (st !== 1 && st !== 3) { e.target.mute(); e.target.playVideo(); armTap(); }
               } catch (er) {}
             }, 7000);
           },
           onStateChange: (e) => { if (e.data === 0) { curRef.current = ''; sync(); } },
-          onError: () => { if (curRef.current) badRef.current.add(curRef.current); curRef.current = ''; setTimeout(sync, 600); },
+          onError: () => { const v = curRef.current; if (v) { badRef.current.add(v); gcRadioDropTrack(church && (church.fbDocId || church.docId), v, nowMs()); } curRef.current = ''; setTimeout(sync, 600); },
         },
       });
     });
@@ -6805,6 +6841,8 @@ function RadioTopBar({ church }) {
     if (!has) return;
     let calm = 0;
     const iv = setInterval(() => {
+      const L = checkLeader();
+      if (L !== leaderRef.current) { leaderRef.current = L; setLeader(L); sync(); }
       const o = gcOtherAudioActive();
       if (o) calm = 0; else calm++;
       const next = o ? true : (otherRef.current && calm < 3 ? true : false);
@@ -6824,9 +6862,9 @@ function RadioTopBar({ church }) {
     }, 6000);
     return () => clearTimeout(t);
   }, [church && church.id]);
-  useEffect(() => () => { clearTimeout(timerRef.current); }, []);
+  useEffect(() => { const bye = () => { try { const o = JSON.parse(localStorage.getItem('gc_radio_leader') || 'null'); if (o && o.id === myId.current) localStorage.removeItem('gc_radio_leader'); } catch (e) {} }; window.addEventListener('pagehide', bye); return () => { clearTimeout(timerRef.current); window.removeEventListener('pagehide', bye); bye(); }; }, []);
   const pos = (has && !live && !paused) ? gcRadioPos(radio, nowMs()) : null;
-  const title = live ? 'Culto ao vivo — rádio parada' : paused ? 'Rádio pausada' : other ? 'Rádio em espera — outra música tocando' : (pos ? pos.tr.t : '');
+  const title = live ? 'Culto ao vivo — rádio parada' : paused ? 'Rádio pausada' : !leader ? 'Rádio tocando em outra aba deste aparelho' : other ? 'Rádio em espera — outra música tocando' : (pos ? pos.tr.t : '');
   return html`
     <div data-gc-nomirror="1">
       <div data-gc-radio-own="1" style=${{position:'fixed', left:'-300px', top:0, width:'200px', height:'200px', opacity:0.01, pointerEvents:'none'}}><div id="gc-radio-top-player"></div></div>
