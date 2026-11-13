@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-13.189';
+const APP_VERSION = '2026-11-13.190';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-13.190',
+    date: '13/11/2026',
+    items: [
+      "\ud83d\udcfb R\u00e1dio 24h autom\u00e1tica: ao abrir o app, se a r\u00e1dio ainda n\u00e3o existe, ela monta sozinha a lista com as m\u00fasicas de todos os \u00e1lbuns e come\u00e7a a tocar assim que as primeiras m\u00fasicas s\u00e3o achadas. Ningu\u00e9m precisa apertar nada (s\u00f3 um toque na tela para liberar o som, se o navegador exigir).",
+    ],
+  },
   {
     version: '2026-11-13.189',
     date: '13/11/2026',
@@ -6621,6 +6628,58 @@ function gcLoadYtApi() {
   });
   return gcYtApiP;
 }
+// v.190: montagem automática da rádio (sem ninguém apertar nada). Um "claim" por transação evita dois aparelhos montando juntos.
+let gcRadioBuildBusy = false;
+async function gcRadioAutoBuild(church, getRadio) {
+  const docId = church && (church.fbDocId || church.docId);
+  if (!docId || gcRadioBuildBusy || !fbIsReady()) return;
+  gcRadioBuildBusy = true;
+  try {
+    let ok = true, base = getRadio() || {}, epoch0 = base.epoch || Date.now();
+    const H = window.__fb.helpers;
+    if (H.runTransaction) {
+      await H.runTransaction(window.__fb.db, async (tx) => {
+        ok = false;
+        const ref = H.doc(window.__fb.db, 'igrejas', docId);
+        const snap = await tx.get(ref); const d = snap.exists() ? snap.data() : null; const r = d && d.radio;
+        if (!d) return;
+        const tr = (r && r.tracks) || [];
+        if (r && r.playlist && r.playlist !== 'auto') return;
+        if (tr.length && !r.building) return;
+        if (r && r.building && Date.now() - (r.updated || 0) < 4 * 60000) return;
+        if (r && r.failedAt && Date.now() - r.failedAt < 3600000) return;
+        ok = true; base = r || {}; epoch0 = base.epoch || Date.now();
+        tx.update(ref, { radio: { ...base, playlist: 'auto', tracks: tr, epoch: epoch0, updated: Date.now(), building: true } });
+      });
+    }
+    if (!ok) return;
+    const seen = new Set(); let items = [];
+    gcAlbumCatalog(church.id).forEach(a => a.tracks.forEach(tr => {
+      const ti = String(tr.title || '').trim();
+      if (!ti || / \/ |medley|abertura|intro/i.test(ti)) return;
+      const k = hinoNormalize(ti); if (seen.has(k)) return; seen.add(k);
+      const alb = a.title.replace(/ — .*$/, '');
+      items.push({ q: ti + ' ' + alb + (a.category === 'Cantores' ? ' ' + (a.title.split(' — ')[1] || '') : '') + ' adventista', title: ti, album: alb });
+    }));
+    for (let i = items.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [items[i], items[k]] = [items[k], items[i]]; }
+    const got = [], used = new Set();
+    (Array.isArray(base.tracks) ? base.tracks : []).forEach(x => { got.push(x); used.add(x.v); });
+    const done = new Set(got.map(x => x.t)); items = items.filter(x => !done.has(x.title + ' — ' + x.album));
+    const saveP = (building, extra) => fbUpdateChurchFields(docId, { radio: { ...(getRadio() || {}), playlist: 'auto', tracks: got.slice(), epoch: epoch0, updated: Date.now(), building, ...(extra || {}) } });
+    for (let s = 0; s < items.length; s += 24) {
+      const batch = items.slice(s, s + 24);
+      try {
+        const r = await fetch('/api/radio-build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: batch.map(x => ({ q: x.q, title: x.title })) }) });
+        const j = await r.json();
+        (j.found || []).forEach(f => { const it = batch[f.i]; if (it && !used.has(f.videoId)) { used.add(f.videoId); got.push({ v: f.videoId, t: it.title + ' — ' + it.album, d: f.d }); } });
+      } catch (e) {}
+      const b = s / 24;
+      if ((b === 0 && got.length >= 5) || b % 3 === 2) { try { await saveP(true); } catch (e) {} }
+    }
+    if (got.length < 5) { try { await saveP(false, { failedAt: Date.now(), tracks: [] }); } catch (e) {} return; }
+    await saveP(false, { failedAt: null });
+  } catch (e) {} finally { gcRadioBuildBusy = false; }
+}
 // v.188: barra da Rádio 24h no topo do app (fora do grupo Músicas) — toca sozinha, com play/pause e volume.
 function RadioTopBar({ church }) {
   const radio = church && church.radio;
@@ -6693,6 +6752,18 @@ function RadioTopBar({ church }) {
   useEffect(() => { sync(); }, [radio && radio.epoch, radio && radio.live, radio && radio.tracks && radio.tracks.length, paused]);
   useEffect(() => { try { playerRef.current && playerRef.current.setVolume && playerRef.current.setVolume(vol); localStorage.setItem('gc_radio_vol', String(vol)); } catch (e) {} }, [vol]);
   useEffect(() => { if (!has) return; const iv = setInterval(() => tick(n => n + 1), 5000); return () => clearInterval(iv); }, [has]);
+  // Monta sozinha: se a rádio não existe (ou a montagem ficou parada), começa a montar sem ninguém apertar nada.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const r = radioRef.current;
+      const hasT = !!(r && r.tracks && r.tracks.length);
+      const stale = !!(r && r.building && Date.now() - (r.updated || 0) > 4 * 60000);
+      if (hasT && !stale) return;
+      if (r && r.playlist && r.playlist !== 'auto') return;
+      gcRadioAutoBuild(church, () => radioRef.current);
+    }, 6000);
+    return () => clearTimeout(t);
+  }, [church && church.id]);
   useEffect(() => () => { clearTimeout(timerRef.current); }, []);
   const pos = (has && !live && !paused) ? gcRadioPos(radio, nowMs()) : null;
   const title = live ? 'Culto ao vivo — rádio parada' : paused ? 'Rádio pausada' : (pos ? pos.tr.t : '');
@@ -6708,7 +6779,7 @@ function RadioTopBar({ church }) {
         </div>`}
       ${!has && html`
         <button type="button" onClick=${() => { try { const key = 'musicas:' + church.id, val = 'radio'; gcSelStore[key] = val; window.dispatchEvent(new CustomEvent('gc-remote-nav', { detail: { tab: 'musicas' } })); setTimeout(() => { try { window.dispatchEvent(new CustomEvent('gc-sel-set', { detail: { key, val } })); } catch (e) {} }, 60); } catch (e) {} }} style=${{display:'flex', alignItems:'center', gap:'8px', width:'100%', padding:'4px 10px', minHeight:'36px', background:'rgba(0,0,0,0.35)', border:'none', borderBottom:'1px solid rgba(255,255,255,0.08)', color:'inherit', fontSize:'12px', fontWeight:700, textAlign:'left', cursor:'pointer', borderRadius:0}}>
-          <span>📻</span><span style=${{flex:1}}>Rádio 24h — ainda não montada. Toque aqui para montar.</span><span>›</span>
+          <span>📻</span><span style=${{flex:1}}>${radio && radio.building ? 'Rádio 24h — montando a lista de músicas… já já começa a tocar.' : 'Rádio 24h — preparando… (toque aqui para abrir)'}</span><span>›</span>
         </button>`}
     </div>`;
 }
