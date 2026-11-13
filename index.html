@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-13.191';
+const APP_VERSION = '2026-11-13.192';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-13.192',
+    date: '13/11/2026',
+    items: [
+      "\ud83d\udcfb R\u00e1dio 24h: n\u00e3o toca mais junto com outra m\u00fasica do app \u2014 quando uma pr\u00e9via, o mixer ou o console come\u00e7am a tocar, a r\u00e1dio espera e volta sozinha quando acabar.",
+    ],
+  },
   {
     version: '2026-11-13.191',
     date: '13/11/2026',
@@ -6687,6 +6694,23 @@ async function gcRadioAutoBuild(church, getRadio) {
     await saveP(false, { failedAt: null });
   } catch (e) {} finally { gcRadioBuildBusy = false; }
 }
+// v.192: detecta se OUTRA música/vídeo do app está tocando (prévia, mixer, console/projeção) — a rádio espera, pra não tocar duas ao mesmo tempo.
+function gcOtherAudioActive() {
+  try {
+    const own = (el) => el && (el.id === 'gc-radio-top-player' || (el.closest && el.closest('[data-gc-radio-own]')));
+    if ([...document.querySelectorAll('iframe')].some(f => !own(f) && f.id !== 'gc-audio-host' && /youtube/.test(f.getAttribute('src') || ''))) return true;
+    if ([...document.querySelectorAll('audio,video')].some(m => !m.paused && !m.muted && m.volume > 0 && !m.ended)) return true;
+    for (const k in projectionWindows) {
+      const w = projectionWindows[k];
+      try {
+        if (!w || w.closed) continue;
+        if (w.ytPlayer && w.ytPlayer.getPlayerState && w.ytPlayer.getPlayerState() === 1 && !(w.ytPlayer.isMuted && w.ytPlayer.isMuted())) return true;
+        if (w.localVideoEl && !w.localVideoEl.paused && !w.localVideoEl.muted) return true;
+      } catch (e) {}
+    }
+  } catch (e) {}
+  return false;
+}
 // v.188: barra da Rádio 24h no topo do app (fora do grupo Músicas) — toca sozinha, com play/pause e volume.
 function RadioTopBar({ church }) {
   const radio = church && church.radio;
@@ -6705,13 +6729,15 @@ function RadioTopBar({ church }) {
   const timerRef = useRef(null);
   const tapRef = useRef(false);
   const badRef = useRef(new Set());
+  const otherRef = useRef(false);
+  const [other, setOther] = useState(false);
   const nowMs = () => Date.now() + offRef.current;
   useEffect(() => { fetch('/api/health', { cache: 'no-store' }).then(r => { const d = r.headers.get('date'); if (d) offRef.current = Date.parse(d) - Date.now(); }).catch(() => {}); }, []);
   const sync = () => {
     clearTimeout(timerRef.current);
     const r = radioRef.current, p = playerRef.current;
     if (!p || !p.loadVideoById) return;
-    if (!r || !r.tracks || !r.tracks.length || r.live || pausedRef.current) { try { p.pauseVideo && p.pauseVideo(); } catch (e) {} curRef.current = ''; return; }
+    if (!r || !r.tracks || !r.tracks.length || r.live || pausedRef.current || otherRef.current) { try { p.pauseVideo && p.pauseVideo(); } catch (e) {} curRef.current = ''; return; }
     const pos = gcRadioPos(r, nowMs());
     if (!pos) return;
     try {
@@ -6758,7 +6784,7 @@ function RadioTopBar({ church }) {
             setTimeout(() => {
               try {
                 const r = radioRef.current;
-                if (!r || r.live || pausedRef.current) return;
+                if (!r || r.live || pausedRef.current || otherRef.current) return;
                 const st = e.target.getPlayerState();
                 if (st !== 1 && st !== 3) { e.target.mute(); e.target.playVideo(); armTap(); }
               } catch (er) {}
@@ -6774,6 +6800,18 @@ function RadioTopBar({ church }) {
   useEffect(() => { sync(); }, [radio && radio.epoch, radio && radio.live, radio && radio.tracks && radio.tracks.length, paused]);
   useEffect(() => { try { playerRef.current && playerRef.current.setVolume && playerRef.current.setVolume(vol); localStorage.setItem('gc_radio_vol', String(vol)); } catch (e) {} }, [vol]);
   useEffect(() => { if (!has) return; const iv = setInterval(() => tick(n => n + 1), 5000); return () => clearInterval(iv); }, [has]);
+  // Se outra música do app começar, a rádio espera; quando acabar, ela volta sozinha no ponto certo.
+  useEffect(() => {
+    if (!has) return;
+    let calm = 0;
+    const iv = setInterval(() => {
+      const o = gcOtherAudioActive();
+      if (o) calm = 0; else calm++;
+      const next = o ? true : (otherRef.current && calm < 3 ? true : false);
+      if (next !== otherRef.current) { otherRef.current = next; setOther(next); sync(); }
+    }, 1500);
+    return () => clearInterval(iv);
+  }, [has]);
   // Monta sozinha: se a rádio não existe (ou a montagem ficou parada), começa a montar sem ninguém apertar nada.
   useEffect(() => {
     const t = setTimeout(() => {
@@ -6788,10 +6826,10 @@ function RadioTopBar({ church }) {
   }, [church && church.id]);
   useEffect(() => () => { clearTimeout(timerRef.current); }, []);
   const pos = (has && !live && !paused) ? gcRadioPos(radio, nowMs()) : null;
-  const title = live ? 'Culto ao vivo — rádio parada' : paused ? 'Rádio pausada' : (pos ? pos.tr.t : '');
+  const title = live ? 'Culto ao vivo — rádio parada' : paused ? 'Rádio pausada' : other ? 'Rádio em espera — outra música tocando' : (pos ? pos.tr.t : '');
   return html`
     <div data-gc-nomirror="1">
-      <div style=${{position:'fixed', left:'-300px', top:0, width:'200px', height:'200px', opacity:0.01, pointerEvents:'none'}}><div id="gc-radio-top-player"></div></div>
+      <div data-gc-radio-own="1" style=${{position:'fixed', left:'-300px', top:0, width:'200px', height:'200px', opacity:0.01, pointerEvents:'none'}}><div id="gc-radio-top-player"></div></div>
       ${has && html`
         <div style=${{display:'flex', alignItems:'center', gap:'8px', padding:'4px 10px', minHeight:'36px', background:'rgba(0,0,0,0.35)', borderBottom:'1px solid rgba(255,255,255,0.08)', fontSize:'12px'}}>
           <span style=${{flexShrink:0}}>${live ? '🔴' : '📻'}</span>
