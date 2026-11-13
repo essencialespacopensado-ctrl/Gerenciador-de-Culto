@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-08.185';
+const APP_VERSION = '2026-11-13.186';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-13.186',
+    date: '13/11/2026',
+    items: [
+      "\ud83d\udcfb R\u00e1dio 24h: na aba M\u00fasicas h\u00e1 o bot\u00e3o \ud83d\udcfb R\u00e1dio 24h \u2014 voc\u00ea cola o link de uma playlist do YouTube, o app monta a programa\u00e7\u00e3o em ordem aleat\u00f3ria e gera um link p\u00fablico (sem login) onde todos ouvem a mesma m\u00fasica ao mesmo tempo. A r\u00e1dio fica tocando o tempo todo e s\u00f3 para quando voc\u00ea aperta \ud83d\udd34 Culto ao vivo (e volta quando voc\u00ea aperta de novo).",
+    ],
+  },
   {
     version: '2026-11-08.185',
     date: '08/11/2026',
@@ -6539,6 +6546,7 @@ function MusicasView({ churchId, church, onUpdateChurch }) {
     { key:'mensagens', label:'🎙️ Mensagens Musicais' },
     { key:'ensaios', label:'🎼 Ensaios' },
     { key:'catalogo', label:'📚 Catálogo de Músicas' },
+    { key:'radio', label:'📻 Rádio 24h' },
     { key:'col:Coletâneas', label:'💿 Coletâneas' },
     { key:'col:CDs Oficiais/Ano', label:'📀 CDs Oficiais/Ano' },
     { key:'col:Adoradores', label:'🙌 Adoradores' },
@@ -6557,9 +6565,222 @@ function MusicasView({ churchId, church, onUpdateChurch }) {
       ${selected === 'mensagens' && html`<${MensagensMusicaisTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} shareUrl=${mensagemShareUrl} />`}
       ${selected === 'ensaios' && html`<${EnsaiosTool} churchId=${churchId} church=${church} onUpdateChurch=${onUpdateChurch} />`}
       ${selected === 'catalogo' && html`<${CatalogoMusicasTool} churchId=${churchId} />`}
+      ${selected === 'radio' && html`<${RadioTool} church=${church} onUpdateChurch=${onUpdateChurch} />`}
       ${selected && selected.startsWith('col:') && html`<${ColetaneasCategoryGrid} churchId=${churchId} category=${selected.slice(4)} />`}
     </div>
   `;
+}
+
+
+// ===== v.186 — RÁDIO 24h =====
+// A rádio é "de verdade": a música que está tocando agora é calculada pelo RELÓGIO (hora de início + duração de cada vídeo da playlist),
+// então todo mundo que abrir o link ouve a mesma música, no mesmo ponto. A programação (lista + hora de início + "culto ao vivo")
+// fica no documento da igreja (campo radio), por isso vale em qualquer aparelho e em tempo real.
+function gcRadioPos(radio, now) {
+  const tr = (radio && radio.tracks) || [];
+  if (!tr.length) return null;
+  const total = tr.reduce((s, x) => s + (x.d || 0), 0);
+  if (!(total > 0)) return null;
+  let t = ((((now - (radio.epoch || 0)) / 1000) % total) + total) % total;
+  for (let i = 0; i < tr.length; i++) {
+    if (t < tr[i].d) return { i, off: t, tr: tr[i], left: tr[i].d - t, total };
+    t -= tr[i].d;
+  }
+  return null;
+}
+function gcRadioFmt(s) { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); }
+let gcYtApiP = null;
+function gcLoadYtApi() {
+  if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
+  if (gcYtApiP) return gcYtApiP;
+  gcYtApiP = new Promise(res => {
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { try { prev && prev(); } catch (e) {} res(window.YT); };
+    const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s);
+  });
+  return gcYtApiP;
+}
+// Página pública da rádio (?radio=1&id=<docId>) — sem login.
+function RadioPublicPage({ docId }) {
+  const [radio, setRadio] = useState(null);
+  const [name, setName] = useState('');
+  const [status, setStatus] = useState('loading');
+  const [started, setStarted] = useState(false);
+  const [, tick] = useState(0);
+  const [vol, setVol] = useState(80);
+  const radioRef = useRef(null); radioRef.current = radio;
+  const offRef = useRef(0);
+  const playerRef = useRef(null);
+  const curRef = useRef({ v: '', at: 0 });
+  const timerRef = useRef(null);
+  const startedRef = useRef(false); startedRef.current = started;
+  useEffect(() => { applyTheme(loadTheme()); }, []);
+  useEffect(() => {
+    fetch('/api/health', { cache: 'no-store' }).then(r => { const d = r.headers.get('date'); if (d) offRef.current = Date.parse(d) - Date.now(); }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    let stopped = false;
+    const unsub = fbListenWhenReady(() => {
+      try {
+        const { doc, onSnapshot } = window.__fb.helpers;
+        return onSnapshot(doc(window.__fb.db, 'igrejas', docId), snap => {
+          if (stopped) return;
+          if (!snap.exists()) { setStatus('notfound'); return; }
+          const data = snap.data() || {};
+          setName(data.name || 'Igreja'); setRadio(data.radio || null); setStatus('ok');
+        }, () => { if (!stopped) setStatus('notfound'); });
+      } catch (e) { setStatus('notfound'); return () => {}; }
+    });
+    return () => { stopped = true; try { unsub(); } catch (e) {} };
+  }, [docId]);
+  const nowMs = () => Date.now() + offRef.current;
+  const sync = () => {
+    clearTimeout(timerRef.current);
+    const r = radioRef.current, p = playerRef.current;
+    if (!p || !startedRef.current || !r || r.live) { try { p && p.pauseVideo && p.pauseVideo(); } catch (e) {} return; }
+    const pos = gcRadioPos(r, nowMs());
+    if (!pos) return;
+    try {
+      if (curRef.current.v !== pos.tr.v) { p.loadVideoById({ videoId: pos.tr.v, startSeconds: Math.floor(pos.off) }); curRef.current = { v: pos.tr.v, at: Date.now() }; }
+      else { const ct = p.getCurrentTime ? p.getCurrentTime() : pos.off; if (Math.abs(ct - pos.off) > 4) p.seekTo(pos.off, true); if (p.getPlayerState && p.getPlayerState() !== 1 && p.getPlayerState() !== 3) p.playVideo(); }
+    } catch (e) {}
+    timerRef.current = setTimeout(sync, Math.min(20000, Math.max(800, pos.left * 1000 + 300)));
+  };
+  useEffect(() => {
+    if (!started) return;
+    let dead = false;
+    gcLoadYtApi().then(YT => {
+      if (dead || playerRef.current) { sync(); return; }
+      playerRef.current = new YT.Player('gc-radio-player', {
+        width: '100%', height: '100%', playerVars: { playsinline: 1, controls: 0, rel: 0, modestbranding: 1, disablekb: 1 },
+        events: {
+          onReady: (e) => { try { e.target.setVolume(vol); } catch (er) {} sync(); },
+          onStateChange: (e) => { if (e.data === 0) { curRef.current = { v: '', at: 0 }; sync(); } },
+          onError: () => { try { curRef.current = { v: curRef.current.v, at: Date.now() }; } catch (er) {} },
+        },
+      });
+    });
+    return () => { dead = true; };
+  }, [started]);
+  useEffect(() => { sync(); }, [radio && radio.epoch, radio && radio.live, radio && radio.tracks && radio.tracks.length, started]);
+  useEffect(() => { const iv = setInterval(() => tick(n => n + 1), 1000); return () => { clearInterval(iv); clearTimeout(timerRef.current); }; }, []);
+  useEffect(() => { try { playerRef.current && playerRef.current.setVolume && playerRef.current.setVolume(vol); } catch (e) {} }, [vol]);
+  if (status === 'loading') return html`<div style=${{minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--text-dim)', fontSize:'13px'}}>Carregando...</div>`;
+  if (status === 'notfound') return html`<div style=${{minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--text-dim)', fontSize:'13px', textAlign:'center', padding:'24px'}}>Link inválido ou não encontrado.</div>`;
+  const has = !!(radio && radio.tracks && radio.tracks.length);
+  const live = !!(radio && radio.live);
+  const pos = (has && !live) ? gcRadioPos(radio, nowMs()) : null;
+  return html`
+    <div style=${{minHeight:'100vh', maxWidth:'560px', margin:'0 auto', padding:'28px 16px 60px', display:'grid', gap:'14px', alignContent:'start'}}>
+      <div style=${{textAlign:'center'}}>
+        <div style=${{fontSize:'30px'}}>📻</div>
+        <div style=${{fontSize:'11px', color:'var(--text-dim)', fontWeight:700, letterSpacing:'0.5px', textTransform:'uppercase'}}>${name}</div>
+        <div style=${{fontSize:'18px', fontWeight:800, marginTop:'4px'}}>Rádio ${name}</div>
+      </div>
+      ${!has && html`<div class="glass" style=${{borderRadius:'16px', padding:'18px', textAlign:'center', fontSize:'13px', color:'var(--text-dim)'}}>A rádio ainda não foi configurada.</div>`}
+      ${has && live && html`<div class="glass" style=${{borderRadius:'16px', padding:'22px 18px', textAlign:'center'}}><div style=${{fontSize:'22px', marginBottom:'6px'}}>🔴</div><div style=${{fontWeight:800, fontSize:'16px'}}>Culto ao vivo</div><div style=${{fontSize:'12.5px', color:'var(--text-dim)', marginTop:'6px', lineHeight:1.5}}>A rádio está parada durante o culto e volta sozinha assim que ele terminar. Pode deixar esta página aberta.</div></div>`}
+      ${has && !live && !started && html`<button type="button" onClick=${() => setStarted(true)} style=${{...btnPrimary, width:'100%', padding:'18px', fontSize:'17px', fontWeight:800}}>▶ Ouvir a rádio</button>`}
+      ${has && !live && started && pos && html`
+        <div class="glass" style=${{borderRadius:'16px', padding:'14px', display:'grid', gap:'8px'}}>
+          <div style=${{fontSize:'11px', color:'var(--highlight)', fontWeight:800, letterSpacing:'0.5px'}}>🎵 TOCANDO AGORA</div>
+          <div style=${{fontWeight:800, fontSize:'15px', lineHeight:1.3}}>${pos.tr.t}</div>
+          <div style=${{height:'4px', borderRadius:'2px', background:'rgba(255,255,255,0.12)', overflow:'hidden'}}><div style=${{width:Math.min(100, pos.off / pos.tr.d * 100) + '%', height:'100%', background:'#00ff9d'}}></div></div>
+          <div style=${{fontSize:'11px', color:'var(--text-dim)'}}>${gcRadioFmt(pos.off)} / ${gcRadioFmt(pos.tr.d)}</div>
+          <label style=${{display:'flex', alignItems:'center', gap:'8px', fontSize:'12px'}}>🔈<input type="range" min="0" max="100" value=${vol} onInput=${e => setVol(Number(e.target.value))} style=${{flex:1}} /></label>
+        </div>`}
+      <div style=${{position:'relative', width:'100%', aspectRatio:'16 / 9', borderRadius:'14px', overflow:'hidden', background:'#000', display: (has && started && !live) ? 'block' : 'none'}}><div id="gc-radio-player"></div></div>
+    </div>`;
+}
+// Painel do operador (aba Músicas → 📻 Rádio 24h).
+function RadioTool({ church, onUpdateChurch }) {
+  const docId = church && (church.fbDocId || church.docId);
+  const radio = (church && church.radio) || {};
+  const [pl, setPl] = useState(radio.playlist ? 'https://www.youtube.com/playlist?list=' + radio.playlist : '');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [, tick] = useState(0);
+  useEffect(() => { const iv = setInterval(() => tick(n => n + 1), 1000); return () => clearInterval(iv); }, []);
+  const link = docId ? window.location.origin + window.location.pathname + '?radio=1&id=' + docId : '';
+  const plId = (s) => { s = String(s || '').trim(); const m = /[?&]list=([\w-]+)/.exec(s); if (m) return m[1]; return /^[\w-]{10,60}$/.test(s) ? s : ''; };
+  const save = async (patch) => { const nr = { ...radio, ...patch }; const ok = await fbUpdateChurchFields(docId, { radio: nr }); if (!ok) setMsg('Não consegui salvar na nuvem agora. Confira a internet e tente de novo.'); else if (onUpdateChurch) onUpdateChurch({ radio: nr }); return ok; };
+  const load = async () => {
+    const id = plId(pl);
+    if (!id) { setMsg('Cole o link da playlist do YouTube (o que tem "list=…") ou só o código dela.'); return; }
+    if (!docId) { setMsg('A rádio precisa da igreja salva na nuvem (entre com o login da igreja).'); return; }
+    setBusy(true); setMsg('Lendo a playlist e a duração de cada música… pode levar até 1 minuto.');
+    try {
+      const r = await fetch('/api/radio-playlist?id=' + encodeURIComponent(id));
+      const j = await r.json();
+      if (!r.ok || !j.tracks) { setMsg(j.error || 'Não consegui ler a playlist.'); setBusy(false); return; }
+      const a = j.tracks.map(x => ({ v: x.videoId, t: x.title, d: x.d }));
+      for (let i = a.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [a[i], a[k]] = [a[k], a[i]]; }
+      const ok = await save({ playlist: id, tracks: a, epoch: Date.now(), updated: Date.now(), live: !!radio.live });
+      if (ok) setMsg('✅ Rádio montada com ' + a.length + ' música(s)' + (j.total > a.length ? ' (' + (j.total - a.length) + ' ficaram de fora: privadas, bloqueadas ou sem duração)' : '') + '.');
+    } catch (e) { setMsg('Não consegui ler a playlist agora. Tente de novo.'); }
+    setBusy(false);
+  };
+  // "Montar sozinho": pega as músicas dos álbuns cadastrados, acha cada uma no YouTube (servidor) e guarda a programação.
+  const auto = async () => {
+    if (!docId) { setMsg('A rádio precisa da igreja salva na nuvem (entre com o login da igreja).'); return; }
+    setBusy(true); setMsg('Preparando a lista de músicas…');
+    const seen = new Set(); let items = [];
+    gcAlbumCatalog(church.id).forEach(a => a.tracks.forEach(tr => {
+      const ti = String(tr.title || '').trim();
+      if (!ti || / \/ |medley|abertura|intro/i.test(ti)) return;
+      const k = hinoNormalize(ti); if (seen.has(k)) return; seen.add(k);
+      const alb = a.title.replace(/ — .*$/, '');
+      items.push({ q: ti + ' ' + alb + (a.category === 'Cantores' ? ' ' + (a.title.split(' — ')[1] || '') : '') + ' adventista', title: ti, album: alb });
+    }));
+    for (let i = items.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [items[i], items[k]] = [items[k], items[i]]; }
+    items = items.slice(0, 250);
+    if (!items.length) { setMsg('Não há músicas cadastradas nos álbuns ainda.'); setBusy(false); return; }
+    const got = [], used = new Set();
+    for (let s = 0; s < items.length; s += 24) {
+      const batch = items.slice(s, s + 24);
+      try {
+        const r = await fetch('/api/radio-build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: batch.map(x => ({ q: x.q, title: x.title })) }) });
+        const j = await r.json();
+        (j.found || []).forEach(f => { const it = batch[f.i]; if (it && !used.has(f.videoId)) { used.add(f.videoId); got.push({ v: f.videoId, t: it.title + ' — ' + it.album, d: f.d }); } });
+      } catch (e) {}
+      setMsg('Procurando no YouTube… ' + Math.min(s + 24, items.length) + ' de ' + items.length + ' músicas · ' + got.length + ' achadas');
+    }
+    if (got.length < 5) { setMsg('Achei poucas músicas (' + got.length + '). Tente de novo daqui a pouco ou use uma playlist do YouTube.'); setBusy(false); return; }
+    for (let i = got.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [got[i], got[k]] = [got[k], got[i]]; }
+    const ok = await save({ playlist: 'auto', tracks: got, epoch: Date.now(), updated: Date.now(), live: !!radio.live });
+    if (ok) setMsg('✅ Rádio montada sozinha com ' + got.length + ' músicas dos álbuns (' + gcRadioFmt(got.reduce((a, x) => a + x.d, 0)) + ' de programação).');
+    setBusy(false);
+  };
+  const has = !!(radio.tracks && radio.tracks.length);
+  const total = has ? radio.tracks.reduce((s, x) => s + x.d, 0) : 0;
+  const pos = has ? gcRadioPos(radio, Date.now()) : null;
+  return html`
+    <div data-gc-nomirror="1" class="glass fade-up" style=${{borderRadius:'16px', padding:'14px', display:'grid', gap:'12px'}}>
+      <div style=${{fontWeight:800, fontSize:'14px'}}>📻 Rádio 24h</div>
+      <div style=${{fontSize:'12px', color:'var(--text-dim)', lineHeight:1.5}}>Toca uma playlist do YouTube o tempo todo, em ordem aleatória, e todo mundo que abrir o link ouve a mesma música ao mesmo tempo. Só para quando você apertar <b>🔴 Culto ao vivo</b>.</div>
+      <div style=${{display:'grid', gap:'6px'}}>
+        <button type="button" disabled=${busy} onClick=${auto} style=${{...btnPrimary, width:'auto', padding:'12px 16px', fontSize:'14px', fontWeight:800, opacity: busy ? 0.6 : 1}}>${busy ? 'Montando…' : '🤖 Montar sozinho com as músicas dos álbuns'}</button>
+        <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>ou use uma playlist sua do YouTube:</div>
+        <input value=${pl} onChange=${e => setPl(e.target.value)} placeholder="Link da playlist do YouTube" aria-label="Link da playlist do YouTube" style=${{...inputStyle, fontSize:'13px'}} />
+        <button type="button" disabled=${busy} onClick=${load} style=${{...btnPrimary, width:'auto', padding:'10px 16px', fontSize:'13px', opacity: busy ? 0.6 : 1}}>${busy ? 'Lendo…' : has ? '🔄 Atualizar playlist e embaralhar' : '📥 Montar a rádio'}</button>
+        ${msg && html`<div style=${{fontSize:'12px', lineHeight:1.5}}>${msg}</div>`}
+      </div>
+      ${has && html`
+        <div style=${{display:'grid', gap:'8px', padding:'10px', borderRadius:'12px', background:'rgba(255,255,255,0.04)'}}>
+          <div style=${{fontSize:'12px'}}>${radio.tracks.length} músicas · ${gcRadioFmt(total)} de programação, repetindo sem parar</div>
+          ${pos && !radio.live && html`<div style=${{fontSize:'12px'}}>🎵 Tocando agora: <b>${pos.tr.t}</b> (${gcRadioFmt(pos.off)} / ${gcRadioFmt(pos.tr.d)})</div>`}
+          <button type="button" onClick=${() => save({ live: !radio.live })} style=${{...(radio.live ? btnPrimary : btnGhost), width:'auto', padding:'12px 16px', fontSize:'14px', fontWeight:800, borderColor: radio.live ? undefined : '#ef4444', color: radio.live ? undefined : '#fca5a5'}}>${radio.live ? '▶ Culto terminou — voltar a rádio' : '🔴 Culto ao vivo — parar a rádio'}</button>
+          <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>${radio.live ? 'A rádio está PARADA. Os ouvintes veem "Culto ao vivo".' : 'A rádio está NO AR.'}</div>
+        </div>`}
+      ${link && html`
+        <div style=${{display:'grid', gap:'6px'}}>
+          <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Link público da rádio (sem login):</div>
+          <input readOnly value=${link} onFocus=${e => e.target.select()} style=${{...inputStyle, fontSize:'12px'}} />
+          <div style=${{display:'flex', gap:'6px', flexWrap:'wrap'}}>
+            <button type="button" onClick=${() => { try { navigator.clipboard.writeText(link); setMsg('Link copiado.'); } catch (e) { setMsg('Copie o link acima.'); } }} style=${{...btnGhost, padding:'7px 12px', fontSize:'12px'}}>📋 Copiar link</button>
+            <a href=${link} target="_blank" rel="noopener" style=${{...btnGhost, padding:'7px 12px', fontSize:'12px', textDecoration:'none'}}>👁️ Abrir a rádio</a>
+          </div>
+        </div>`}
+    </div>`;
 }
 
 // Lê "?cad=louvor&id=<docId>" ou "?cad=mensagem&id=<docId>" da URL — os links públicos de cadastro
@@ -6572,6 +6793,7 @@ function getPublicCadastroParams() {
     const cad = params.get('cad');
     const id = params.get('id');
     const dia = params.get('dia');
+    if (params.get('radio') === '1' && id) return { tipo: 'radio', docId: id, dia: null };
     if ((cad === 'louvor' || cad === 'mensagem') && id) return { tipo: cad, docId: id, dia: LITURGIA_DAYS.some(d => d.key === dia) ? dia : null };
   } catch(e) {}
   return null;
@@ -13066,6 +13288,7 @@ function ChurchDashboard({ church, onLogout, onUpdateChurch }) {
           // Trilhas Fixas (25/09): vídeos/músicas fixos cadastrados em Gestão, usados pelas
           // atividades da Liturgia marcadas como "acontece todo sábado" (📅).
           if (data.fixedTracks) { patch.fixedTracks = data.fixedTracks; saveFixedTracks(church.id, data.fixedTracks); }
+          if (data.radio) patch.radio = data.radio; // v.186: Rádio 24h
           onUpdateChurch(patch);
       } catch(e) {}
     });
@@ -13370,6 +13593,9 @@ function App() {
   // durante a sessão desta aba, então decidir o "return" aqui, antes dos hooks de sessão/login, não
   // causa problema de ordem de hooks pra esta instância de App().
   const publicCadastro = getPublicCadastroParams();
+  if (publicCadastro && publicCadastro.tipo === 'radio') {
+    return html`<${RadioPublicPage} docId=${publicCadastro.docId} />`;
+  }
   if (publicCadastro) {
     return html`<${PublicCadastroPage} tipo=${publicCadastro.tipo} docId=${publicCadastro.docId} dia=${publicCadastro.dia} />`;
   }
