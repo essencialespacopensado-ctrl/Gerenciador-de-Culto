@@ -680,7 +680,7 @@ function walkFind(o: any, key: string, acc: any[]) {
   if (o[key]) acc.push(o[key]);
   Object.keys(o).forEach(k => walkFind(o[k], key, acc));
 }
-async function playlistViaInnertube(id: string, UA: string): Promise<PlEntry[]> {
+async function playlistViaInnertube(id: string, UA: string, limit = 30): Promise<PlEntry[]> {
   const r = await fetch("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false", {
     method: "POST",
     headers: { "User-Agent": UA, "Content-Type": "application/json", "Accept-Language": "pt-BR,pt;q=0.9", "Origin": "https://www.youtube.com" },
@@ -705,7 +705,7 @@ async function playlistViaInnertube(id: string, UA: string): Promise<PlEntry[]> 
   }
   if (!items.length) throw new Error("sem vídeos na resposta; chaves=" + Object.keys(j).join(","));
   const now = Date.now();
-  return items.filter(it => it.videoId).slice(0, 30).map((it, idx) => {
+  return items.filter(it => it.videoId).slice(0, limit).map((it, idx) => {
     const t = (it.title && (it.title.runs ? it.title.runs.map((x: any) => x.text).join("") : it.title.simpleText)) || "";
     const raw = it.__raw || JSON.stringify(it);
     const upcoming = /"UPCOMING"|upcomingEventData|"isUpcoming":true|Estreia|PREMIERE|Premiere|Agendad/.test(raw);
@@ -802,6 +802,86 @@ app.get("/api/latest-from-playlist", async (req, res) => {
       return res.json({ status: "ok", video: { videoId: e.videoId, title: e.title, published: e.published }, check: { ...(dbg || {}), src: srcInfo, sabado: sabado.getDate() + "/" + (sabado.getMonth() + 1), pelaData } });
     }
     return res.json({ status: "empty", video: null });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao ler a playlist" });
+  }
+});
+
+// v.186 — RÁDIO 24h: lista de uma playlist do YouTube com a DURAÇÃO de cada vídeo (a rádio calcula, pelo relógio, qual música
+// está tocando agora; todo mundo ouve a mesma coisa ao mesmo tempo). Só entram vídeos que abrem (OK) e podem ser incorporados.
+const radioDurCache = new Map<string, { d: number; ok: boolean; ts: number }>();
+const RADIO_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+async function radioLookup(videoId: string, UA: string) {
+  const c = radioDurCache.get(videoId);
+  if (c && Date.now() - c.ts < 12 * 3600 * 1000) return c;
+  let r = { d: 0, ok: false, ts: Date.now() };
+  try {
+    const w = await fetch(`https://www.youtube.com/watch?v=${videoId}`, { headers: { "User-Agent": UA, "Accept-Language": "pt-BR,pt;q=0.9", "Cookie": "CONSENT=YES+1; SOCS=CAI" } });
+    if (w.ok) {
+      const html = await w.text();
+      const st = /"playabilityStatus":\{"status":"([A-Z_]+)"/.exec(html);
+      const ln = /"lengthSeconds":"(\d+)"/.exec(html);
+      const emb = !/"playableInEmbed":false/.test(html);
+      if (ln && (!st || st[1] === "OK") && emb) r = { d: parseInt(ln[1], 10), ok: parseInt(ln[1], 10) >= 20, ts: Date.now() };
+    }
+  } catch { /* sem rede: fica de fora */ }
+  radioDurCache.set(videoId, r);
+  return r;
+}
+// Rádio 24h — "Montar sozinho": recebe uma lista de músicas (nome + álbum), acha o vídeo de cada uma no YouTube e devolve com a duração.
+// O app manda em lotes pequenos (a resposta de cada lote precisa caber no tempo do servidor).
+app.post("/api/radio-build", async (req, res) => {
+  try {
+    const items: { q: string; title: string }[] = Array.isArray(req.body && req.body.items) ? req.body.items.slice(0, 30) : [];
+    const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+    const parseDur = (s: string) => { const p = String(s || "").split(":").map(x => parseInt(x, 10)); if (p.some(isNaN)) return 0; return p.reduce((a, x) => a * 60 + x, 0); };
+    const BAD = /cifra|aula|tutorial|reaction|karaok|instrumental|playback|cover|violao|piano|letra|lyrics?\b|legendado|\bmix\b|hora de|horas de|completo|full album|album completo/;
+    const out: any[] = [];
+    let next = 0;
+    const work = async () => {
+      while (next < items.length) {
+        const i = next++; const it = items[i];
+        try {
+          const vids = await searchYouTubeVideos(String(it.q || it.title || "")).catch(() => []);
+          const words = norm(String(it.title || "")).split(" ").filter(w => w.length > 2);
+          let pick: any = null;
+          for (const v of vids.slice(0, 8)) {
+            const tn = norm(v.title);
+            const d = parseDur(v.duration);
+            if (d < 90 || d > 600 || BAD.test(tn)) continue;
+            if (words.length && !words.every(w => tn.includes(w))) continue;
+            const r = await radioLookup(v.videoId, RADIO_UA);
+            if (!r.ok) continue;
+            pick = { i, videoId: v.videoId, d: r.d, ytTitle: v.title }; break;
+          }
+          if (pick) out.push(pick);
+        } catch { /* pula */ }
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, work));
+    res.json({ status: "ok", found: out.sort((a, b) => a.i - b.i) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Erro ao montar a rádio" });
+  }
+});
+app.get("/api/radio-playlist", async (req, res) => {
+  const id = String(req.query.id || "").trim();
+  if (!/^[A-Za-z0-9_-]{10,60}$/.test(id)) return res.status(400).json({ error: "playlist inválida" });
+  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  try {
+    let entries: PlEntry[] = [];
+    try { entries = await playlistViaInnertube(id, UA, 250); } catch { entries = []; }
+    if (!entries.length) { const got = await loadPlaylistEntries(id, UA); if (got) entries = got.entries; }
+    if (!entries.length) return res.status(502).json({ error: "Não consegui ler essa playlist agora (" + plWhy + "). Confira se ela é pública." });
+    const out: { videoId: string; title: string; d: number }[] = [];
+    const lookup = (e: PlEntry) => radioLookup(e.videoId, UA);
+    const list = entries.slice(0, 250);
+    let next = 0;
+    const worker = async () => { while (next < list.length) { const i = next++; const e = list[i]; const r = await lookup(e); if (r.ok) (out as any)[i] = { videoId: e.videoId, title: e.title, d: r.d }; } };
+    await Promise.all(Array.from({ length: 6 }, worker));
+    const tracks = out.filter(Boolean);
+    if (!tracks.length) return res.status(502).json({ error: "Nenhum vídeo dessa playlist pôde ser lido (todos privados, bloqueados ou sem duração)." });
+    return res.json({ status: "ok", total: list.length, tracks });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || "Erro ao ler a playlist" });
   }
