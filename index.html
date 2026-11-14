@@ -140,11 +140,18 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versão do app: mude essa string a cada publicação pra ativar o aviso de "atualização
 // disponível" pra quem já tem o app aberto em outro aparelho.
-const APP_VERSION = '2026-11-13.193';
+const APP_VERSION = '2026-11-13.194';
 // Histórico de versões — a mais recente fica PRIMEIRO. A cada publicação, adicione uma entrada
 // nova no topo (não apague as antigas: é esse histórico que aparece no botão "Novidades" 🗂️,
 // pra acompanhar o que mudou em qualquer atualização, não só na mais recente).
 const APP_CHANGELOG_HISTORY = [
+  {
+    version: '2026-11-13.194',
+    date: '13/11/2026',
+    items: [
+      "\ud83c\udfa4 R\u00e1dio 24h: agora tamb\u00e9m toca m\u00fasicas dos cantores adventistas (lista em M\u00fasicas \u2192 Cantores, d\u00e1 pra acrescentar nomes). Elas entram sozinhas misturadas nas pr\u00f3ximas faixas, sem cortar o que est\u00e1 tocando.",
+    ],
+  },
   {
     version: '2026-11-13.193',
     date: '13/11/2026',
@@ -6700,6 +6707,81 @@ async function gcRadioAutoBuild(church, getRadio) {
     if (got.length < 5) { try { await saveP(false, { failedAt: Date.now(), tracks: [] }); } catch (e) {} return; }
     await saveP(false, { failedAt: null });
   } catch (e) {} finally { gcRadioBuildBusy = false; }
+  try { await gcRadioAddSingers(church, getRadio, () => Date.now(), false); } catch (e) {}
+}
+// v.194: cantores adventistas na rádio. A lista vem da categoria "Cantores" do app (dá pra acrescentar nomes lá).
+function gcRadioSingers(churchId) {
+  const set = new Set(); const out = [];
+  try { gcAlbumCatalog(churchId).filter(a => a.category === 'Cantores').forEach(a => { let t = String(a.title || '').trim(); if (t.includes(' — ')) t = t.split(' — ').pop().trim(); const k = t.toLowerCase(); if (t && !set.has(k)) { set.add(k); out.push(t); } }); } catch (e) {}
+  return out;
+}
+async function gcRadioAddSingers(church, getRadio, nowMsFn, force) {
+  const docId = church && (church.fbDocId || church.docId);
+  if (!docId || gcRadioBuildBusy || !fbIsReady()) return;
+  gcRadioBuildBusy = true;
+  try {
+    const H = window.__fb.helpers;
+    let ok = true;
+    if (H.runTransaction) {
+      await H.runTransaction(window.__fb.db, async (tx) => {
+        ok = false;
+        const ref = H.doc(window.__fb.db, 'igrejas', docId);
+        const snap = await tx.get(ref); const d = snap.exists() ? snap.data() : null; const r = d && d.radio;
+        if (!r || !(r.tracks || []).length) return;
+        if (r.playlist && r.playlist !== 'auto') return;
+        if (r.building && Date.now() - (r.updated || 0) < 4 * 60000) return;
+        if (!force && r.singersDone) return;
+        if (!force && r.singersFailedAt && Date.now() - r.singersFailedAt < 3600000) return;
+        ok = true;
+        tx.update(ref, { radio: { ...r, building: true, singersBuilding: true, updated: Date.now() } });
+      });
+    }
+    if (!ok) return;
+    const artists = gcRadioSingers(church.id);
+    const found = [];
+    const topics = ['cantores adventistas', 'cantora adventista', 'louvor adventista', 'música adventista', 'grupo vocal adventista', 'coral adventista', 'hinos adventistas cantados', 'jovens adventistas música', 'quarteto adventista', 'dupla adventista', 'louvores adventistas antigos', 'cantor adventista clipe'];
+    const nA = artists.length;
+    for (let i = 0; i < nA + topics.length; i += 3) {
+      const chunk = i < nA ? artists.slice(i, i + 3) : [];
+      const ti = Math.max(0, i - nA);
+      const tp = i + 3 > nA ? topics.slice(ti, ti + (i < nA ? 3 - chunk.length : 3)).slice(0, 3) : [];
+      if (!chunk.length && !tp.length) continue;
+      try {
+        const r = await fetch('/api/radio-artists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artists: chunk, topics: tp, per: 8 }) });
+        const j = await r.json();
+        (j.found || []).forEach(x => { if (x.a >= 0) { const a = chunk[x.a]; if (a) found.push({ v: x.videoId, t: x.t + ' — ' + a, d: x.d }); } else found.push({ v: x.videoId, t: x.t + (x.ch ? ' — ' + x.ch : ''), d: x.d }); });
+      } catch (e) {}
+      try { const cur = getRadio() || {}; await fbUpdateChurchFields(docId, { radio: { ...cur, building: true, singersBuilding: true, updated: Date.now() } }); } catch (e) {}
+    }
+    const merge = (r) => {
+      const tr = r.tracks || [];
+      const bad = new Set(r.bad || []); const used = new Set(tr.map(x => x.v)); const fresh = [];
+      found.forEach(x => { if (!used.has(x.v) && !bad.has(x.v)) { used.add(x.v); fresh.push(x); } });
+      const now = nowMsFn();
+      const pos = gcRadioPos(r, now);
+      const idx = pos ? pos.i : -1;
+      const keep = tr.slice(0, idx + 1);
+      const mixed = tr.slice(idx + 1).concat(fresh);
+      for (let i = mixed.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [mixed[i], mixed[k]] = [mixed[k], mixed[i]]; }
+      const X = pos ? keep.slice(0, idx).reduce((a, x) => a + (x.d || 0), 0) + pos.off : 0;
+      return { ...r, tracks: keep.concat(mixed), epoch: pos ? now - Math.round(X * 1000) : (r.epoch || now), singersDone: true, singersFailedAt: null, building: false, singersBuilding: false, updated: Date.now(), singersAdded: fresh.length };
+    };
+    if (found.length < 3) {
+      const cur = getRadio() || {};
+      try { await fbUpdateChurchFields(docId, { radio: { ...cur, building: false, singersBuilding: false, singersFailedAt: Date.now(), updated: Date.now() } }); } catch (e) {}
+      return;
+    }
+    if (H.runTransaction) {
+      await H.runTransaction(window.__fb.db, async (tx) => {
+        const ref = H.doc(window.__fb.db, 'igrejas', docId);
+        const snap = await tx.get(ref); const d = snap.exists() ? snap.data() : null; const r = d && d.radio;
+        if (!r || !(r.tracks || []).length) return;
+        tx.update(ref, { radio: merge(r) });
+      });
+    } else {
+      await fbUpdateChurchFields(docId, { radio: merge(getRadio() || {}) });
+    }
+  } catch (e) {} finally { gcRadioBuildBusy = false; }
 }
 // v.193: música bloqueada = tirada da lista PARA TODOS (transação), mantendo o relógio — assim todo mundo continua tocando a mesma coisa.
 async function gcRadioDropTrack(docId, vid, now) {
@@ -6856,8 +6938,8 @@ function RadioTopBar({ church }) {
       const r = radioRef.current;
       const hasT = !!(r && r.tracks && r.tracks.length);
       const stale = !!(r && r.building && Date.now() - (r.updated || 0) > 4 * 60000);
-      if (hasT && !stale) return;
       if (r && r.playlist && r.playlist !== 'auto') return;
+      if (hasT && !stale) { if (!r.building && !r.singersDone) gcRadioAddSingers(church, () => radioRef.current, nowMs, false); return; }
       gcRadioAutoBuild(church, () => radioRef.current);
     }, 6000);
     return () => clearTimeout(t);
@@ -7056,6 +7138,13 @@ function RadioTool({ church, onUpdateChurch }) {
           <button type="button" onClick=${() => save({ live: !radio.live })} style=${{...(radio.live ? btnPrimary : btnGhost), width:'auto', padding:'12px 16px', fontSize:'14px', fontWeight:800, borderColor: radio.live ? undefined : '#ef4444', color: radio.live ? undefined : '#fca5a5'}}>${radio.live ? '▶ Culto terminou — voltar a rádio' : '🔴 Culto ao vivo — parar a rádio'}</button>
           <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>${radio.live ? 'A rádio está PARADA. Os ouvintes veem "Culto ao vivo".' : 'A rádio está NO AR.'}</div>
         </div>`}
+      ${has && html`
+        <div style=${{display:'grid', gap:'6px', padding:'10px', borderRadius:'12px', background:'rgba(255,255,255,0.04)'}}>
+          <div style=${{fontSize:'12px', fontWeight:700}}>🎤 Cantores adventistas na rádio</div>
+          <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>${gcRadioSingers(church.id).join(' · ') || 'Nenhum cantor na lista.'}</div>
+          <div style=${{fontSize:'11px', color:'var(--text-dim)'}}>${radio.singersBuilding ? 'Buscando as músicas dos cantores…' : radio.singersDone ? 'Já incluídos na programação' + (radio.singersAdded ? ' (' + radio.singersAdded + ' músicas na última busca).' : '.') : 'Entram sozinhos na programação em instantes.'} Para acrescentar um cantor: Músicas → 🎙️ Cantores.</div>
+          <button type="button" disabled=${!!radio.singersBuilding} onClick=${() => gcRadioAddSingers(church, () => (church.radio || {}), () => Date.now() + 0, true)} style=${{...btnGhost, width:'auto', padding:'7px 12px', fontSize:'12px'}}>🔄 Buscar cantores de novo</button>
+        </div>`}
       ${link && html`
         <div style=${{display:'grid', gap:'6px'}}>
           <div style=${{fontSize:'11.5px', color:'var(--text-dim)'}}>Link público da rádio (sem login):</div>
@@ -7161,6 +7250,7 @@ const COLETANEAS_CANTORES = [
   'Arautos do Rei','Prisma Brasil','Leonardo Gonçalves','Melissa Barcellos','Novo Tom','Alessandra Samadello',
   'Josué de Castro','Fernando Iglesias','Regina Mota','Zilda Azevedo','Eclair Hercole','Tom de Vida',
   'Victor Rodrigues','Adlin Rodrigues','Társis Iraídes','Rafaela Pinho',
+  'Coral UNASP','Vocal Livre','Laura Moreno','Temis Handeri','Coral Novo Tempo',
 ].map((title,i) => ({ id:'seed-ca-'+i, category:'Cantores', title, year:null, custom:false }));
 
 // Celebra SP — festival de música adventista de São Paulo. Confirmei 3 edições (a 3ª foi em 2019);
