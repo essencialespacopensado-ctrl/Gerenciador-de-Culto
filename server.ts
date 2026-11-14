@@ -875,6 +875,71 @@ app.post("/api/radio-build", async (req, res) => {
     res.status(500).json({ error: err.message || "Erro ao montar a rádio" });
   }
 });
+// v.194: músicas de cantores adventistas para a rádio — busca "<cantor> adventista" e só aceita vídeo que tenha o nome do cantor no título ou no canal.
+app.post("/api/radio-artists", async (req, res) => {
+  try {
+    const artists: string[] = Array.isArray(req.body && req.body.artists) ? req.body.artists.slice(0, 4).map((x: any) => String(x).slice(0, 80)) : [];
+    const per = Math.min(12, Math.max(1, Number(req.body && req.body.per) || 8));
+    const topics: string[] = Array.isArray(req.body && req.body.topics) ? req.body.topics.slice(0, 4).map((x: any) => String(x).slice(0, 80)) : [];
+    const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+    const parseDur = (s: string) => { const p = String(s || "").split(":").map(x => parseInt(x, 10)); if (p.some(isNaN)) return 0; return p.reduce((a, x) => a * 60 + x, 0); };
+    const BAD = /cifra|aula|tutorial|reaction|karaok|instrumental|playback|menos um|minus one|sem voz|cover|violao|piano|letra|lyrics?\b|legendado|\bmix\b|hora de|horas de|completo|full album|album completo|\bdvd\b|entrevista|pregacao|sermao|culto/;
+    const out: any[] = [];
+    let next = 0;
+    const work = async () => {
+      while (next < artists.length) {
+        const idx = next++; const artist = artists[idx];
+        const aw = norm(artist).split(" ").filter(w => w.length > 2);
+        if (!aw.length) continue;
+        const seenV = new Set<string>(); const seenT = new Set<string>(); let n = 0;
+        for (const q of [artist + " adventista", artist + " m\u00fasica adventista"]) {
+          if (n >= per) break;
+          const vids = await searchYouTubeVideos(q).catch(() => []);
+          for (const v of vids.slice(0, 15)) {
+            if (n >= per) break;
+            try {
+              const tn = norm(v.title); const cn = norm(v.channel || ""); const d = parseDur(v.duration || "");
+              if (d < 120 || d > 540 || BAD.test(tn) || seenV.has(v.videoId)) continue;
+              if (!aw.every(w => tn.includes(w) || cn.includes(w))) continue;
+              const key = tn.replace(/ (ao vivo|clipe|oficial|official|video|audio)\b/g, "").slice(0, 40);
+              if (seenT.has(key)) continue;
+              const r = await radioLookup(v.videoId, RADIO_UA, d);
+              if (!r.ok) continue;
+              seenV.add(v.videoId); seenT.add(key); n++;
+              out.push({ a: idx, videoId: v.videoId, d: r.d, t: String(v.title).slice(0, 90) });
+            } catch { /* pula */ }
+          }
+        }
+      }
+    };
+    // Buscas gerais ("cantores adventistas", "louvor adventista"...): só vale vídeo que diga "adventista" (ou igreja/projeto adventista) no título ou no canal.
+    const ADV = /adventist|iasd|novo tempo|arautos do rei|unasp|ministerio jovem|celebra sp|adoradores/;
+    let nextT = 0;
+    const workT = async () => {
+      while (nextT < topics.length) {
+        const q = topics[nextT++]; let n = 0; const seenT = new Set<string>();
+        const vids = await searchYouTubeVideos(q).catch(() => []);
+        for (const v of vids.slice(0, 20)) {
+          if (n >= per) break;
+          try {
+            const tn = norm(v.title); const cn = norm(v.channel || ""); const d = parseDur(v.duration || "");
+            if (d < 120 || d > 540 || BAD.test(tn)) continue;
+            if (!ADV.test(tn + " " + cn)) continue;
+            const key = tn.slice(0, 40); if (seenT.has(key)) continue;
+            const r = await radioLookup(v.videoId, RADIO_UA, d);
+            if (!r.ok) continue;
+            seenT.add(key); n++;
+            out.push({ a: -1, videoId: v.videoId, d: r.d, t: String(v.title).slice(0, 90), ch: String(v.channel || "").slice(0, 40) });
+          } catch { /* pula */ }
+        }
+      }
+    };
+    await Promise.all([...Array.from({ length: 2 }, work), ...Array.from({ length: 2 }, workT)]);
+    res.json({ status: "ok", found: out });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Erro ao buscar cantores" });
+  }
+});
 app.get("/api/radio-playlist", async (req, res) => {
   const id = String(req.query.id || "").trim();
   if (!/^[A-Za-z0-9_-]{10,60}$/.test(id)) return res.status(400).json({ error: "playlist inválida" });
